@@ -27,8 +27,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _loadingApps = true;
   String _searchQuery = '';
   final TextEditingController _searchCtrl = TextEditingController();
-  String _apiUrl = '';
-  String _apiKey = '';
+  String _subscriptionUrl = '';
   bool get _supportsPerAppProxy =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -53,8 +52,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _coreInfo = await widget.v2rayBox.getCoreInfo();
     } catch (_) {}
 
-    _apiUrl = await RemnawaveService.getApiUrl();
-    _apiKey = await RemnawaveService.getApiKey();
+    _subscriptionUrl = await RemnawaveService.getSubscriptionUrl();
 
     if (_supportsPerAppProxy) {
       _perAppMode = await widget.v2rayBox.getPerAppProxyMode();
@@ -136,30 +134,21 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
 
-          // Remnawave Panel
+          // Subscription
           SliverPadding(
             padding: const EdgeInsets.all(16),
             sliver: SliverToBoxAdapter(
-              child: _buildSection('Панель Remnawave', [
+              child: _buildSection('Подписка', [
                 ListTile(
-                  title: const Text('URL панели'),
+                  title: const Text('URL подписки'),
                   subtitle: Text(
-                    _apiUrl.isEmpty ? 'Не задан' : _apiUrl,
+                    _subscriptionUrl.isEmpty ? 'Не задан' : _subscriptionUrl,
                     style: TextStyle(color: Colors.grey[400], fontSize: 12),
                     overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                   trailing: const Icon(Icons.edit, size: 18),
-                  onTap: _showApiUrlDialog,
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  title: const Text('API ключ'),
-                  subtitle: Text(
-                    _apiKey.isEmpty ? 'Не задан' : 'Задан',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                  ),
-                  trailing: const Icon(Icons.edit, size: 18),
-                  onTap: _showApiKeyDialog,
+                  onTap: _showSubscriptionUrlDialog,
                 ),
               ]),
             ),
@@ -337,19 +326,31 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  void _showApiUrlDialog() {
-    final ctrl = TextEditingController(text: _apiUrl);
+  void _showSubscriptionUrlDialog() {
+    final ctrl = TextEditingController(text: _subscriptionUrl);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('URL панели Remnawave'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(
-            hintText: 'https://panel.example.com',
-            border: OutlineInputBorder(),
-          ),
-          keyboardType: TextInputType.url,
+        title: const Text('URL подписки'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              decoration: const InputDecoration(
+                hintText: 'https://panel.example.com/sub/...',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.url,
+              maxLines: 3,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Получите ссылку подписки в Telegram-боте или в личном кабинете.',
+              style: TextStyle(color: Colors.grey[500], fontSize: 11),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -359,41 +360,8 @@ class _SettingsPageState extends State<SettingsPage> {
           FilledButton(
             onPressed: () async {
               final url = ctrl.text.trim();
-              await RemnawaveService.saveApiUrl(url);
-              setState(() => _apiUrl = url);
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            child: const Text('Сохранить'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showApiKeyDialog() {
-    final ctrl = TextEditingController(text: _apiKey);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('API ключ Remnawave'),
-        content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(
-            hintText: 'Введите X-Api-Key',
-            border: OutlineInputBorder(),
-          ),
-          obscureText: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final key = ctrl.text.trim();
-              await RemnawaveService.saveApiKey(key);
-              setState(() => _apiKey = key);
+              await RemnawaveService.saveSubscriptionUrl(url);
+              setState(() => _subscriptionUrl = url);
               if (ctx.mounted) Navigator.pop(ctx);
             },
             child: const Text('Сохранить'),

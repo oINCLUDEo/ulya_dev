@@ -4,7 +4,11 @@ import '../models/server_node.dart';
 import '../services/remnawave_service.dart';
 
 class ServersPage extends StatefulWidget {
-  const ServersPage({super.key});
+  /// Called when the user taps the "Open Settings" button so the parent
+  /// shell can switch to the Settings tab without hard-coding an index.
+  final VoidCallback? onGoToSettings;
+
+  const ServersPage({super.key, this.onGoToSettings});
 
   @override
   State<ServersPage> createState() => _ServersPageState();
@@ -13,7 +17,7 @@ class ServersPage extends StatefulWidget {
 class _ServersPageState extends State<ServersPage> {
   List<ServerNode> _nodes = [];
   bool _loading = true;
-  String? _error;
+  bool _noSubscription = false;
 
   @override
   void initState() {
@@ -24,23 +28,28 @@ class _ServersPageState extends State<ServersPage> {
   Future<void> _loadNodes() async {
     setState(() {
       _loading = true;
-      _error = null;
+      _noSubscription = false;
     });
-    try {
-      final nodes = await RemnawaveService.fetchNodes();
+
+    final subUrl = await RemnawaveService.getSubscriptionUrl();
+    if (subUrl.isEmpty) {
       if (mounted) {
         setState(() {
-          _nodes = nodes;
           _loading = false;
+          _noSubscription = true;
+          _nodes = [];
         });
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _loading = false;
-        });
-      }
+      return;
+    }
+
+    final nodes = await RemnawaveService.fetchNodes();
+    if (mounted) {
+      setState(() {
+        _nodes = nodes;
+        _loading = false;
+        _noSubscription = false;
+      });
     }
   }
 
@@ -78,20 +87,16 @@ class _ServersPageState extends State<ServersPage> {
               const SliverFillRemaining(
                 child: Center(child: CircularProgressIndicator()),
               )
-            else if (_error != null)
-              SliverFillRemaining(
-                child: _buildErrorState(),
-              )
+            else if (_noSubscription)
+              SliverFillRemaining(child: _buildNoSubscriptionState())
             else if (_nodes.isEmpty)
-              SliverFillRemaining(
-                child: _buildEmptyState(),
-              )
+              SliverFillRemaining(child: _buildEmptyState())
             else ...[
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 sliver: SliverToBoxAdapter(
                   child: Text(
-                    '${_nodes.where((n) => n.isAvailable).length} из ${_nodes.length} серверов онлайн',
+                    '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
                     style: TextStyle(color: Colors.grey[400], fontSize: 13),
                   ),
                 ),
@@ -114,24 +119,73 @@ class _ServersPageState extends State<ServersPage> {
     );
   }
 
-  Widget _buildEmptyState() {
+  String _pluralServers(int n) {
+    final mod10 = n % 10;
+    final mod100 = n % 100;
+    if (mod100 >= 11 && mod100 <= 19) return 'серверов';
+    if (mod10 == 1) return 'сервер';
+    if (mod10 >= 2 && mod10 <= 4) return 'сервера';
+    return 'серверов';
+  }
+
+  Widget _buildNoSubscriptionState() {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.dns_outlined, size: 64, color: Colors.grey[600]),
-            const SizedBox(height: 16),
-            Text(
-              'Серверы не найдены',
-              style: TextStyle(color: Colors.grey[400], fontSize: 16),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6C5CE7).withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.vpn_key_outlined,
+                size: 48,
+                color: Color(0xFF6C5CE7),
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 20),
+            const Text(
+              'Нет подписки',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
             Text(
-              'Настройте URL панели в Настройках',
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+              'Чтобы увидеть доступные серверы, введите URL вашей подписки. '
+              'Получите его в Telegram-боте после оформления подписки.',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 14,
+                height: 1.5,
+              ),
               textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: () {
+                if (widget.onGoToSettings != null) {
+                  widget.onGoToSettings!();
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Перейдите в Настройки → Подписка'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              icon: const Icon(Icons.settings_outlined),
+              label: const Text('Открыть Настройки'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF6C5CE7),
+              ),
             ),
           ],
         ),
@@ -139,7 +193,7 @@ class _ServersPageState extends State<ServersPage> {
     );
   }
 
-  Widget _buildErrorState() {
+  Widget _buildEmptyState() {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -149,12 +203,12 @@ class _ServersPageState extends State<ServersPage> {
             Icon(Icons.cloud_off, size: 64, color: Colors.grey[600]),
             const SizedBox(height: 16),
             Text(
-              'Не удалось загрузить серверы',
+              'Серверы не получены',
               style: TextStyle(color: Colors.grey[400], fontSize: 16),
             ),
             const SizedBox(height: 8),
             Text(
-              'Проверьте подключение или настройки API',
+              'Проверьте URL подписки или подключение к интернету',
               style: TextStyle(color: Colors.grey[600], fontSize: 13),
               textAlign: TextAlign.center,
             ),
@@ -178,17 +232,7 @@ class _NodeTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = node.isAvailable
-        ? const Color(0xFF2ED573)
-        : node.isDisabled
-            ? Colors.grey
-            : const Color(0xFFFF4757);
-
-    final statusText = node.isDisabled
-        ? 'Отключён'
-        : node.isConnected
-            ? 'Онлайн'
-            : 'Офлайн';
+    final protocol = node.protocol ?? '';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -200,7 +244,7 @@ class _NodeTile extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: statusColor.withOpacity(0.15),
+                color: _protocolColor(protocol).withOpacity(0.15),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Center(
@@ -233,44 +277,47 @@ class _NodeTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: statusColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      statusText,
-                      style: TextStyle(
-                        color: statusColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
+            if (protocol.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _protocolColor(protocol).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                if (node.usersOnline != null) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    '${node.usersOnline} онлайн',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 11),
+                child: Text(
+                  protocol.toUpperCase(),
+                  style: TextStyle(
+                    color: _protocolColor(protocol),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
                   ),
-                ],
-              ],
-            ),
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Color _protocolColor(String p) {
+    switch (p.toLowerCase()) {
+      case 'vmess':
+        return const Color(0xFF6C5CE7);
+      case 'vless':
+        return const Color(0xFF00D9FF);
+      case 'trojan':
+        return const Color(0xFFFFA502);
+      case 'ss':
+        return const Color(0xFF2ED573);
+      case 'hysteria2':
+      case 'hy2':
+      case 'hysteria':
+        return const Color(0xFFE84393);
+      case 'tuic':
+        return const Color(0xFFFD79A8);
+      default:
+        return Colors.grey;
+    }
   }
 
   String _countryEmoji(String countryCode) {
@@ -281,3 +328,4 @@ class _NodeTile extends StatelessWidget {
     return String.fromCharCode(base + first) + String.fromCharCode(base + second);
   }
 }
+
