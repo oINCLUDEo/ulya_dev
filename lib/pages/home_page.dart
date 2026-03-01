@@ -4,15 +4,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:qr_flutter/qr_flutter.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:v2ray_box/v2ray_box.dart';
 
 import '../models/server_node.dart';
+import '../models/subscription_info.dart';
 import '../services/remnawave_service.dart';
-import 'config_editor_page.dart';
 
 class HomePage extends StatefulWidget {
   final V2rayBox v2rayBox;
@@ -35,13 +32,11 @@ class _HomePageState extends State<HomePage>
 
   List<ServerNode> _subscriptionNodes = [];
   bool _isLoadingNodes = false;
+  SubscriptionInfo? _subscriptionInfo;
 
   StreamSubscription<VpnStatus>? _statusSub;
   StreamSubscription<VpnStats>? _statsSub;
-  StreamSubscription<Map<String, dynamic>>? _pingResultsSub;
   Timer? _trafficTimer;
-  int _pingRunId = 0;
-  bool _pingAllInProgress = false;
   bool _proxyProbeInProgress = false;
   Map<String, bool?> _proxyEndpointStatus = {};
 
@@ -77,6 +72,7 @@ class _HomePageState extends State<HomePage>
     if (!mounted) return;
     setState(() {
       _subscriptionNodes = nodes;
+      _subscriptionInfo = RemnawaveService.lastSubscriptionInfo;
       _isLoadingNodes = false;
     });
   }
@@ -208,38 +204,6 @@ class _HomePageState extends State<HomePage>
       if (_mode == VpnMode.proxy && _status == VpnStatus.started) {
         unawaited(_probeLocalProxyEndpoints());
       }
-      return;
-    }
-
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      unawaited(_cancelPingOperations(resetLoading: true, persist: true));
-    }
-  }
-
-  Future<void> _cancelPingOperations({
-    bool resetLoading = true,
-    bool persist = false,
-  }) async {
-    _pingRunId++;
-    _pingAllInProgress = false;
-    await _pingResultsSub?.cancel();
-    _pingResultsSub = null;
-
-    if (!resetLoading) return;
-    var changed = false;
-    for (final c in _configs) {
-      if (c.ping == -2) {
-        c.ping = -1;
-        changed = true;
-      }
-    }
-    if (changed && mounted) {
-      setState(() {});
-    }
-    if (changed && persist) {
-      await _saveConfigs();
     }
   }
 
@@ -271,187 +235,11 @@ class _HomePageState extends State<HomePage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(_cancelPingOperations(resetLoading: true, persist: false));
     _statusSub?.cancel();
     _statsSub?.cancel();
     _trafficTimer?.cancel();
     _pulseCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _addFromClipboard() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text?.trim() ?? '';
-    if (text.isEmpty) {
-      _snack('Clipboard is empty');
-      return;
-    }
-
-    final lines = text.split('\n').where((l) => l.trim().isNotEmpty).toList();
-    int added = 0;
-
-    for (final line in lines) {
-      final link = line.trim();
-      if (!widget.v2rayBox.isValidConfigLink(link)) continue;
-      if (_configs.any((c) => c.link == link)) continue;
-      final config = widget.v2rayBox.parseConfigLink(link);
-      _configs.add(config);
-      added++;
-    }
-
-    if (added > 0) {
-      await _saveConfigs();
-      setState(() {});
-      _snack('$added config(s) added');
-    } else {
-      _snack('No valid new configs found');
-    }
-  }
-
-  Future<void> _addFromQrScan() async {
-    final result = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(builder: (_) => const QrScannerPage()),
-    );
-    if (result == null || result.isEmpty) return;
-
-    final lines = result.split('\n').where((l) => l.trim().isNotEmpty).toList();
-    int added = 0;
-    for (final line in lines) {
-      final link = line.trim();
-      if (!widget.v2rayBox.isValidConfigLink(link)) continue;
-      if (_configs.any((c) => c.link == link)) continue;
-      _configs.add(widget.v2rayBox.parseConfigLink(link));
-      added++;
-    }
-
-    if (added > 0) {
-      await _saveConfigs();
-      setState(() {});
-      _snack('$added config(s) added from QR');
-    } else {
-      _snack('No valid config found in QR code');
-    }
-  }
-
-  Future<void> _addFromTextInput() async {
-    final ctrl = TextEditingController();
-    final link = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Config Link'),
-        content: TextField(
-          controller: ctrl,
-          maxLines: 5,
-          decoration: const InputDecoration(
-            hintText: 'vless://... or vmess://...',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-    if (link == null || link.isEmpty) return;
-
-    final lines = link.split('\n').where((l) => l.trim().isNotEmpty).toList();
-    int added = 0;
-    for (final line in lines) {
-      final l = line.trim();
-      if (!widget.v2rayBox.isValidConfigLink(l)) continue;
-      if (_configs.any((c) => c.link == l)) continue;
-      _configs.add(widget.v2rayBox.parseConfigLink(l));
-      added++;
-    }
-
-    if (added > 0) {
-      await _saveConfigs();
-      setState(() {});
-      _snack('$added config(s) added');
-    } else {
-      _snack('No valid config link found');
-    }
-  }
-
-  Future<void> _pingConfig(VpnConfig config) async {
-    await _cancelPingOperations(resetLoading: false, persist: false);
-    final i = _configs.indexOf(config);
-    if (i < 0) return;
-    final runId = ++_pingRunId;
-    setState(() => _configs[i].ping = -2);
-    try {
-      final latency = await widget.v2rayBox.ping(config.link);
-      if (!mounted || runId != _pingRunId) return;
-      setState(() => _configs[i].ping = latency);
-    } finally {
-      if (mounted && runId == _pingRunId) {
-        await _saveConfigs();
-      }
-    }
-  }
-
-  Future<void> _pingAll() async {
-    if (_configs.isEmpty) return;
-    if (_pingAllInProgress) return;
-    await _cancelPingOperations(resetLoading: false, persist: false);
-    final runId = ++_pingRunId;
-    _pingAllInProgress = true;
-
-    setState(() {
-      for (var c in _configs) {
-        c.ping = -2;
-      }
-    });
-
-    _pingResultsSub = widget.v2rayBox.watchPingResults().listen((r) {
-      if (runId != _pingRunId) return;
-      final link = r['link'] as String?;
-      final latency = (r['latency'] as num?)?.toInt() ?? -1;
-      if (link != null && mounted) {
-        setState(() {
-          var updated = false;
-          for (final cfg in _configs) {
-            if (cfg.link == link) {
-              cfg.ping = latency;
-              updated = true;
-            }
-          }
-          if (!updated) {
-            final idx = _configs.indexWhere((c) => c.link == link);
-            if (idx >= 0) _configs[idx].ping = latency;
-          }
-        });
-      }
-    });
-
-    try {
-      await widget.v2rayBox.pingAll(_configs.map((c) => c.link).toList());
-    } finally {
-      await _pingResultsSub?.cancel();
-      _pingResultsSub = null;
-      if (runId == _pingRunId) {
-        _pingAllInProgress = false;
-        var changed = false;
-        for (final c in _configs) {
-          if (c.ping == -2) {
-            c.ping = -1;
-            changed = true;
-          }
-        }
-        if (changed && mounted) {
-          setState(() {});
-        }
-        await _saveConfigs();
-      }
-    }
   }
 
   void _selectConfig(VpnConfig config) {
@@ -503,6 +291,7 @@ class _HomePageState extends State<HomePage>
               if (!mounted) return;
               setState(() {
                 _subscriptionNodes = nodes;
+                _subscriptionInfo = RemnawaveService.lastSubscriptionInfo;
                 _isLoadingNodes = false;
               });
               setSheetState(() {});
@@ -704,14 +493,6 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Future<void> _deleteConfig(VpnConfig config) async {
-    setState(() {
-      _configs.remove(config);
-      if (_selectedConfig == config) _selectedConfig = null;
-    });
-    await _saveConfigs();
-  }
-
   Future<void> _toggleConnection() async {
     final runtimeMode = await widget.v2rayBox.getServiceMode();
     final runtimeCore = await widget.v2rayBox.getCoreEngine();
@@ -777,69 +558,6 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  Future<void> _viewConfigJson(VpnConfig config) async {
-    try {
-      final json = await widget.v2rayBox.generateConfig(config.link);
-      if (!mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ConfigEditorPage(
-            v2rayBox: widget.v2rayBox,
-            configJson: json,
-            configName: config.name,
-          ),
-        ),
-      );
-    } catch (e) {
-      _snack('Error: $e');
-    }
-  }
-
-  void _showQrCode(VpnConfig config) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(config.name, overflow: TextOverflow.ellipsis),
-        content: SizedBox(
-          width: 280,
-          height: 280,
-          child: Center(
-            child: QrImageView(
-              data: config.link,
-              version: QrVersions.auto,
-              size: 260,
-              backgroundColor: Colors.white,
-              eyeStyle: const QrEyeStyle(
-                color: Colors.black,
-                eyeShape: QrEyeShape.square,
-              ),
-              dataModuleStyle: const QrDataModuleStyle(
-                color: Colors.black,
-                dataModuleShape: QrDataModuleShape.square,
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _shareConfig(VpnConfig config) {
-    SharePlus.instance.share(ShareParams(text: config.link));
-  }
-
-  void _copyLink(VpnConfig config) {
-    Clipboard.setData(ClipboardData(text: config.link));
-    _snack('Link copied');
-  }
-
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -865,7 +583,7 @@ class _HomePageState extends State<HomePage>
                   if (_mode == VpnMode.proxy) _buildProxyModeCard(),
                   _buildStatsRow(),
                   _buildTotalTrafficCard(),
-                  _buildConfigSection(),
+                  if (_subscriptionInfo != null) _buildSubscriptionCard(),
                   const SizedBox(height: 80),
                 ],
               ),
@@ -878,71 +596,20 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'V2Ray Box',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-              Text(
-                _mode == VpnMode.vpn ? 'VPN Mode' : 'Proxy Mode',
-                style: TextStyle(color: Colors.grey[400], fontSize: 14),
-              ),
-            ],
+          Text(
+            'V2Ray Box',
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
           ),
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: _pingAll,
-                tooltip: 'Ping All',
-              ),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.add),
-                tooltip: 'Add Config',
-                onSelected: (v) {
-                  switch (v) {
-                    case 'clipboard':
-                      _addFromClipboard();
-                    case 'qr':
-                      _addFromQrScan();
-                    case 'text':
-                      _addFromTextInput();
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: 'clipboard',
-                    child: ListTile(
-                      leading: Icon(Icons.content_paste),
-                      title: Text('From Clipboard'),
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'qr',
-                    child: ListTile(
-                      leading: Icon(Icons.qr_code_scanner),
-                      title: Text('Scan QR Code'),
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'text',
-                    child: ListTile(
-                      leading: Icon(Icons.edit),
-                      title: Text('Enter Manually'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+          Text(
+            _mode == VpnMode.vpn ? 'VPN Mode' : 'Proxy Mode',
+            style: TextStyle(color: Colors.grey[400], fontSize: 14),
           ),
         ],
       ),
@@ -1411,65 +1078,108 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  Widget _buildConfigSection() {
+  Widget _buildSubscriptionCard() {
+    final info = _subscriptionInfo!;
+    final expDate = info.expireDate;
+    final fraction = info.usedFraction;
+
+    // Progress bar color: green → yellow → red as quota fills up
+    Color barColor;
+    if (fraction < 0.6) {
+      barColor = const Color(0xFF2ED573);
+    } else if (fraction < 0.85) {
+      barColor = const Color(0xFFFFA502);
+    } else {
+      barColor = const Color(0xFFFF4757);
+    }
+
+    String? expiryText;
+    if (expDate != null) {
+      final now = DateTime.now();
+      final diff = expDate.difference(now);
+      if (diff.isNegative) {
+        expiryText = 'Подписка истекла';
+      } else if (diff.inDays == 0) {
+        expiryText = 'Истекает сегодня';
+      } else {
+        final d = expDate;
+        expiryText =
+            'До ${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
+      }
+    }
+
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Configs',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: barColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.data_usage_rounded,
+                      color: barColor,
+                      size: 22,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Трафик подписки',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (expiryText != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            expiryText,
+                            style: TextStyle(
+                              color: Colors.grey[400],
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  Text(
+                    '${info.formattedUsed} / ${info.formattedTotal}',
+                    style: TextStyle(
+                      color: barColor,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
               ),
-              Text(
-                '${_configs.length} items',
-                style: TextStyle(color: Colors.grey[500], fontSize: 12),
-              ),
+              if (info.totalBytes > 0) ...[
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: fraction,
+                    backgroundColor: barColor.withOpacity(0.15),
+                    valueColor: AlwaysStoppedAnimation(barColor),
+                    minHeight: 6,
+                  ),
+                ),
+              ],
             ],
           ),
-          const SizedBox(height: 12),
-          if (_configs.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  children: [
-                    Icon(Icons.cloud_off, size: 64, color: Colors.grey[600]),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No configs added',
-                      style: TextStyle(color: Colors.grey[400], fontSize: 16),
-                    ),
-                    const SizedBox(height: 8),
-                    TextButton.icon(
-                      onPressed: _addFromClipboard,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add from clipboard'),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            ...List.generate(_configs.length, (i) {
-              final config = _configs[i];
-              return _ConfigTile(
-                config: config,
-                onTap: () => _selectConfig(config),
-                onPing: () => _pingConfig(config),
-                onDelete: () => _deleteConfig(config),
-                onViewJson: () => _viewConfigJson(config),
-                onShowQr: () => _showQrCode(config),
-                onShare: () => _shareConfig(config),
-                onCopyLink: () => _copyLink(config),
-              );
-            }),
-        ],
+        ),
       ),
     );
   }
@@ -1538,259 +1248,3 @@ class _StatTile extends StatelessWidget {
   }
 }
 
-class _ConfigTile extends StatelessWidget {
-  final VpnConfig config;
-  final VoidCallback onTap,
-      onPing,
-      onDelete,
-      onViewJson,
-      onShowQr,
-      onShare,
-      onCopyLink;
-
-  const _ConfigTile({
-    required this.config,
-    required this.onTap,
-    required this.onPing,
-    required this.onDelete,
-    required this.onViewJson,
-    required this.onShowQr,
-    required this.onShare,
-    required this.onCopyLink,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isPinging = config.ping == -2;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: config.isSelected
-                ? Border.all(color: const Color(0xFF6C5CE7), width: 2)
-                : null,
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: _protocolColor(config.protocol).withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: Text(
-                    config.protocol.substring(0, 1).toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: _protocolColor(config.protocol),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      config.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      config.protocolDisplayName,
-                      style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              if (isPinging)
-                const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _pingColor(config.ping).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    config.pingDisplay,
-                    style: TextStyle(
-                      color: _pingColor(config.ping),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              const SizedBox(width: 4),
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_vert, color: Colors.grey[400]),
-                onSelected: (v) {
-                  switch (v) {
-                    case 'ping':
-                      onPing();
-                    case 'json':
-                      onViewJson();
-                    case 'qr':
-                      onShowQr();
-                    case 'share':
-                      onShare();
-                    case 'copy':
-                      onCopyLink();
-                    case 'delete':
-                      onDelete();
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: 'ping',
-                    child: ListTile(
-                      leading: Icon(Icons.speed),
-                      title: Text('Ping'),
-                      dense: true,
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'json',
-                    child: ListTile(
-                      leading: Icon(Icons.code),
-                      title: Text('View / Edit JSON'),
-                      dense: true,
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'qr',
-                    child: ListTile(
-                      leading: Icon(Icons.qr_code),
-                      title: Text('Show QR Code'),
-                      dense: true,
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'share',
-                    child: ListTile(
-                      leading: Icon(Icons.share),
-                      title: Text('Share'),
-                      dense: true,
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'copy',
-                    child: ListTile(
-                      leading: Icon(Icons.copy),
-                      title: Text('Copy Link'),
-                      dense: true,
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: ListTile(
-                      leading: Icon(Icons.delete, color: Colors.red),
-                      title: Text(
-                        'Delete',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                      dense: true,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Color _protocolColor(String p) {
-    switch (p.toLowerCase()) {
-      case 'vmess':
-        return const Color(0xFF6C5CE7);
-      case 'vless':
-        return const Color(0xFF00D9FF);
-      case 'trojan':
-        return const Color(0xFFFFA502);
-      case 'ss':
-        return const Color(0xFF2ED573);
-      case 'hysteria2':
-      case 'hy2':
-      case 'hysteria':
-      case 'hy':
-        return const Color(0xFFE84393);
-      case 'tuic':
-        return const Color(0xFFFD79A8);
-      case 'wireguard':
-      case 'wg':
-        return const Color(0xFF00B894);
-      case 'ssh':
-        return const Color(0xFF74B9FF);
-      default:
-        return Colors.grey;
-    }
-  }
-
-  Color _pingColor(int ping) {
-    if (ping < 0) return Colors.grey;
-    if (ping < 100) return const Color(0xFF2ED573);
-    if (ping < 300) return const Color(0xFFFFA502);
-    return const Color(0xFFE74C3C);
-  }
-}
-
-class QrScannerPage extends StatefulWidget {
-  const QrScannerPage({super.key});
-
-  @override
-  State<QrScannerPage> createState() => _QrScannerPageState();
-}
-
-class _QrScannerPageState extends State<QrScannerPage> {
-  final MobileScannerController _controller = MobileScannerController();
-  bool _scanned = false;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Scan QR Code'),
-        backgroundColor: Colors.transparent,
-      ),
-      body: MobileScanner(
-        controller: _controller,
-        onDetect: (capture) {
-          if (_scanned) return;
-          final barcode = capture.barcodes.firstOrNull;
-          if (barcode?.rawValue != null) {
-            _scanned = true;
-            Navigator.pop(context, barcode!.rawValue);
-          }
-        },
-      ),
-    );
-  }
-}

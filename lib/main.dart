@@ -77,7 +77,7 @@ class _MainShellState extends State<MainShell> {
     }
 
     final pages = [
-      ServersPage(onGoToSettings: () => setState(() => _currentIndex = 3)),
+      ServersPage(onGoToSettings: () => setState(() => _currentIndex = 3), v2rayBox: _v2rayBox),
       HomePage(v2rayBox: _v2rayBox),
       LogsPage(v2rayBox: _v2rayBox),
       SettingsPage(v2rayBox: _v2rayBox),

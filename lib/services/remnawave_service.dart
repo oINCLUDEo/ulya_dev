@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
+import '../models/subscription_info.dart';
 
 /// Service that fetches and parses the user's personal subscription URL.
 ///
@@ -23,6 +24,13 @@ import '../models/server_node.dart';
 class RemnawaveService {
   static const _prefSubscriptionUrl = 'subscription_url';
   static const _prefHwid = 'device_hwid';
+
+  // ── Cached subscription info ──────────────────────────────────────────────
+
+  static SubscriptionInfo? _lastSubscriptionInfo;
+
+  /// The subscription quota/expiry info from the most recent [fetchNodes] call.
+  static SubscriptionInfo? get lastSubscriptionInfo => _lastSubscriptionInfo;
 
   // ── Subscription URL storage ─────────────────────────────────────────────
 
@@ -97,6 +105,8 @@ class RemnawaveService {
         return [];
       }
 
+      _lastSubscriptionInfo = _parseSubscriptionInfo(response.headers);
+
       final lines = _parseSubscriptionBody(response.body);
       final nodes = lines
           .map(_parseConfigLink)
@@ -149,8 +159,39 @@ class RemnawaveService {
         .toList();
   }
 
-  /// Parses a single VPN config link into a [ServerNode].
+  /// Parses the `Subscription-Userinfo` header into a [SubscriptionInfo].
   ///
+  /// Standard format: `upload=131072; download=1048576; total=1073741824; expire=1893427200`
+  static SubscriptionInfo? _parseSubscriptionInfo(Map<String, String> headers) {
+    final raw = headers['subscription-userinfo'] ??
+        headers['x-subscription-userinfo'];
+    if (raw == null || raw.isEmpty) return null;
+
+    final values = <String, int>{};
+    for (final part in raw.split(';')) {
+      final eq = part.indexOf('=');
+      if (eq < 0) continue;
+      final key = part.substring(0, eq).trim().toLowerCase();
+      final val = int.tryParse(part.substring(eq + 1).trim());
+      if (val != null) values[key] = val;
+    }
+
+    final upload = values['upload'] ?? 0;
+    final download = values['download'] ?? 0;
+    final total = values['total'] ?? 0;
+    final expireEpoch = values['expire'];
+
+    return SubscriptionInfo(
+      uploadBytes: upload,
+      downloadBytes: download,
+      totalBytes: total,
+      expireDate: expireEpoch != null && expireEpoch > 0
+          ? DateTime.fromMillisecondsSinceEpoch(expireEpoch * 1000)
+          : null,
+    );
+  }
+
+  /// Parses a single VPN config link into a [ServerNode].
   /// Supported schemes: vless, vmess, trojan, ss, hysteria2, hy2, tuic, wg.
   /// Returns `null` for unrecognised links.
   static ServerNode? _parseConfigLink(String link) {
