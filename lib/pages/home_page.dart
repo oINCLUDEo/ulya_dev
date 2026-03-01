@@ -545,6 +545,12 @@ class _HomePageState extends State<HomePage>
           _snack('Config error: $err');
           return;
         }
+        // Apply config options — enable TLS fragment if user turned it on.
+        final prefs = await SharedPreferences.getInstance();
+        final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
+        await widget.v2rayBox.setConfigOptions(
+          fragmentOn ? const _FragmentConfigOptions() : const ConfigOptions(),
+        );
         await widget.v2rayBox.connect(
           _selectedConfig!.link,
           name: _selectedConfig!.name,
@@ -1245,6 +1251,29 @@ class _StatTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// A [ConfigOptions] variant that enables TLS fragmentation.
+///
+/// Fragmentation breaks the TLS ClientHello into multiple TCP segments so that
+/// DPI systems cannot read the SNI field.  This is effective against
+/// whitelist-based mobile filtering (e.g. Rostelecom, Beeline, etc.).
+class _FragmentConfigOptions extends ConfigOptions {
+  const _FragmentConfigOptions() : super();
+
+  @override
+  Map<String, dynamic> toJson() {
+    final json = super.toJson();
+    json['tls-tricks'] = {
+      'enable-fragment': true,
+      'fragment-size': '100-200',
+      'fragment-sleep': '50-100',
+      'mixed-sni-case': false,
+      'enable-padding': false,
+      'padding-size': '100-200',
+    };
+    return json;
   }
 }
 

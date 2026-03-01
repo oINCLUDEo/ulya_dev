@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:v2ray_box/v2ray_box.dart';
 
 import '../services/remnawave_service.dart';
@@ -28,6 +29,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String _searchQuery = '';
   final TextEditingController _searchCtrl = TextEditingController();
   String _subscriptionUrl = '';
+  bool _fragmentEnabled = false;
   bool get _supportsPerAppProxy =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -53,6 +55,9 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (_) {}
 
     _subscriptionUrl = await RemnawaveService.getSubscriptionUrl();
+
+    final prefs = await SharedPreferences.getInstance();
+    _fragmentEnabled = prefs.getBool('tls_fragment_enabled') ?? false;
 
     if (_supportsPerAppProxy) {
       _perAppMode = await widget.v2rayBox.getPerAppProxyMode();
@@ -174,6 +179,29 @@ class _SettingsPageState extends State<SettingsPage> {
                   'Proxy',
                   'Use as local proxy only',
                   VpnMode.proxy,
+                ),
+              ]),
+            ),
+          ),
+
+          // Bypass Filtering
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            sliver: SliverToBoxAdapter(
+              child: _buildSection('Обход фильтрации', [
+                SwitchListTile(
+                  title: const Text('TLS Fragment'),
+                  subtitle: Text(
+                    'Разбивает TLS ClientHello на фрагменты, скрывая SNI от DPI. '
+                    'Помогает при мобильном интернете с белыми списками.',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                  ),
+                  value: _fragmentEnabled,
+                  onChanged: (v) async {
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.setBool('tls_fragment_enabled', v);
+                    setState(() => _fragmentEnabled = v);
+                  },
                 ),
               ]),
             ),
