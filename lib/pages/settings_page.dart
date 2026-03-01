@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:v2ray_box/v2ray_box.dart';
 
+import '../services/remnawave_service.dart';
+
 class SettingsPage extends StatefulWidget {
   final V2rayBox v2rayBox;
   const SettingsPage({super.key, required this.v2rayBox});
@@ -25,6 +27,8 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _loadingApps = true;
   String _searchQuery = '';
   final TextEditingController _searchCtrl = TextEditingController();
+  String _apiUrl = '';
+  String _apiKey = '';
   bool get _supportsPerAppProxy =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -48,6 +52,9 @@ class _SettingsPageState extends State<SettingsPage> {
       _coreEngine = await widget.v2rayBox.getCoreEngine();
       _coreInfo = await widget.v2rayBox.getCoreInfo();
     } catch (_) {}
+
+    _apiUrl = await RemnawaveService.getApiUrl();
+    _apiKey = await RemnawaveService.getApiKey();
 
     if (_supportsPerAppProxy) {
       _perAppMode = await widget.v2rayBox.getPerAppProxyMode();
@@ -120,12 +127,41 @@ class _SettingsPageState extends State<SettingsPage> {
             padding: const EdgeInsets.all(16),
             sliver: SliverToBoxAdapter(
               child: Text(
-                'Settings',
+                'Настройки',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
                 ),
               ),
+            ),
+          ),
+
+          // Remnawave Panel
+          SliverPadding(
+            padding: const EdgeInsets.all(16),
+            sliver: SliverToBoxAdapter(
+              child: _buildSection('Панель Remnawave', [
+                ListTile(
+                  title: const Text('URL панели'),
+                  subtitle: Text(
+                    _apiUrl.isEmpty ? 'Не задан' : _apiUrl,
+                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Icons.edit, size: 18),
+                  onTap: _showApiUrlDialog,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  title: const Text('API ключ'),
+                  subtitle: Text(
+                    _apiKey.isEmpty ? 'Не задан' : 'Задан',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.edit, size: 18),
+                  onTap: _showApiKeyDialog,
+                ),
+              ]),
             ),
           ),
 
@@ -296,6 +332,72 @@ class _SettingsPageState extends State<SettingsPage> {
           ],
 
           const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
+        ],
+      ),
+    );
+  }
+
+  void _showApiUrlDialog() {
+    final ctrl = TextEditingController(text: _apiUrl);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('URL панели Remnawave'),
+        content: TextField(
+          controller: ctrl,
+          decoration: const InputDecoration(
+            hintText: 'https://panel.example.com',
+            border: OutlineInputBorder(),
+          ),
+          keyboardType: TextInputType.url,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final url = ctrl.text.trim();
+              await RemnawaveService.saveApiUrl(url);
+              setState(() => _apiUrl = url);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showApiKeyDialog() {
+    final ctrl = TextEditingController(text: _apiKey);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('API ключ Remnawave'),
+        content: TextField(
+          controller: ctrl,
+          decoration: const InputDecoration(
+            hintText: 'Введите X-Api-Key',
+            border: OutlineInputBorder(),
+          ),
+          obscureText: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final key = ctrl.text.trim();
+              await RemnawaveService.saveApiKey(key);
+              setState(() => _apiKey = key);
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Сохранить'),
+          ),
         ],
       ),
     );

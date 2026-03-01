@@ -3,19 +3,20 @@ import 'package:v2ray_box/v2ray_box.dart';
 
 import 'pages/home_page.dart';
 import 'pages/logs_page.dart';
+import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
 
 void main() {
-  runApp(const V2RayBoxApp());
+  runApp(const UlyaVpnApp());
 }
 
-class V2RayBoxApp extends StatelessWidget {
-  const V2RayBoxApp({super.key});
+class UlyaVpnApp extends StatelessWidget {
+  const UlyaVpnApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'V2Ray Box',
+      title: 'Ulya VPN',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -60,7 +61,7 @@ class _MainShellState extends State<MainShell> {
 
   Future<void> _init() async {
     try {
-      await _v2rayBox.initialize(notificationStopButtonText: 'Stop');
+      await _v2rayBox.initialize(notificationStopButtonText: 'Стоп');
     } catch (e) {
       debugPrint('Init error: $e');
     }
@@ -76,6 +77,7 @@ class _MainShellState extends State<MainShell> {
     }
 
     final pages = [
+      const ServersPage(),
       HomePage(v2rayBox: _v2rayBox),
       LogsPage(v2rayBox: _v2rayBox),
       SettingsPage(v2rayBox: _v2rayBox),
@@ -89,9 +91,26 @@ class _MainShellState extends State<MainShell> {
         backgroundColor: const Color(0xFF1A1A2E),
         indicatorColor: const Color(0xFF6C5CE7).withOpacity(0.3),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.article_outlined), selectedIcon: Icon(Icons.article), label: 'Logs'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
+          NavigationDestination(
+            icon: Icon(Icons.dns_outlined),
+            selectedIcon: Icon(Icons.dns),
+            label: 'Серверы',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Главная',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.article_outlined),
+            selectedIcon: Icon(Icons.article),
+            label: 'Логи',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Настройки',
+          ),
         ],
       ),
     );
