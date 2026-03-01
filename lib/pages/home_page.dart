@@ -10,6 +10,8 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:v2ray_box/v2ray_box.dart';
 
+import '../models/server_node.dart';
+import '../services/remnawave_service.dart';
 import 'config_editor_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -30,6 +32,9 @@ class _HomePageState extends State<HomePage>
 
   List<VpnConfig> _configs = [];
   VpnConfig? _selectedConfig;
+
+  List<ServerNode> _subscriptionNodes = [];
+  bool _isLoadingNodes = false;
 
   StreamSubscription<VpnStatus>? _statusSub;
   StreamSubscription<VpnStats>? _statsSub;
@@ -62,7 +67,18 @@ class _HomePageState extends State<HomePage>
     await _loadConfigs();
     await _refreshRuntimeState();
     _startWatching();
+    unawaited(_loadSubscriptionNodes());
     if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSubscriptionNodes() async {
+    if (mounted) setState(() => _isLoadingNodes = true);
+    final nodes = await RemnawaveService.fetchNodes();
+    if (!mounted) return;
+    setState(() {
+      _subscriptionNodes = nodes;
+      _isLoadingNodes = false;
+    });
   }
 
   Future<void> _refreshRuntimeState() async {
@@ -449,6 +465,245 @@ class _HomePageState extends State<HomePage>
     _saveConfigs();
   }
 
+  void _selectSubscriptionNode(ServerNode node) {
+    final link = node.link;
+    if (link == null || link.isEmpty) return;
+
+    // Reuse existing config if already imported; otherwise parse and add.
+    try {
+      var config = _configs.firstWhere(
+        (c) => c.link == link,
+        orElse: () {
+          final newCfg = widget.v2rayBox.parseConfigLink(link);
+          _configs.add(newCfg);
+          return newCfg;
+        },
+      );
+      _selectConfig(config); // _selectConfig already calls _saveConfigs()
+    } catch (e) {
+      _snack('Не удалось загрузить конфиг: $e');
+    }
+  }
+
+  void _showServerPicker() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A1A2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            // Reload nodes and update both the sheet and the parent state.
+            Future<void> reload() async {
+              setSheetState(() => _isLoadingNodes = true);
+              final nodes = await RemnawaveService.fetchNodes();
+              if (!mounted) return;
+              setState(() {
+                _subscriptionNodes = nodes;
+                _isLoadingNodes = false;
+              });
+              setSheetState(() {});
+            }
+
+            return DraggableScrollableSheet(
+              expand: false,
+              initialChildSize: 0.55,
+              maxChildSize: 0.9,
+              minChildSize: 0.3,
+              builder: (_, scrollCtrl) => Column(
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[600],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Выбрать сервер',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        if (_isLoadingNodes)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          IconButton(
+                            icon: const Icon(Icons.refresh, size: 20),
+                            onPressed: reload,
+                            tooltip: 'Обновить',
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: _subscriptionNodes.isEmpty
+                        ? Center(
+                            child: _isLoadingNodes
+                                ? const CircularProgressIndicator()
+                                : Padding(
+                                    padding: const EdgeInsets.all(32),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.cloud_off,
+                                          size: 48,
+                                          color: Colors.grey[600],
+                                        ),
+                                        const SizedBox(height: 12),
+                                        Text(
+                                          'Серверы не получены',
+                                          style: TextStyle(
+                                            color: Colors.grey[400],
+                                            fontSize: 14,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Проверьте URL подписки в Настройках',
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 12,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                          )
+                        : ListView.builder(
+                            controller: scrollCtrl,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            itemCount: _subscriptionNodes.length,
+                            itemBuilder: (_, i) {
+                              final node = _subscriptionNodes[i];
+                              final isSelected =
+                                  _selectedConfig?.link == node.link;
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                color: isSelected
+                                    ? const Color(0xFF6C5CE7).withOpacity(0.15)
+                                    : null,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: isSelected
+                                      ? const BorderSide(
+                                          color: Color(0xFF6C5CE7),
+                                          width: 1.5,
+                                        )
+                                      : BorderSide.none,
+                                ),
+                                child: ListTile(
+                                  onTap: () {
+                                    _selectSubscriptionNode(node);
+                                    Navigator.pop(ctx);
+                                  },
+                                  leading: Text(
+                                    _countryEmoji(node.countryCode),
+                                    style: const TextStyle(fontSize: 24),
+                                  ),
+                                  title: Text(
+                                    node.name,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(
+                                    node.address,
+                                    style: TextStyle(
+                                      color: Colors.grey[500],
+                                      fontSize: 12,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  trailing: isSelected
+                                      ? const Icon(
+                                          Icons.check_circle,
+                                          color: Color(0xFF6C5CE7),
+                                        )
+                                      : _protocolBadge(node.protocol ?? ''),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  String _countryEmoji(String countryCode) {
+    if (countryCode.length != 2) return '🌐';
+    final upper = countryCode.toUpperCase();
+    final f = upper.codeUnitAt(0);
+    final s = upper.codeUnitAt(1);
+    // Only emit flag emoji for valid ASCII letter pairs.
+    if (f < 0x41 || f > 0x5A || s < 0x41 || s > 0x5A) return '🌐';
+    const base = 0x1F1E6 - 0x41;
+    return String.fromCharCode(base + f) + String.fromCharCode(base + s);
+  }
+
+  Widget _protocolBadge(String protocol) {
+    if (protocol.isEmpty) return const SizedBox.shrink();
+    Color color;
+    switch (protocol.toLowerCase()) {
+      case 'vless':
+        color = const Color(0xFF00D9FF);
+      case 'vmess':
+        color = const Color(0xFF6C5CE7);
+      case 'trojan':
+        color = const Color(0xFFFFA502);
+      case 'ss':
+        color = const Color(0xFF2ED573);
+      default:
+        color = Colors.grey;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        protocol.toUpperCase(),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
   Future<void> _deleteConfig(VpnConfig config) async {
     setState(() {
       _configs.remove(config);
@@ -777,17 +1032,38 @@ class _HomePageState extends State<HomePage>
                           color: statusColor,
                         ),
                       ),
-                      if (_selectedConfig != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          _selectedConfig!.name,
-                          style: TextStyle(
-                            color: Colors.grey[400],
-                            fontSize: 14,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                      const SizedBox(height: 6),
+                      GestureDetector(
+                        onTap: _showServerPicker,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                _selectedConfig?.name ?? 'Выбрать сервер',
+                                style: TextStyle(
+                                  color: _selectedConfig != null
+                                      ? Colors.grey[400]
+                                      : const Color(0xFF6C5CE7),
+                                  fontSize: 13,
+                                  fontWeight: _selectedConfig != null
+                                      ? FontWeight.normal
+                                      : FontWeight.w600,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.expand_more_rounded,
+                              size: 16,
+                              color: _selectedConfig != null
+                                  ? Colors.grey[500]
+                                  : const Color(0xFF6C5CE7),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ],
                   ),
                 ),
