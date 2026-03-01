@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -15,8 +16,13 @@ import '../models/server_node.dart';
 /// The URL returns VPN configuration lines (vless://, vmess://, trojan://, …),
 /// optionally base64-encoded, one config per line.  Each config is parsed into
 /// a [ServerNode] that the Servers page can display.
+///
+/// The subscription server identifies devices via two required headers:
+///   `User-Agent: Happ/1.5.1/Android`
+///   `X-HWID: <stable-device-id>`
 class RemnawaveService {
   static const _prefSubscriptionUrl = 'subscription_url';
+  static const _prefHwid = 'device_hwid';
 
   // ── Subscription URL storage ─────────────────────────────────────────────
 
@@ -30,6 +36,39 @@ class RemnawaveService {
     await prefs.setString(_prefSubscriptionUrl, url.trim());
   }
 
+  // ── Device HWID ───────────────────────────────────────────────────────────
+
+  /// Returns the stable hardware ID for this device installation.
+  ///
+  /// On first call a random UUID-v4-like string is generated and persisted in
+  /// SharedPreferences.  Subsequent calls return the same value so the
+  /// subscription server sees a consistent device identity.
+  static Future<String> getOrCreateHwid() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existing = prefs.getString(_prefHwid);
+    if (existing != null && existing.isNotEmpty) return existing;
+
+    final hwid = _generateUuid();
+    await prefs.setString(_prefHwid, hwid);
+    return hwid;
+  }
+
+  /// Generates a random UUID v4 string without external dependencies.
+  static String _generateUuid() {
+    final bytes = List<int>.generate(16, (_) => _rng.nextInt(256));
+    // Set version bits (v4) and variant bits per RFC 4122.
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    String _h(int b) => b.toRadixString(16).padLeft(2, '0');
+    return '${bytes.sublist(0, 4).map(_h).join()}'
+        '-${bytes.sublist(4, 6).map(_h).join()}'
+        '-${bytes.sublist(6, 8).map(_h).join()}'
+        '-${bytes.sublist(8, 10).map(_h).join()}'
+        '-${bytes.sublist(10, 16).map(_h).join()}';
+  }
+
+  static final Random _rng = Random.secure();
+
   // ── Fetch & parse ─────────────────────────────────────────────────────────
 
   /// Fetches the subscription URL and returns a list of [ServerNode]s.
@@ -42,10 +81,16 @@ class RemnawaveService {
     final uri = Uri.tryParse(subUrl);
     if (uri == null) return [];
 
+    final hwid = await getOrCreateHwid();
+
     try {
-      final response = await http
-          .get(uri, headers: {'User-Agent': 'v2rayNG/1.8'})
-          .timeout(const Duration(seconds: 15));
+      final response = await http.get(
+        uri,
+        headers: {
+          'User-Agent': 'Happ/1.5.1/Android',
+          'X-HWID': hwid,
+        },
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
         debugPrint('RemnawaveService: subscription returned ${response.statusCode}');
@@ -57,6 +102,7 @@ class RemnawaveService {
           .map(_parseConfigLink)
           .whereType<ServerNode>()
           .toList();
+      debugPrint('RemnawaveService: loaded ${nodes.length} nodes');
       return nodes;
     } catch (e) {
       debugPrint('RemnawaveService: fetchNodes error: $e');
@@ -84,6 +130,7 @@ class RemnawaveService {
       final decoded = utf8.decode(base64.decode(b64));
       // If the decoded string looks like VPN config links, use it.
       if (decoded.contains('://')) {
+        debugPrint('RemnawaveService: parsed as base64 (${decoded.split('\n').length} lines)');
         return decoded
             .split(RegExp(r'\r?\n'))
             .map((l) => l.trim())
@@ -94,6 +141,7 @@ class RemnawaveService {
       // Not base64 — fall through to plain-text parsing.
     }
 
+    debugPrint('RemnawaveService: parsed as plain text');
     return body
         .split(RegExp(r'\r?\n'))
         .map((l) => l.trim())
