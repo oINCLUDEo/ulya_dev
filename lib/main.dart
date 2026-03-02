@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:v2ray_box/v2ray_box.dart';
 
 import 'pages/home_page.dart';
 import 'pages/logs_page.dart';
@@ -31,8 +30,7 @@ class UlyaVpnApp extends StatelessWidget {
         cardTheme: CardThemeData(
           color: const Color(0xFF1A1A2E),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+              borderRadius: BorderRadius.circular(16)),
         ),
         fontFamily: 'Roboto',
       ),
@@ -49,68 +47,44 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
-  final V2rayBox _v2rayBox = V2rayBox();
   int _currentIndex = 0;
-  bool _isInitialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _init();
-  }
-
-  Future<void> _init() async {
-    try {
-      await _v2rayBox.initialize(notificationStopButtonText: 'Стоп');
-    } catch (e) {
-      debugPrint('Init error: $e');
-    }
-    if (mounted) setState(() => _isInitialized = true);
-  }
 
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialized) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
     final pages = [
-      ServersPage(onGoToSettings: () => setState(() => _currentIndex = 3), v2rayBox: _v2rayBox),
-      HomePage(v2rayBox: _v2rayBox),
-      LogsPage(v2rayBox: _v2rayBox),
-      SettingsPage(v2rayBox: _v2rayBox),
+      // Передаём callback чтобы со страницы серверов переключаться на настройки
+      ServersPage(
+          onGoToSettings: () => setState(() => _currentIndex = 3)),
+      const HomePage(),
+      const LogsPage(),
+      const SettingsPage(),
     ];
 
     return Scaffold(
       body: IndexedStack(index: _currentIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
+        onDestinationSelected: (i) =>
+            setState(() => _currentIndex = i),
         backgroundColor: const Color(0xFF1A1A2E),
         indicatorColor: const Color(0xFF6C5CE7).withOpacity(0.3),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.dns_outlined),
-            selectedIcon: Icon(Icons.dns),
-            label: 'Серверы',
-          ),
+              icon: Icon(Icons.dns_outlined),
+              selectedIcon: Icon(Icons.dns),
+              label: 'Серверы'),
           NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home),
-            label: 'Главная',
-          ),
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home),
+              label: 'Главная'),
           NavigationDestination(
-            icon: Icon(Icons.article_outlined),
-            selectedIcon: Icon(Icons.article),
-            label: 'Логи',
-          ),
+              icon: Icon(Icons.article_outlined),
+              selectedIcon: Icon(Icons.article),
+              label: 'Логи'),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Настройки',
-          ),
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings),
+              label: 'Настройки'),
         ],
       ),
     );

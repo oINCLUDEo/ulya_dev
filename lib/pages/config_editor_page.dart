@@ -2,16 +2,17 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:v2ray_box/v2ray_box.dart';
+import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 
+/// Редактор JSON-конфига с возможностью подключиться напрямую.
+/// flutter_v2ray_plus не имеет checkConfigJson, поэтому валидация
+/// выполняется локально (парсинг JSON) + пинг через getServerDelay.
 class ConfigEditorPage extends StatefulWidget {
-  final V2rayBox v2rayBox;
   final String configJson;
   final String configName;
 
   const ConfigEditorPage({
     super.key,
-    required this.v2rayBox,
     required this.configJson,
     required this.configName,
   });
@@ -39,91 +40,106 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
     super.dispose();
   }
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
   String _formatJson(String json) {
     try {
-      final obj = jsonDecode(json);
-      return const JsonEncoder.withIndent('  ').convert(obj);
+      return const JsonEncoder.withIndent('  ')
+          .convert(jsonDecode(json));
     } catch (_) {
       return json;
     }
   }
 
-  Future<void> _validate() async {
-    setState(() => _isValidating = true);
+  String? _compact() {
     try {
-      String compactJson;
-      try {
-        compactJson = jsonEncode(jsonDecode(_ctrl.text));
-      } catch (e) {
-        setState(() {
-          _isValid = false;
-          _validationMsg = 'Invalid JSON syntax: $e';
-          _isValidating = false;
-        });
-        return;
-      }
+      return jsonEncode(jsonDecode(_ctrl.text));
+    } catch (e) {
+      _snack('Неверный JSON: $e');
+      return null;
+    }
+  }
 
-      final result = await widget.v2rayBox.checkConfigJson(compactJson);
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: const Color(0xFF2D2D44),
+      shape:
+      RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    ));
+  }
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  /// Валидация: проверяем JSON-синтаксис + пинг через getServerDelay.
+  Future<void> _validate() async {
+    final compact = _compact();
+    if (compact == null) return;
+    setState(() {
+      _isValidating = true;
+      _validationMsg = '';
+    });
+    try {
+      final ms =
+      await FlutterV2ray().getServerDelay(config: compact);
+      if (!mounted) return;
       setState(() {
-        _isValid = result.isEmpty;
-        _validationMsg = result.isEmpty ? 'Config is valid' : result;
+        _isValid = ms >= 0;
+        _validationMsg = ms >= 0
+            ? 'Конфиг рабочий ✅  (пинг: ${ms}ms)'
+            : 'Сервер недоступен ❌';
         _isValidating = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isValid = false;
-        _validationMsg = 'Validation error: $e';
+        _validationMsg = 'Ошибка валидации: $e';
         _isValidating = false;
       });
     }
   }
 
-  Future<void> _connectWithJson() async {
+  Future<void> _connect() async {
+    final compact = _compact();
+    if (compact == null) return;
+
+    if (!await FlutterV2ray().requestPermission()) {
+      _snack('VPN permission denied');
+      return;
+    }
+
     setState(() => _isConnecting = true);
     try {
-      String compactJson;
-      try {
-        compactJson = jsonEncode(jsonDecode(_ctrl.text));
-      } catch (e) {
-        _snack('Invalid JSON: $e');
-        setState(() => _isConnecting = false);
-        return;
-      }
-
-      final ok = await widget.v2rayBox.connectWithJson(compactJson, name: widget.configName);
-      if (ok) {
-        _snack('Connected with custom config');
-        if (mounted) Navigator.pop(context);
-      } else {
-        _snack('Failed to connect');
-      }
+      await FlutterV2ray().startVless(
+        remark: widget.configName,
+        config: compact,
+        notificationDisconnectButtonName: 'Отключить',
+        proxyOnly: false,
+      );
+      if (mounted) Navigator.pop(context);
     } catch (e) {
-      _snack('Error: $e');
+      _snack('Ошибка: $e');
+    } finally {
+      if (mounted) setState(() => _isConnecting = false);
     }
-    if (mounted) setState(() => _isConnecting = false);
   }
 
   void _copyJson() {
     Clipboard.setData(ClipboardData(text: _ctrl.text));
-    _snack('JSON copied');
+    _snack('JSON скопирован');
   }
 
-  void _formatText() {
-    final formatted = _formatJson(_ctrl.text);
-    _ctrl.text = formatted;
-    _ctrl.selection = TextSelection.fromPosition(TextPosition(offset: formatted.length));
+  void _format() {
+    final f = _formatJson(_ctrl.text);
+    _ctrl.text = f;
+    _ctrl.selection =
+        TextSelection.fromPosition(TextPosition(offset: f.length));
   }
 
-  void _snack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2D2D44),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
-  }
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -132,14 +148,23 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
         title: Text(widget.configName, overflow: TextOverflow.ellipsis),
         backgroundColor: Colors.transparent,
         actions: [
-          IconButton(icon: const Icon(Icons.format_align_left), onPressed: _formatText, tooltip: 'Format JSON'),
-          IconButton(icon: const Icon(Icons.copy), onPressed: _copyJson, tooltip: 'Copy'),
+          IconButton(
+              icon: const Icon(Icons.format_align_left),
+              onPressed: _format,
+              tooltip: 'Форматировать'),
+          IconButton(
+              icon: const Icon(Icons.copy),
+              onPressed: _copyJson,
+              tooltip: 'Копировать'),
           IconButton(
             icon: _isValidating
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.check_circle_outline),
             onPressed: _isValidating ? null : _validate,
-            tooltip: 'Validate',
+            tooltip: 'Валидировать (пинг)',
           ),
         ],
       ),
@@ -148,27 +173,29 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
           if (_validationMsg.isNotEmpty)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: _isValid ? const Color(0xFF2ED573).withOpacity(0.2) : const Color(0xFFE74C3C).withOpacity(0.2),
-              child: Row(
-                children: [
-                  Icon(
-                    _isValid ? Icons.check_circle : Icons.error,
-                    color: _isValid ? const Color(0xFF2ED573) : const Color(0xFFE74C3C),
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _validationMsg,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 8),
+              color: _isValid
+                  ? const Color(0xFF2ED573).withOpacity(0.15)
+                  : const Color(0xFFE74C3C).withOpacity(0.15),
+              child: Row(children: [
+                Icon(
+                  _isValid ? Icons.check_circle : Icons.error,
+                  color: _isValid
+                      ? const Color(0xFF2ED573)
+                      : const Color(0xFFE74C3C),
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(_validationMsg,
                       style: TextStyle(
-                        color: _isValid ? const Color(0xFF2ED573) : const Color(0xFFE74C3C),
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                          color: _isValid
+                              ? const Color(0xFF2ED573)
+                              : const Color(0xFFE74C3C),
+                          fontSize: 13)),
+                ),
+              ]),
             ),
           Expanded(
             child: Padding(
@@ -177,7 +204,10 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
                 controller: _ctrl,
                 maxLines: null,
                 expands: true,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5),
+                style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    height: 1.5),
                 decoration: const InputDecoration(
                   border: InputBorder.none,
                   contentPadding: EdgeInsets.all(8),
@@ -191,15 +221,22 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: FilledButton.icon(
-            onPressed: _isConnecting ? null : _connectWithJson,
+            onPressed: _isConnecting ? null : _connect,
             icon: _isConnecting
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.play_arrow),
-            label: Text(_isConnecting ? 'Connecting...' : 'Connect with this config'),
+            label: Text(_isConnecting
+                ? 'Подключение…'
+                : 'Подключить с этим конфигом'),
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF6C5CE7),
               minimumSize: const Size.fromHeight(50),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
             ),
           ),
         ),

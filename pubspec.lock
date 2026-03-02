@@ -123,6 +123,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  flutter_v2ray_plus:
+    dependency: "direct main"
+    description:
+      name: flutter_v2ray_plus
+      sha256: "3e645701b76578e7b1dd285b869a988baee3f9a234448737da9829c63f3d3d11"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.3"
   flutter_web_plugins:
     dependency: transitive
     description: flutter
@@ -525,15 +533,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.5.3"
-  v2ray_box:
-    dependency: "direct main"
-    description:
-      path: "."
-      ref: main
-      resolved-ref: bc194f6a2fddee401d1c3b8141fec8d76c8d19f3
-      url: "https://github.com/pesaregorg/v2ray_box.git"
-    source: git
-    version: "1.0.6"
   vector_math:
     dependency: transitive
     description:
