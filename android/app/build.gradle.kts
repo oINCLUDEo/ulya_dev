@@ -46,6 +46,5 @@ flutter {
 }
 
 dependencies {
-    // ↓ ОБЯЗАТЕЛЬНО — нативная библиотека Xray
     implementation(files("libs/libxray.aar"))
 }

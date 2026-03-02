@@ -9,7 +9,7 @@ subprojects {
     afterEvaluate {
         // Принудительно buildToolsVersion 34 для всех
         extensions.findByType<com.android.build.gradle.BaseExtension>()
-            ?.buildToolsVersion = "34.0.0"
+            ?.buildToolsVersion = "35.0.1"
 
         // Патч: после генерации AIDL файлов — убираем проблемный комментарий
         tasks.matching { it.name.startsWith("compile") && it.name.endsWith("JavaWithJavac") }
