@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Vendored library build artefacts
+packages/v2ray_box/.dart_tool/
+packages/v2ray_box/build/
+packages/v2ray_box/.pub/

@@ -10,7 +10,6 @@ import 'package:v2ray_box/v2ray_box.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 import '../services/remnawave_service.dart';
-import '../services/xray_config_builder.dart';
 
 class HomePage extends StatefulWidget {
   final V2rayBox v2rayBox;
@@ -538,48 +537,21 @@ class _HomePageState extends State<HomePage>
             }
           }
         }
-        // Get the full native config (includes TUN inbound for VPN mode),
-        // then patch only DNS + routing for whitelist-based mobile filtering.
-        // Fall back to the plain native connect() on any error.
-        bool patchedConfigSucceeded = false;
-        final nativeJson =
-            await widget.v2rayBox.generateConfig(_selectedConfig!.link);
-        if (nativeJson.isNotEmpty) {
-          final patched = XrayConfigBuilder.patchNativeConfig(nativeJson);
-          if (patched != null) {
-            final err = await widget.v2rayBox.checkConfigJson(patched);
-            if (err.isEmpty) {
-              await widget.v2rayBox.connectWithJson(
-                patched,
-                name: _selectedConfig!.name,
-              );
-              patchedConfigSucceeded = true;
-            }
-          }
-        }
-        if (!patchedConfigSucceeded) {
-          // Fallback: use the native link parser with optional TLS fragment.
-          final err =
-              await widget.v2rayBox.parseConfig(_selectedConfig!.link);
-          if (err.isNotEmpty) {
-            if (mounted) {
-              setState(() => _status = VpnStatus.stopped);
-            }
-            _snack('Config error: $err');
-            return;
-          }
-          final prefs = await SharedPreferences.getInstance();
-          final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
-          await widget.v2rayBox.setConfigOptions(
-            fragmentOn
-                ? const _FragmentConfigOptions()
-                : const ConfigOptions(),
-          );
-          await widget.v2rayBox.connect(
-            _selectedConfig!.link,
-            name: _selectedConfig!.name,
-          );
-        }
+        // Use the library's native connect() which now generates a proper
+        // Xray config with TUN inbound + DNS servers + IPIfNonMatch routing
+        // via our patched XrayConfigParser in packages/v2ray_box.
+        // Apply optional TLS fragment before connecting.
+        final prefs = await SharedPreferences.getInstance();
+        final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
+        await widget.v2rayBox.setConfigOptions(
+          fragmentOn
+              ? const _FragmentConfigOptions()
+              : const ConfigOptions(),
+        );
+        await widget.v2rayBox.connect(
+          _selectedConfig!.link,
+          name: _selectedConfig!.name,
+        );
       } catch (e) {
         if (mounted) {
           setState(() => _status = VpnStatus.stopped);

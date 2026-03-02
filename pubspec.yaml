@@ -60,3 +60,9 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+# Override v2ray_box with our local vendored copy that patches buildDns() and
+# buildRouting() in XrayConfigParser.kt to include 1.1.1.1/8.8.8.8 DNS servers
+# and IPIfNonMatch routing rules required for whitelist-based mobile filtering.
+dependency_overrides:
+  v2ray_box:
+    path: packages/v2ray_box
