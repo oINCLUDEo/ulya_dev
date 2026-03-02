@@ -46,8 +46,11 @@ object SingboxConfigParser {
                     "detour" to "proxy"
                 ),
                 mapOf(
-                    "type" to "local",
-                    "tag" to DNS_DIRECT_TAG
+                    "type" to "udp",
+                    "tag" to DNS_DIRECT_TAG,
+                    "server" to "8.8.8.8",
+                    "server_port" to 53,
+                    "detour" to "direct"
                 )
             ),
             "strategy" to DNS_STRATEGY,

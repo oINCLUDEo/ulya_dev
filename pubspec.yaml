@@ -22,6 +22,10 @@ dependencies:
   mobile_scanner: ^7.0.1
   share_plus: ^11.0.0
 
+dependency_overrides:
+  v2ray_box:
+    path: packages/v2ray_box
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
