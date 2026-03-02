@@ -545,21 +545,36 @@ class _HomePageState extends State<HomePage>
           _snack('Config error: $err');
           return;
         }
-        // Apply config options — enable TLS fragment if user turned it on.
         final prefs = await SharedPreferences.getInstance();
         final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
-        await widget.v2rayBox.setConfigOptions(
-          fragmentOn
-              ? const _FragmentConfigOptions()
-              : const ConfigOptions(
-                  directDnsAddress: _kDirectDns,
-                  remoteDnsAddress: _kRemoteDns,
-                ),
-        );
-        await widget.v2rayBox.connect(
-          _selectedConfig!.link,
-          name: _selectedConfig!.name,
-        );
+
+        // Build an enhanced xray JSON config with proper DNS servers, routing
+        // rules, and optional TLS fragment for whitelist-based DPI bypass.
+        //
+        // We always use xray as the runtime engine because the v2ray_box
+        // library's sing-box config generator hardcodes `"type": "local"` for
+        // its DNS-direct server, which on many Android devices tries [::1]:53
+        // (the Android stub resolver) and fails with "connection refused",
+        // preventing the VPN from establishing any connections.
+        final savedEngine = await widget.v2rayBox.getCoreEngine();
+        if (savedEngine != 'xray') await widget.v2rayBox.setCoreEngine('xray');
+        try {
+          final configJson = _patchXrayConfig(
+            await widget.v2rayBox.generateConfig(_selectedConfig!.link),
+            fragmentOn: fragmentOn,
+          );
+          await widget.v2rayBox.connectWithJson(
+            configJson,
+            name: _selectedConfig!.name,
+          );
+        } finally {
+          // Restore the user's engine preference. The active connection already
+          // uses xray because Settings.activeRuntimeEngine was captured before
+          // the service broadcast was sent.
+          if (savedEngine != 'xray') {
+            await widget.v2rayBox.setCoreEngine(savedEngine);
+          }
+        }
       } catch (e) {
         if (mounted) {
           setState(() => _status = VpnStatus.stopped);
@@ -567,6 +582,72 @@ class _HomePageState extends State<HomePage>
         _snack('Connection failed: $e');
       }
     }
+  }
+
+  /// Patches a raw xray JSON config to add:
+  /// - Explicit DNS servers (1.1.1.1 via proxy, 8.8.8.8 direct) so that
+  ///   resolution works reliably under whitelist filtering where the system
+  ///   DNS may be poisoned or unavailable.
+  /// - `IPIfNonMatch` domain strategy with DNS-split routing rules that match
+  ///   the proven Happ configuration.
+  /// - TLS fragment in the proxy outbound's `sockopt` when [fragmentOn] is
+  ///   true, breaking the TLS ClientHello into segments to hide SNI from DPI.
+  String _patchXrayConfig(String rawJson, {bool fragmentOn = false}) {
+    final cfg = jsonDecode(rawJson) as Map<String, dynamic>;
+
+    cfg['dns'] = <String, dynamic>{
+      'hosts': <String, dynamic>{'domain:googleapis.cn': 'googleapis.com'},
+      'queryStrategy': 'UseIPv4',
+      'servers': <dynamic>[
+        '1.1.1.1',
+        <String, dynamic>{
+          'address': '8.8.8.8',
+          'domains': <dynamic>[],
+          'port': 53,
+        },
+      ],
+    };
+
+    cfg['routing'] = <String, dynamic>{
+      'domainStrategy': 'IPIfNonMatch',
+      'rules': <dynamic>[
+        <String, dynamic>{
+          'type': 'field',
+          'ip': <dynamic>['1.1.1.1'],
+          'outboundTag': 'proxy',
+          'port': '53',
+        },
+        <String, dynamic>{
+          'type': 'field',
+          'ip': <dynamic>['8.8.8.8'],
+          'outboundTag': 'direct',
+          'port': '53',
+        },
+      ],
+    };
+
+    if (fragmentOn) {
+      final outbounds = cfg['outbounds'] as List<dynamic>?;
+      if (outbounds != null) {
+        for (final ob in outbounds) {
+          final outbound = ob as Map<String, dynamic>;
+          if (outbound['tag'] == 'proxy') {
+            final ss = outbound['streamSettings'] as Map<String, dynamic>?;
+            if (ss != null) {
+              ss['sockopt'] = <String, dynamic>{
+                'fragment': <String, dynamic>{
+                  'packets': 'tlshello',
+                  'length': '100-200',
+                  'interval': '10-20',
+                },
+              };
+            }
+          }
+        }
+      }
+    }
+
+    return jsonEncode(cfg);
   }
 
   void _snack(String msg) {
@@ -1196,14 +1277,6 @@ class _HomePageState extends State<HomePage>
   }
 }
 
-/// DNS servers used for VPN connections.
-///
-/// Using explicit addresses (instead of the default `'local'`) prevents a
-/// circular-DNS deadlock when the TUN interface is active: the system resolver
-/// would try to use localhost DNS which is unavailable inside the VPN tunnel.
-const _kDirectDns = '1.1.1.1';
-const _kRemoteDns = 'https://1.1.1.1/dns-query';
-
 class _LocalProxyEndpoint {
   final String label;
   final String uri;
@@ -1267,30 +1340,4 @@ class _StatTile extends StatelessWidget {
   }
 }
 
-/// A [ConfigOptions] variant that enables TLS fragmentation.
-///
-/// Fragmentation breaks the TLS ClientHello into multiple TCP segments so that
-/// DPI systems cannot read the SNI field.  This is effective against
-/// whitelist-based mobile filtering (e.g. Rostelecom, Beeline, etc.).
-class _FragmentConfigOptions extends ConfigOptions {
-  const _FragmentConfigOptions()
-      : super(
-          directDnsAddress: _kDirectDns,
-          remoteDnsAddress: _kRemoteDns,
-        );
-
-  @override
-  Map<String, dynamic> toJson() {
-    final json = super.toJson();
-    json['tls-tricks'] = {
-      'enable-fragment': true,
-      'fragment-size': '100-200',
-      'fragment-sleep': '50-100',
-      'mixed-sni-case': false,
-      'enable-padding': false,
-      'padding-size': '100-200',
-    };
-    return json;
-  }
-}
 
