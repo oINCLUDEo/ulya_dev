@@ -5,6 +5,7 @@ import 'pages/home_page.dart';
 import 'pages/logs_page.dart';
 import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/json_tester_page.dart';
 
 void main() {
   runApp(const UlyaVpnApp());
@@ -81,6 +82,7 @@ class _MainShellState extends State<MainShell> {
       HomePage(v2rayBox: _v2rayBox),
       LogsPage(v2rayBox: _v2rayBox),
       SettingsPage(v2rayBox: _v2rayBox),
+      JsonTesterPage(v2rayBox: _v2rayBox),
     ];
 
     return Scaffold(
@@ -110,6 +112,11 @@ class _MainShellState extends State<MainShell> {
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
             label: 'Настройки',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.code_outlined),
+            selectedIcon: Icon(Icons.code),
+            label: 'Тест JSON',
           ),
         ],
       ),
