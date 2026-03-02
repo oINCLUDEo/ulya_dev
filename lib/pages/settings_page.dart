@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:v2ray_box/v2ray_box.dart';
 
 import '../services/remnawave_service.dart';
+import 'config_editor_page.dart';
 
 class SettingsPage extends StatefulWidget {
   final V2rayBox v2rayBox;
@@ -234,6 +235,26 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   trailing: const Icon(Icons.edit, size: 18),
                   onTap: _showPingUrlDialog,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.data_object, color: Color(0xFFFFA502)),
+                  title: const Text('Подключиться по JSON'),
+                  subtitle: Text(
+                    'Вставьте сырой xray JSON конфиг и подключитесь',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => ConfigEditorPage(
+                        v2rayBox: widget.v2rayBox,
+                        configJson: _kRawJsonTemplate,
+                        configName: 'Raw JSON',
+                      ),
+                    ),
+                  ),
                 ),
               ]),
             ),
@@ -743,3 +764,14 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 }
+
+/// Minimal xray JSON template shown when opening the raw-JSON editor.
+/// The user clears this and pastes their own config.
+const _kRawJsonTemplate = '''
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [],
+  "outbounds": [],
+  "routing": {}
+}
+''';
