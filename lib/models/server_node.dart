@@ -33,8 +33,22 @@ class ServerNode {
       isConnected: json['isConnected'] as bool? ?? false,
       isDisabled: json['isDisabled'] as bool? ?? false,
       usersOnline: json['usersOnline'] as int?,
+      link: json['link'] as String?,
+      protocol: json['protocol'] as String?,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'uuid': uuid,
+    'name': name,
+    'address': address,
+    'countryCode': countryCode,
+    'isConnected': isConnected,
+    'isDisabled': isDisabled,
+    'usersOnline': usersOnline,
+    'link': link,
+    'protocol': protocol,
+  };
 
   bool get isAvailable => isConnected && !isDisabled;
 }

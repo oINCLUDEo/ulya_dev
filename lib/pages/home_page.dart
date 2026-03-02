@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
@@ -111,6 +112,8 @@ class _HomePageState extends State<HomePage>
     setState(() => _isLoadingNodes = true);
     final nodes = await RemnawaveService.fetchNodes();
     if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    final savedUuid = prefs.getString('selected_node_uuid');
     setState(() {
       _nodes = nodes;
       _subscriptionInfo = RemnawaveService.lastSubscriptionInfo;
@@ -118,6 +121,12 @@ class _HomePageState extends State<HomePage>
       if (_selectedNode != null) {
         _selectedNode = nodes.cast<ServerNode?>().firstWhere(
               (n) => n?.uuid == _selectedNode!.uuid,
+          orElse: () => null,
+        );
+      }
+      if (_selectedNode == null && savedUuid != null) {
+        _selectedNode = nodes.cast<ServerNode?>().firstWhere(
+              (n) => n?.uuid == savedUuid,
           orElse: () => null,
         );
       }
@@ -294,9 +303,13 @@ class _HomePageState extends State<HomePage>
                               : BorderSide.none,
                         ),
                         child: ListTile(
-                          onTap: () {
+                          onTap: () async {
                             setState(() => _selectedNode = node);
-                            Navigator.pop(ctx);
+                            final prefs =
+                            await SharedPreferences.getInstance();
+                            await prefs.setString(
+                                'selected_node_uuid', node.uuid);
+                            if (ctx.mounted) Navigator.pop(ctx);
                           },
                           leading: Text(
                             _countryEmoji(node.countryCode),

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:installed_apps/app_info.dart';
+import 'package:installed_apps/installed_apps.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -200,7 +202,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 title: const Text('Только прокси'),
                 subtitle: Text(
                   'Только локальный SOCKS5/HTTP прокси, без VPN-туннеля. '
-                  'Порт: 10808',
+                      'Порт: 10808',
                   style: TextStyle(color: Colors.grey[400], fontSize: 12),
                 ),
                 value: true,
@@ -223,8 +225,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 title: const Text('TLS Fragment'),
                 subtitle: Text(
                   'Разбивает TLS ClientHello на фрагменты, скрывая SNI от '
-                  'глубокой инспекции пакетов. Помогает при мобильном '
-                  'интернете с белыми списками (особенно РФ-операторы).',
+                      'глубокой инспекции пакетов. Помогает при мобильном '
+                      'интернете с белыми списками (особенно РФ-операторы).',
                   style: TextStyle(color: Colors.grey[400], fontSize: 12),
                 ),
                 value: _fragmentEnabled,
@@ -262,7 +264,7 @@ class _SettingsPageState extends State<SettingsPage> {
               if (_useCustomDns) ...[
                 const Divider(height: 1),
                 ..._dnsServers.asMap().entries.map(
-                  (e) => ListTile(
+                      (e) => ListTile(
                     dense: true,
                     leading: CircleAvatar(
                       radius: 12,
@@ -604,7 +606,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ActionChip(
                   label: const Text('gstatic', style: TextStyle(fontSize: 11)),
                   onPressed: () =>
-                      ctrl.text = 'https://www.gstatic.com/generate_204',
+                  ctrl.text = 'https://www.gstatic.com/generate_204',
                 ),
                 ActionChip(
                   label: const Text(
@@ -616,7 +618,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ActionChip(
                   label: const Text('Google', style: TextStyle(fontSize: 11)),
                   onPressed: () =>
-                      ctrl.text = 'http://www.google.com/generate_204',
+                  ctrl.text = 'http://www.google.com/generate_204',
                 ),
               ],
             ),
@@ -764,7 +766,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 child: Text(
                   'Приложения из этого списка будут обходить VPN-туннель '
-                  '(параметр blockedApps).',
+                      '(параметр blockedApps).',
                   style: TextStyle(color: Colors.grey[500], fontSize: 12),
                 ),
               ),
@@ -814,60 +816,251 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
               ),
               const SizedBox(height: 8),
+              // Кнопка выбора из установленных приложений
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await _showInstalledAppsPicker();
+                  setSheet(() {}); // обновить список в боттомшите
+                },
+                icon: const Icon(Icons.apps, size: 18),
+                label: const Text('Выбрать из установленных'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF6C5CE7),
+                  side: const BorderSide(color: Color(0xFF6C5CE7)),
+                  minimumSize: const Size.fromHeight(40),
+                ),
+              ),
+              const SizedBox(height: 8),
               const Divider(height: 1),
               Expanded(
                 child: _blockedApps.isEmpty
                     ? Center(
-                        child: Text(
-                          'Список пуст — все приложения идут через VPN',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 13,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      )
+                  child: Text(
+                    'Список пуст — все приложения идут через VPN',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 13,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                )
                     : ListView(
-                        controller: scrollCtrl,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
+                  controller: scrollCtrl,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  children: _blockedApps.map((pkg) {
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      child: ListTile(
+                        dense: true,
+                        leading: const Icon(
+                          Icons.android,
+                          size: 18,
+                          color: Colors.white38,
                         ),
-                        children: _blockedApps.map((pkg) {
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 4),
-                            child: ListTile(
-                              dense: true,
-                              leading: const Icon(
-                                Icons.android,
-                                size: 18,
-                                color: Colors.white38,
-                              ),
-                              title: Text(
-                                pkg,
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 12,
-                                ),
-                              ),
-                              trailing: IconButton(
-                                icon: const Icon(
-                                  Icons.remove_circle_outline,
-                                  size: 18,
-                                  color: Color(0xFFE74C3C),
-                                ),
-                                onPressed: () {
-                                  setState(() => _blockedApps.remove(pkg));
-                                  setSheet(() {});
-                                },
-                              ),
-                            ),
-                          );
-                        }).toList(),
+                        title: Text(
+                          pkg,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(
+                            Icons.remove_circle_outline,
+                            size: 18,
+                            color: Color(0xFFE74C3C),
+                          ),
+                          onPressed: () {
+                            setState(() => _blockedApps.remove(pkg));
+                            setSheet(() {});
+                          },
+                        ),
                       ),
+                    );
+                  }).toList(),
+                ),
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showInstalledAppsPicker() async {
+    // Показываем индикатор загрузки
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    List<AppInfo> apps = [];
+    try {
+      apps = await InstalledApps.getInstalledApps(
+        excludeSystemApps: true,
+        excludeNonLaunchableApps: true,
+        withIcon: true,
+      );
+      apps.sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      _snack('Не удалось получить список приложений');
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context); // закрываем индикатор
+
+    final searchCtrl = TextEditingController();
+    final selected = <String>{};
+    List<AppInfo> filtered = List.from(apps);
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          title: const Text(
+            'Выбрать приложения',
+            style: TextStyle(color: Colors.white, fontSize: 16),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: MediaQuery.of(ctx).size.height * 0.6,
+            child: Column(
+              children: [
+                // Поиск
+                TextField(
+                  controller: searchCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Поиск...',
+                    hintStyle: TextStyle(color: Colors.grey[500]),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    filled: true,
+                    fillColor: const Color(0xFF0F0F1A),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  onChanged: (q) {
+                    final lower = q.toLowerCase();
+                    setDialog(() {
+                      filtered = apps
+                          .where((a) =>
+                      (a.name ?? '').toLowerCase().contains(lower) ||
+                          (a.packageName ?? '').toLowerCase().contains(lower))
+                          .toList();
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                // Список приложений
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) {
+                      final app = filtered[i];
+                      final pkg = app.packageName ?? '';
+                      final alreadyAdded = _blockedApps.contains(pkg);
+                      final isSelected = selected.contains(pkg);
+
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 2),
+                        leading: app.icon != null
+                            ? ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.memory(
+                            app.icon!,
+                            width: 36,
+                            height: 36,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const Icon(
+                              Icons.android,
+                              size: 36,
+                              color: Colors.white38,
+                            ),
+                          ),
+                        )
+                            : const Icon(
+                          Icons.android,
+                          size: 36,
+                          color: Colors.white38,
+                        ),
+                        title: Text(
+                          app.name ?? pkg,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          pkg,
+                          style: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: alreadyAdded
+                            ? const Icon(
+                          Icons.check_circle,
+                          color: Color(0xFF2ED573),
+                          size: 20,
+                        )
+                            : Checkbox(
+                          value: isSelected,
+                          activeColor: const Color(0xFF6C5CE7),
+                          onChanged: (v) {
+                            setDialog(() {
+                              if (v == true) {
+                                selected.add(pkg);
+                              } else {
+                                selected.remove(pkg);
+                              }
+                            });
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(
+                'Отмена',
+                style: TextStyle(color: Colors.grey[400]),
+              ),
+            ),
+            FilledButton(
+              onPressed: selected.isEmpty
+                  ? null
+                  : () {
+                setState(() => _blockedApps.addAll(selected));
+                Navigator.pop(ctx);
+                _save();
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF6C5CE7),
+              ),
+              child: Text('Добавить (${selected.length})'),
+            ),
+          ],
         ),
       ),
     );

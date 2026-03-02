@@ -24,13 +24,19 @@ import '../models/subscription_info.dart';
 class RemnawaveService {
   static const _prefSubscriptionUrl = 'subscription_url';
   static const _prefHwid = 'device_hwid';
+  static const _prefCachedNodes = 'cached_nodes';
+  static const _prefCachedSubscriptionInfo = 'cached_subscription_info';
 
   // ── Cached subscription info ──────────────────────────────────────────────
 
   static SubscriptionInfo? _lastSubscriptionInfo;
+  static bool _lastFetchWasFromCache = false;
 
   /// The subscription quota/expiry info from the most recent [fetchNodes] call.
   static SubscriptionInfo? get lastSubscriptionInfo => _lastSubscriptionInfo;
+
+  /// Whether the most recent [fetchNodes] call returned cached data.
+  static bool get lastFetchWasFromCache => _lastFetchWasFromCache;
 
   // ── Subscription URL storage ─────────────────────────────────────────────
 
@@ -82,6 +88,8 @@ class RemnawaveService {
   /// Fetches the subscription URL and returns a list of [ServerNode]s.
   ///
   /// Returns an empty list when no subscription URL is configured or on error.
+  /// On success, nodes are cached in SharedPreferences.
+  /// On error, cached nodes are returned if available.
   static Future<List<ServerNode>> fetchNodes() async {
     final subUrl = await getSubscriptionUrl();
     if (subUrl.isEmpty) return [];
@@ -102,7 +110,7 @@ class RemnawaveService {
 
       if (response.statusCode != 200) {
         debugPrint('RemnawaveService: subscription returned ${response.statusCode}');
-        return [];
+        return await _loadFromCache();
       }
 
       _lastSubscriptionInfo = _parseSubscriptionInfo(response.headers);
@@ -113,9 +121,60 @@ class RemnawaveService {
           .whereType<ServerNode>()
           .toList();
       debugPrint('RemnawaveService: loaded ${nodes.length} nodes');
+
+      // Persist to cache for offline use.
+      await _saveToCache(nodes, _lastSubscriptionInfo);
+      _lastFetchWasFromCache = false;
       return nodes;
     } catch (e) {
       debugPrint('RemnawaveService: fetchNodes error: $e');
+      return await _loadFromCache();
+    }
+  }
+
+  // ── Cache helpers ─────────────────────────────────────────────────────────
+
+  static Future<void> _saveToCache(
+      List<ServerNode> nodes, SubscriptionInfo? info) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _prefCachedNodes,
+      jsonEncode(nodes.map((n) => n.toJson()).toList()),
+    );
+    if (info != null) {
+      await prefs.setString(
+        _prefCachedSubscriptionInfo,
+        jsonEncode(info.toJson()),
+      );
+    }
+  }
+
+  static Future<List<ServerNode>> _loadFromCache() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Restore subscription info from cache.
+    final cachedInfoRaw = prefs.getString(_prefCachedSubscriptionInfo);
+    if (cachedInfoRaw != null) {
+      try {
+        _lastSubscriptionInfo = SubscriptionInfo.fromJson(
+          jsonDecode(cachedInfoRaw) as Map<String, dynamic>,
+        );
+      } catch (_) {}
+    }
+
+    // Restore nodes from cache.
+    final cachedNodesRaw = prefs.getString(_prefCachedNodes);
+    if (cachedNodesRaw == null) return [];
+    try {
+      final list = jsonDecode(cachedNodesRaw) as List<dynamic>;
+      final nodes = list
+          .map((e) => ServerNode.fromJson(e as Map<String, dynamic>))
+          .toList();
+      debugPrint('RemnawaveService: loaded ${nodes.length} nodes from cache');
+      _lastFetchWasFromCache = true;
+      return nodes;
+    } catch (e) {
+      debugPrint('RemnawaveService: failed to load cache: $e');
       return [];
     }
   }
