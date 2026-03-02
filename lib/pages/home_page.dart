@@ -549,7 +549,12 @@ class _HomePageState extends State<HomePage>
         final prefs = await SharedPreferences.getInstance();
         final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
         await widget.v2rayBox.setConfigOptions(
-          fragmentOn ? const _FragmentConfigOptions() : const ConfigOptions(),
+          fragmentOn
+              ? const _FragmentConfigOptions()
+              : const ConfigOptions(
+                  directDnsAddress: _kDirectDns,
+                  remoteDnsAddress: _kRemoteDns,
+                ),
         );
         await widget.v2rayBox.connect(
           _selectedConfig!.link,
@@ -1191,6 +1196,14 @@ class _HomePageState extends State<HomePage>
   }
 }
 
+/// DNS servers used for VPN connections.
+///
+/// Using explicit addresses (instead of the default `'local'`) prevents a
+/// circular-DNS deadlock when the TUN interface is active: the system resolver
+/// would try to use localhost DNS which is unavailable inside the VPN tunnel.
+const _kDirectDns = '1.1.1.1';
+const _kRemoteDns = 'https://1.1.1.1/dns-query';
+
 class _LocalProxyEndpoint {
   final String label;
   final String uri;
@@ -1260,7 +1273,11 @@ class _StatTile extends StatelessWidget {
 /// DPI systems cannot read the SNI field.  This is effective against
 /// whitelist-based mobile filtering (e.g. Rostelecom, Beeline, etc.).
 class _FragmentConfigOptions extends ConfigOptions {
-  const _FragmentConfigOptions() : super();
+  const _FragmentConfigOptions()
+      : super(
+          directDnsAddress: _kDirectDns,
+          remoteDnsAddress: _kRemoteDns,
+        );
 
   @override
   Map<String, dynamic> toJson() {
