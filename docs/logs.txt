@@ -1,0 +1,76 @@
+D/ViewRootImplExtImpl(22087): the up motion event handled by client, just return
+D/ViewRootImplExtImpl(22087): the up motion event handled by client, just return
+D/ViewRootImplExtImpl(22087): the up motion event handled by client, just return
+I/Quality (22087): Skipped: false 1 cost 26.028269 refreshRate 16492671 bit true processName com.example.dev_vpn
+D/ViewRootImplExtImpl(22087): the up motion event handled by client, just return
+D/V2Ray/BoxService(22087): Sing-box config written to: /storage/emulated/0/Android/data/com.example.dev_vpn/files/singbox_config.json
+D/V2Ray/Settings(22087): perAppProxyList: mode=off, key=flutter.per_app_proxy_exclude_list, hasPrefix=false
+D/V2Ray/BoxService(22087): Xray bridge per-app: mode=off include=0 exclude=1
+D/V2Ray/BoxService(22087): Xray TUN bridge config written
+D/V2Ray/BoxService(22087): working dir: /storage/emulated/0/Android/data/com.example.dev_vpn/files
+D/V2Ray/BoxService(22087): starting service (engine: singbox)
+D/CompatibilityChangeReporter(22087): Compat change id reported: 160794467; UID 10542; state: ENABLED
+D/V2Ray/BoxService(22087): DefaultNetworkMonitor started
+D/V2Ray/BoxService(22087): Starting sing-box engine...
+D/V2Ray/SingboxProcess(22087): Starting sing-box: /data/app/~~UMQkgABZwYN4mOlcYkZzaA==/com.example.dev_vpn-w0bl8VIFKi7-RfXRGI8cOA==/lib/arm64/libsingbox.so run -c /storage/emulated/0/Android/data/com.example.dev_vpn/files/singbox_config.json -D /storage/emulated/0/Android/data/com.example.dev_vpn/files
+I/SingboxCore(22087): WARN[0000] network: initialize package manager: read packages list: open /data/system/packages.xml: permission denied
+D/V2Ray/SingboxProcess(22087): sing-box started successfully
+D/TrafficStats(22087): tagSocket(161) with statsTag=0xffffffff, statsUid=-1
+D/V2Ray/BoxService(22087): sing-box process started
+D/V2Ray/VPNService(22087): createTun called
+D/V2Ray/VPNService(22087): Excluding com.example.dev_vpn
+D/V2Ray/VPNService(22087): TUN interface created, fd=177
+D/V2Ray/BoxService(22087): TUN created with fd=177, starting Xray TUN bridge...
+D/V2Ray/BoxService(22087): CoreCallbackHandler: startup
+D/V2Ray/XrayCoreController(22087): Configured tun fd via libXray runtime API value=177
+D/V2Ray/XrayCoreController(22087): Configured tun fd env value=177
+I/GoLog   (22087): 2026/03/02 10:22:41.903503 [Warning] core: Xray 26.2.6 started
+D/V2Ray/BoxService(22087): CoreCallbackHandler: onEmitStatus status=0, msg=core started
+D/V2Ray/BoxService(22087): Xray TUN bridge started for sing-box VPN mode
+D/V2Ray/BoxService(22087): Service is now running (engine: singbox)
+I/GoLog   (22087): 2026/03/02 10:22:42.004577 from udp:26.26.26.1:44706 accepted udp:1.1.1.1:53 [tun >> proxy]
+I/GoLog   (22087): 2026/03/02 10:22:42.004676 from udp:26.26.26.1:42017 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=166) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=160) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=180) -> true
+I/GoLog   (22087): 2026/03/02 10:22:42.006821 from udp:26.26.26.1:17008 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=189) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=184) -> true
+I/SingboxCore(22087): ERROR[0000] [1687710322 3ms] dns: exchange failed for mtalk.google.com. IN A: lookup ru02-node.ulya.space: (exchange6: ru02-node.ulya.space.: read response: read udp [::1]:42036->[::1]:53: read: connection refused | exchange4: ru02-node.ulya.space.: read response: read udp [::1]:42223->[::1]:53: read: connection refused)
+D/V2Ray/XrayBridge(22087): protectFd(fd=181) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=191) -> true
+I/GoLog   (22087): 2026/03/02 10:22:42.009771 from udp:26.26.26.1:35606 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=190) -> true
+I/SingboxCore(22087): ERROR[0000] [869633740 4ms] dns: exchange failed for mtalk.google.com. IN AAAA: lookup ru02-node.ulya.space: (exchange6: ru02-node.ulya.space.: read response: read udp [::1]:46976->[::1]:53: read: connection refused | exchange4: ru02-node.ulya.space.: read response: read udp [::1]:41957->[::1]:53: read: connection refused)
+I/SingboxCore(22087): ERROR[0000] [2464399174 2ms] dns: exchange failed for www.google.com. IN AAAA: lookup ru02-node.ulya.space: (exchange4: ru02-node.ulya.space.: read response: read udp [::1]:44701->[::1]:53: read: connection refused | exchange6: ru02-node.ulya.space.: read response: read udp [::1]:48925->[::1]:53: read: connection refused)
+I/SingboxCore(22087): ERROR[0000] [2157128609 2ms] dns: exchange failed for www.google.com. IN A: lookup ru02-node.ulya.space: (exchange6: ru02-node.ulya.space.: read response: read udp [::1]:46275->[::1]:53: read: connection refused | exchange4: ru02-node.ulya.space.: read response: read udp [::1]:45865->[::1]:53: read: connection refused)
+I/GoLog   (22087): 2026/03/02 10:22:42.032591 from udp:26.26.26.1:46039 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=171) -> true
+I/GoLog   (22087): 2026/03/02 10:22:42.033071 from udp:26.26.26.1:2375 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=192) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=186) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=193) -> true
+I/SingboxCore(22087): ERROR[0000] [2271806019 3ms] dns: exchange failed for nebula-api-cn.heytapmobi.com. IN A: lookup ru02-node.ulya.space: (exchange4: ru02-node.ulya.space.: read response: read udp [::1]:39920->[::1]:53: read: connection refused | exchange6: ru02-node.ulya.space.: read response: read udp [::1]:47598->[::1]:53: read: connection refused)
+I/SingboxCore(22087): ERROR[0000] [2013399670 3ms] dns: exchange failed for nebula-api-cn.heytapmobi.com. IN AAAA: lookup ru02-node.ulya.space: (exchange4: ru02-node.ulya.space.: read response: read udp [::1]:39920->[::1]:53: read: connection refused | exchange6: ru02-node.ulya.space.: read response: read udp [::1]:47598->[::1]:53: read: connection refused)
+I/GoLog   (22087): 2026/03/02 10:22:42.043708 from udp:26.26.26.1:44104 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=179) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=194) -> true
+I/GoLog   (22087): 2026/03/02 10:22:42.044973 from udp:26.26.26.1:63973 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=195) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=197) -> true
+I/SingboxCore(22087): ERROR[0000] [1034488253 2ms] dns: exchange failed for smartcard.apps.coloros.com. IN AAAA: lookup ru02-node.ulya.space: (exchange6: ru02-node.ulya.space.: read response: read udp [::1]:39856->[::1]:53: read: connection refused | exchange4: ru02-node.ulya.space.: read response: read udp [::1]:42461->[::1]:53: read: connection refused)
+I/SingboxCore(22087): ERROR[0000] [842282429 2ms] dns: exchange failed for smartcard.apps.coloros.com. IN A: lookup ru02-node.ulya.space: (exchange6: ru02-node.ulya.space.: read response: read udp [::1]:41536->[::1]:53: read: connection refused | exchange4: ru02-node.ulya.space.: read response: read udp [::1]:43805->[::1]:53: read: connection refused)
+I/GoLog   (22087): 2026/03/02 10:22:42.063640 from udp:26.26.26.1:1817 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=176) -> true
+I/GoLog   (22087): 2026/03/02 10:22:42.064714 from udp:26.26.26.1:6420 accepted udp:1.1.1.1:53 [tun >> proxy]
+D/V2Ray/XrayBridge(22087): protectFd(fd=198) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=199) -> true
+D/V2Ray/XrayBridge(22087): protectFd(fd=201) -> true
+I/SingboxCore(22087): ERROR[0000] [1629740358 2ms] dns: exchange failed for googleads.g.doubleclick.net. IN AAAA: lookup ru02-node.ulya.space: (exchange4: ru02-node.ulya.space.: read response: read udp [::1]:38127->[::1]:53: read: connection refused | exchange6: ru02-node.ulya.space.: read response: read udp [::1]:40074->[::1]:53: read: connection refused)
+I/SingboxCore(22087): ERROR[0000] [451094961 4ms] dns: exchange failed for googleads.g.doubleclick.net. IN A: lookup ru02-node.ulya.space: (exchange4: ru02-node.ulya.space.: read response: read udp [::1]:49368->[::1]:53: read: connection refused | exchange6: ru02-node.ulya.space.: read response: read udp [::1]:43348->[::1]:53: read: connection refused)
+I/GoLog   (22087): 2026/03/02 10:22:42.079407 from udp:26.26.26.1:35507 accepted udp:1.1.1.1:53 [tun >> proxy]
+I/GoLog   (22087): 2026/03/02 10:22:42.081002 from udp:26.26.26.1:15552 accepted udp:1.1.1.1:53 [tun >> proxy]
+I/SingboxCore(22087): ERROR[0000] [375615595 2ms] dns: exchange failed for frontier-ru.tiktokv.com. IN AAAA: lookup ru02-node.ulya.space: (exchange6: ru02-node.ulya.space.: read response: read udp [::1]:49159->[::1]:53: read: connection refused | exchange4: ru02-node.ulya.space.: read response: read udp [::1]:48203->[::1]:53: read: connection refused)
+I/SingboxCore(22087): ERROR[0000] [1931098069 4ms] dns: exchange failed for frontier-ru.tiktokv.com. IN A: lookup ru02-node.ulya.space: (exchange6: ru02-node.ulya.space.: read response: read udp [::1]:40852->[::1]:53: read: connection refused | exchange4: ru02-node.ulya.space.: read response: read udp [::1]:47847->[::1]:53: read: connection refused)
+I/GoLog   (22087): 2026/03/02 10:22:42.141902 from tcp:26.26.26.1:47702 accepted tcp:117.133.188.1:8080 [tun >> proxy]
+I/SingboxCore(22087): ERROR[0000] [2097399182 3ms] connection: open connection to 117.133.188.1:8080 using outbound/vless[proxy]: lookup ru02-node.ulya.space: (exchange4: ru02-node.ulya.space.: read response: read udp [::1]:38166->[::1]:53: read: connection refused | exchange6: ru02-node.ulya.space.: read response: read udp [::1]:37234->[::1]:53: read: connection refused)
