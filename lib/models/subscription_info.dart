@@ -31,4 +31,23 @@ class SubscriptionInfo {
   String get formattedUsed => _formatBytes(usedBytes);
   String get formattedTotal =>
       totalBytes > 0 ? _formatBytes(totalBytes) : '∞';
+
+  Map<String, dynamic> toJson() => {
+    'uploadBytes': uploadBytes,
+    'downloadBytes': downloadBytes,
+    'totalBytes': totalBytes,
+    'expireEpoch': expireDate?.millisecondsSinceEpoch,
+  };
+
+  factory SubscriptionInfo.fromJson(Map<String, dynamic> json) {
+    final expireMs = json['expireEpoch'] as int?;
+    return SubscriptionInfo(
+      uploadBytes: json['uploadBytes'] as int? ?? 0,
+      downloadBytes: json['downloadBytes'] as int? ?? 0,
+      totalBytes: json['totalBytes'] as int? ?? 0,
+      expireDate: expireMs != null && expireMs > 0
+          ? DateTime.fromMillisecondsSinceEpoch(expireMs)
+          : null,
+    );
+  }
 }
