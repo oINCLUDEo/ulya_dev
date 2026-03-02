@@ -1,6 +1,7 @@
 import 'dart:convert';
 
-import 'package:device_apps/device_apps.dart';
+import 'package:installed_apps/app_info.dart';
+import 'package:installed_apps/installed_apps.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -816,29 +817,17 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const SizedBox(height: 8),
               // Кнопка выбора из установленных приложений
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.apps, size: 18),
-                    label: const Text('Выбрать из установленных'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF2ED573),
-                      side: const BorderSide(color: Color(0xFF2ED573)),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    onPressed: () async {
-                      final added =
-                          await _showInstalledAppsPicker(ctx);
-                      if (added != null && added.isNotEmpty) {
-                        setState(() => _blockedApps.addAll(added));
-                        setSheet(() {});
-                      }
-                    },
-                  ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await _showInstalledAppsPicker();
+                  setSheet(() {}); // обновить список в боттомшите
+                },
+                icon: const Icon(Icons.apps, size: 18),
+                label: const Text('Выбрать из установленных'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF6C5CE7),
+                  side: const BorderSide(color: Color(0xFF6C5CE7)),
+                  minimumSize: const Size.fromHeight(40),
                 ),
               ),
               const SizedBox(height: 8),
@@ -901,150 +890,178 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// Shows a picker dialog for installed user apps.
-  ///
-  /// Returns the set of package names that the user chose to add,
-  /// or `null` if the dialog was dismissed.
-  Future<Set<String>?> _showInstalledAppsPicker(BuildContext ctx) async {
-    // Load the list of installed user apps.
-    List<Application> apps;
+  Future<void> _showInstalledAppsPicker() async {
+    // Показываем индикатор загрузки
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    List<AppInfo> apps = [];
     try {
-      apps = await DeviceApps.getInstalledApplications(
-        onlyAppsWithLaunchIntent: true,
-        includeSystemApps: false,
-        includeAppIcons: true,
+      apps = await InstalledApps.getInstalledApps(
+        excludeSystemApps: true,
+        excludeNonLaunchableApps: true,
+        withIcon: true,
       );
-      apps.sort((a, b) => a.appName.compareTo(b.appName));
+      apps.sort((a, b) => (a.name ?? '').compareTo(b.name ?? ''));
     } catch (e) {
-      debugPrint('_showInstalledAppsPicker: $e');
-      apps = [];
+      if (mounted) Navigator.pop(context);
+      _snack('Не удалось получить список приложений');
+      return;
     }
 
-    if (!ctx.mounted) return null;
+    if (!mounted) return;
+    Navigator.pop(context); // закрываем индикатор
 
-    // Track the user's selections (pre-mark already-blocked apps).
-    final selected = <String>{..._blockedApps};
-    final filterCtrl = TextEditingController();
+    final searchCtrl = TextEditingController();
+    final selected = <String>{};
+    List<AppInfo> filtered = List.from(apps);
 
-    return showDialog<Set<String>>(
-      context: ctx,
-      builder: (dCtx) => StatefulBuilder(
-        builder: (dCtx, setDlg) {
-          final query = filterCtrl.text.trim().toLowerCase();
-          final visible = query.isEmpty
-              ? apps
-              : apps
-                  .where((a) =>
-                      a.appName.toLowerCase().contains(query) ||
-                      a.packageName.toLowerCase().contains(query))
-                  .toList();
-
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1A1A2E),
-            title: const Text('Установленные приложения'),
-            content: SizedBox(
-              width: double.maxFinite,
-              height: 480,
-              child: Column(
-                children: [
-                  TextField(
-                    controller: filterCtrl,
-                    onChanged: (_) => setDlg(() {}),
-                    decoration: InputDecoration(
-                      hintText: 'Поиск по названию или пакету',
-                      filled: true,
-                      fillColor: const Color(0xFF0F0F1A),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide.none,
-                      ),
-                      prefixIcon: const Icon(Icons.search, size: 18),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 8),
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A2E),
+          title: const Text(
+            'Выбрать приложения',
+            style: TextStyle(color: Colors.white, fontSize: 16),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: MediaQuery.of(ctx).size.height * 0.6,
+            child: Column(
+              children: [
+                // Поиск
+                TextField(
+                  controller: searchCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Поиск...',
+                    hintStyle: TextStyle(color: Colors.grey[500]),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    filled: true,
+                    fillColor: const Color(0xFF0F0F1A),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
                     ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
                   ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: apps.isEmpty
-                        ? const Center(
-                            child: Text(
-                              'Список приложений пуст',
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          )
-                        : ListView.builder(
-                            itemCount: visible.length,
-                            itemBuilder: (_, i) {
-                              final app = visible[i];
-                              final alreadyAdded =
-                                  _blockedApps.contains(app.packageName);
-                              final isChecked =
-                                  selected.contains(app.packageName);
-                              return CheckboxListTile(
-                                dense: true,
-                                value: isChecked,
-                                onChanged: alreadyAdded
-                                    ? null
-                                    : (v) {
-                                        setDlg(() {
-                                          if (v == true) {
-                                            selected.add(app.packageName);
-                                          } else {
-                                            selected.remove(app.packageName);
-                                          }
-                                        });
-                                      },
-                                secondary: app is ApplicationWithIcon
-                                    ? ClipRRect(
-                                        borderRadius:
-                                            BorderRadius.circular(6),
-                                        child: Image.memory(
-                                          app.icon,
-                                          width: 32,
-                                          height: 32,
-                                          gaplessPlayback: true,
-                                        ),
-                                      )
-                                    : const Icon(Icons.android,
-                                        size: 32,
-                                        color: Colors.white38),
-                                title: Text(
-                                  app.appName,
-                                  style: const TextStyle(fontSize: 13),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                subtitle: Text(
-                                  app.packageName,
-                                  style: TextStyle(
-                                    fontFamily: 'monospace',
-                                    fontSize: 10,
-                                    color: Colors.grey[500],
+                  onChanged: (q) {
+                    final lower = q.toLowerCase();
+                    setDialog(() {
+                      filtered = apps
+                          .where((a) =>
+                              (a.name ?? '').toLowerCase().contains(lower) ||
+                              (a.packageName ?? '').toLowerCase().contains(lower))
+                          .toList();
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+                // Список приложений
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) {
+                      final app = filtered[i];
+                      final pkg = app.packageName ?? '';
+                      final alreadyAdded = _blockedApps.contains(pkg);
+                      final isSelected = selected.contains(pkg);
+
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 2),
+                        leading: app.icon != null
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.memory(
+                                  app.icon!,
+                                  width: 36,
+                                  height: 36,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.android,
+                                    size: 36,
+                                    color: Colors.white38,
                                   ),
-                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              );
-                            },
+                              )
+                            : const Icon(
+                                Icons.android,
+                                size: 36,
+                                color: Colors.white38,
+                              ),
+                        title: Text(
+                          app.name ?? pkg,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
                           ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          pkg,
+                          style: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: alreadyAdded
+                            ? const Icon(
+                                Icons.check_circle,
+                                color: Color(0xFF2ED573),
+                                size: 20,
+                              )
+                            : Checkbox(
+                                value: isSelected,
+                                activeColor: const Color(0xFF6C5CE7),
+                                onChanged: (v) {
+                                  setDialog(() {
+                                    if (v == true) {
+                                      selected.add(pkg);
+                                    } else {
+                                      selected.remove(pkg);
+                                    }
+                                  });
+                                },
+                              ),
+                      );
+                    },
                   ),
-                ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(
+                'Отмена',
+                style: TextStyle(color: Colors.grey[400]),
               ),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dCtx),
-                child: const Text('Отмена'),
+            FilledButton(
+              onPressed: selected.isEmpty
+                  ? null
+                  : () {
+                      setState(() => _blockedApps.addAll(selected));
+                      Navigator.pop(ctx);
+                      _save();
+                    },
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF6C5CE7),
               ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(dCtx, selected),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2ED573),
-                  foregroundColor: Colors.black,
-                ),
-                child: const Text('Добавить'),
-              ),
-            ],
-          );
-        },
+              child: Text('Добавить (${selected.length})'),
+            ),
+          ],
+        ),
       ),
     );
   }
