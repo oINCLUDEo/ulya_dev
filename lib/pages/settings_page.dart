@@ -9,6 +9,7 @@ import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/remnawave_service.dart';
+import '../config/app_config.dart';
 import '../utils/core_info_parser.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -115,6 +116,10 @@ class _SettingsPageState extends State<SettingsPage> {
       try {
         _blockedApps = Set<String>.from(jsonDecode(blockedRaw) as List);
       } catch (_) {}
+    } else {
+      // Первый запуск — устанавливаем дефолтные исключения
+      _blockedApps = Set<String>.from(AppConfig.defaultBlockedApps);
+      await prefs.setString(_keyBlockedApps, jsonEncode(_blockedApps.toList()));
     }
 
 
@@ -917,7 +922,29 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final searchCtrl = TextEditingController();
     final selected = <String>{};
-    List<AppInfo> filtered = List.from(apps);
+
+    List<AppInfo> buildSortedFiltered(List<AppInfo> source, String query) {
+      final lower = query.toLowerCase();
+      final list = lower.isEmpty
+          ? List<AppInfo>.from(source)
+          : source
+              .where((a) =>
+                  (a.name ?? '').toLowerCase().contains(lower) ||
+                  (a.packageName ?? '').toLowerCase().contains(lower))
+              .toList();
+      final pinned = <AppInfo>[];
+      final rest = <AppInfo>[];
+      for (final a in list) {
+        if (_blockedApps.contains(a.packageName ?? '')) {
+          pinned.add(a);
+        } else {
+          rest.add(a);
+        }
+      }
+      return [...pinned, ...rest];
+    }
+
+    List<AppInfo> filtered = buildSortedFiltered(apps, '');
 
     await showDialog<void>(
       context: context,
@@ -950,13 +977,8 @@ class _SettingsPageState extends State<SettingsPage> {
                     contentPadding: const EdgeInsets.symmetric(vertical: 8),
                   ),
                   onChanged: (q) {
-                    final lower = q.toLowerCase();
                     setDialog(() {
-                      filtered = apps
-                          .where((a) =>
-                      (a.name ?? '').toLowerCase().contains(lower) ||
-                          (a.packageName ?? '').toLowerCase().contains(lower))
-                          .toList();
+                      filtered = buildSortedFiltered(apps, q);
                     });
                   },
                 ),
