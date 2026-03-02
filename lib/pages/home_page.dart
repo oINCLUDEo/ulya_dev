@@ -10,6 +10,7 @@ import 'package:v2ray_box/v2ray_box.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 import '../services/remnawave_service.dart';
+import '../services/xray_config_builder.dart';
 
 class HomePage extends StatefulWidget {
   final V2rayBox v2rayBox;
@@ -537,24 +538,48 @@ class _HomePageState extends State<HomePage>
             }
           }
         }
-        final err = await widget.v2rayBox.parseConfig(_selectedConfig!.link);
-        if (err.isNotEmpty) {
-          if (mounted) {
-            setState(() => _status = VpnStatus.stopped);
+        // Build a custom Xray JSON config from the link for better
+        // compatibility with whitelist-based mobile filtering.
+        final customJson =
+            XrayConfigBuilder.buildFromLink(_selectedConfig!.link);
+        if (customJson != null) {
+          // Validate the generated config before connecting.
+          final err = await widget.v2rayBox.checkConfigJson(customJson);
+          if (err.isNotEmpty) {
+            if (mounted) {
+              setState(() => _status = VpnStatus.stopped);
+            }
+            _snack('Config error: $err');
+            return;
           }
-          _snack('Config error: $err');
-          return;
+          await widget.v2rayBox.connectWithJson(
+            customJson,
+            name: _selectedConfig!.name,
+          );
+        } else {
+          // Fallback: use the native link parser for unsupported protocols.
+          final err =
+              await widget.v2rayBox.parseConfig(_selectedConfig!.link);
+          if (err.isNotEmpty) {
+            if (mounted) {
+              setState(() => _status = VpnStatus.stopped);
+            }
+            _snack('Config error: $err');
+            return;
+          }
+          // Apply config options — enable TLS fragment if user turned it on.
+          final prefs = await SharedPreferences.getInstance();
+          final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
+          await widget.v2rayBox.setConfigOptions(
+            fragmentOn
+                ? const _FragmentConfigOptions()
+                : const ConfigOptions(),
+          );
+          await widget.v2rayBox.connect(
+            _selectedConfig!.link,
+            name: _selectedConfig!.name,
+          );
         }
-        // Apply config options — enable TLS fragment if user turned it on.
-        final prefs = await SharedPreferences.getInstance();
-        final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
-        await widget.v2rayBox.setConfigOptions(
-          fragmentOn ? const _FragmentConfigOptions() : const ConfigOptions(),
-        );
-        await widget.v2rayBox.connect(
-          _selectedConfig!.link,
-          name: _selectedConfig!.name,
-        );
       } catch (e) {
         if (mounted) {
           setState(() => _status = VpnStatus.stopped);
