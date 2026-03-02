@@ -7,6 +7,57 @@ import 'dart:convert';
 ///
 /// Supported protocols: vless, vmess, trojan, shadowsocks (ss).
 class XrayConfigBuilder {
+  /// Patches a native Xray JSON config (as produced by `v2ray_box.generateConfig`)
+  /// with improved DNS and routing settings for whitelist-based mobile filtering.
+  ///
+  /// Only the `dns` and `routing` sections are replaced; all other sections
+  /// (inbounds with TUN handling, outbounds, policy, etc.) are kept unchanged
+  /// so that VPN mode (TUN interface) continues to work correctly.
+  ///
+  /// Returns the modified JSON string, or `null` if [nativeConfigJson] cannot
+  /// be parsed.
+  static String? patchNativeConfig(String nativeConfigJson) {
+    try {
+      final config =
+          jsonDecode(nativeConfigJson) as Map<String, dynamic>;
+
+      // Replace DNS with UseIPv4 + 1.1.1.1/8.8.8.8 servers.
+      // The googleapis.cn → googleapis.com host override avoids DNS poisoning
+      // for Chinese-hosted Google APIs (common in VPN panel setups).
+      config['dns'] = {
+        'hosts': {'domain:googleapis.cn': 'googleapis.com'},
+        'queryStrategy': 'UseIPv4',
+        'servers': [
+          // Detailed objects allow future per-domain routing overrides.
+          {'address': '1.1.1.1', 'domains': <String>[], 'port': 53},
+          {'address': '8.8.8.8', 'domains': <String>[], 'port': 53},
+          // Plain string fallback for Xray versions that need it.
+          '1.1.1.1',
+        ],
+      };
+
+      // Keep any existing routing rules and prepend DNS routing rules.
+      final existing = config['routing'];
+      final existingRules =
+          (existing is Map ? existing['rules'] as List<dynamic>? : null) ??
+              <dynamic>[];
+      config['routing'] = {
+        'domainStrategy': 'IPIfNonMatch',
+        'rules': [
+          // Route Cloudflare DNS through the proxy outbound.
+          {'ip': ['1.1.1.1'], 'outboundTag': 'proxy', 'port': '53'},
+          // Route Google DNS directly.
+          {'ip': ['8.8.8.8'], 'outboundTag': 'direct', 'port': '53'},
+          ...existingRules,
+        ],
+      };
+
+      return const JsonEncoder.withIndent('  ').convert(config);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Parses [link] and returns a ready-to-use Xray JSON config string.
   ///
   /// The generated config includes:
@@ -18,6 +69,8 @@ class XrayConfigBuilder {
   ///  - Stats
   ///
   /// Returns `null` if [link] cannot be parsed.
+  /// NOTE: Does not include TUN inbound — use [patchNativeConfig] instead
+  /// for VPN mode to preserve the native TUN handling.
   static String? buildFromLink(String link) {
     link = link.trim();
     final uri = Uri.tryParse(link);

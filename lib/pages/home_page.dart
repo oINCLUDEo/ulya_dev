@@ -538,26 +538,27 @@ class _HomePageState extends State<HomePage>
             }
           }
         }
-        // Build a custom Xray JSON config from the link for better
-        // compatibility with whitelist-based mobile filtering.
-        final customJson =
-            XrayConfigBuilder.buildFromLink(_selectedConfig!.link);
-        if (customJson != null) {
-          // Validate the generated config before connecting.
-          final err = await widget.v2rayBox.checkConfigJson(customJson);
-          if (err.isNotEmpty) {
-            if (mounted) {
-              setState(() => _status = VpnStatus.stopped);
+        // Get the full native config (includes TUN inbound for VPN mode),
+        // then patch only DNS + routing for whitelist-based mobile filtering.
+        // Fall back to the plain native connect() on any error.
+        bool patchedConfigSucceeded = false;
+        final nativeJson =
+            await widget.v2rayBox.generateConfig(_selectedConfig!.link);
+        if (nativeJson.isNotEmpty) {
+          final patched = XrayConfigBuilder.patchNativeConfig(nativeJson);
+          if (patched != null) {
+            final err = await widget.v2rayBox.checkConfigJson(patched);
+            if (err.isEmpty) {
+              await widget.v2rayBox.connectWithJson(
+                patched,
+                name: _selectedConfig!.name,
+              );
+              patchedConfigSucceeded = true;
             }
-            _snack('Config error: $err');
-            return;
           }
-          await widget.v2rayBox.connectWithJson(
-            customJson,
-            name: _selectedConfig!.name,
-          );
-        } else {
-          // Fallback: use the native link parser for unsupported protocols.
+        }
+        if (!patchedConfigSucceeded) {
+          // Fallback: use the native link parser with optional TLS fragment.
           final err =
               await widget.v2rayBox.parseConfig(_selectedConfig!.link);
           if (err.isNotEmpty) {
@@ -567,7 +568,6 @@ class _HomePageState extends State<HomePage>
             _snack('Config error: $err');
             return;
           }
-          // Apply config options — enable TLS fragment if user turned it on.
           final prefs = await SharedPreferences.getInstance();
           final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
           await widget.v2rayBox.setConfigOptions(
