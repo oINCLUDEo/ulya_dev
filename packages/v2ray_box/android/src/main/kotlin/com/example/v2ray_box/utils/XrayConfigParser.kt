@@ -2,7 +2,6 @@ package com.example.v2ray_box.utils
 
 import android.net.Uri
 import android.util.Log
-import com.example.v2ray_box.Settings
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import java.net.URLDecoder
@@ -84,7 +83,7 @@ object XrayConfigParser {
         }
 
         val config = mutableMapOf<String, Any>(
-            "log" to mapOf("loglevel" to if (Settings.debugMode) "debug" else "warning"),
+            "log" to mapOf("loglevel" to "warning"),
             "policy" to buildPolicy(),
             "dns" to buildDns(),
             "inbounds" to inbounds,
