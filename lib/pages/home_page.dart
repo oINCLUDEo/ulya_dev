@@ -10,6 +10,7 @@ import 'package:v2ray_box/v2ray_box.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 import '../services/remnawave_service.dart';
+import 'config_editor_page.dart';
 
 class HomePage extends StatefulWidget {
   final V2rayBox v2rayBox;
@@ -545,8 +546,6 @@ class _HomePageState extends State<HomePage>
           _snack('Config error: $err');
           return;
         }
-        final prefs = await SharedPreferences.getInstance();
-        final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
 
         // Build an enhanced xray JSON config with proper DNS servers, routing
         // rules, and optional TLS fragment for whitelist-based DPI bypass.
@@ -556,25 +555,11 @@ class _HomePageState extends State<HomePage>
         // its DNS-direct server, which on many Android devices tries [::1]:53
         // (the Android stub resolver) and fails with "connection refused",
         // preventing the VPN from establishing any connections.
-        final savedEngine = await widget.v2rayBox.getCoreEngine();
-        if (savedEngine != 'xray') await widget.v2rayBox.setCoreEngine('xray');
-        try {
-          final configJson = _patchXrayConfig(
-            await widget.v2rayBox.generateConfig(_selectedConfig!.link),
-            fragmentOn: fragmentOn,
-          );
-          await widget.v2rayBox.connectWithJson(
-            configJson,
-            name: _selectedConfig!.name,
-          );
-        } finally {
-          // Restore the user's engine preference. The active connection already
-          // uses xray because Settings.activeRuntimeEngine was captured before
-          // the service broadcast was sent.
-          if (savedEngine != 'xray') {
-            await widget.v2rayBox.setCoreEngine(savedEngine);
-          }
-        }
+        final configJson = await _buildDraftConfig(_selectedConfig!.link);
+        await widget.v2rayBox.connectWithJson(
+          configJson,
+          name: _selectedConfig!.name,
+        );
       } catch (e) {
         if (mounted) {
           setState(() => _status = VpnStatus.stopped);
@@ -650,6 +635,70 @@ class _HomePageState extends State<HomePage>
     return jsonEncode(cfg);
   }
 
+  /// Opens [ConfigEditorPage] in read-only mode showing the config that is
+  /// currently active (if connected) or the patched draft config that *would*
+  /// be used for the selected server (if disconnected).
+  Future<void> _showActiveConfig() async {
+    final isConnected = _status == VpnStatus.started;
+    String json;
+    String title;
+
+    if (isConnected) {
+      // Try to get the live running config from the native side first.
+      final live = await widget.v2rayBox.getActiveConfig();
+      title = _selectedConfig?.name ?? 'Активный конфиг';
+      if (live.isNotEmpty) {
+        json = live;
+      } else if (_selectedConfig != null) {
+        // Fallback: rebuild the patched config from the saved link.
+        json = await _buildDraftConfig(_selectedConfig!.link);
+      } else {
+        _snack('Нет активного конфига');
+        return;
+      }
+    } else if (_selectedConfig != null) {
+      // Not connected — show the draft config for the selected server.
+      json = await _buildDraftConfig(_selectedConfig!.link);
+      title = '${_selectedConfig!.name} (черновик)';
+    } else {
+      _snack('Сначала выберите сервер');
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => ConfigEditorPage(
+          v2rayBox: widget.v2rayBox,
+          configJson: json,
+          configName: title,
+          readOnly: true,
+        ),
+      ),
+    );
+  }
+
+  /// Generates and patches the xray config for [link], temporarily switching
+  /// the engine to 'xray' if needed (to avoid the sing-box DNS bootstrap bug)
+  /// and restoring the user's preference afterwards.
+  Future<String> _buildDraftConfig(String link) async {
+    final prefs = await SharedPreferences.getInstance();
+    final fragmentOn = prefs.getBool('tls_fragment_enabled') ?? false;
+    final savedEngine = await widget.v2rayBox.getCoreEngine();
+    if (savedEngine != 'xray') await widget.v2rayBox.setCoreEngine('xray');
+    try {
+      return _patchXrayConfig(
+        await widget.v2rayBox.generateConfig(link),
+        fragmentOn: fragmentOn,
+      );
+    } finally {
+      if (savedEngine != 'xray') {
+        await widget.v2rayBox.setCoreEngine(savedEngine);
+      }
+    }
+  }
+
   void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -688,20 +737,32 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildHeader() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Column(
+      padding: const EdgeInsets.fromLTRB(16, 16, 4, 4),
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'V2Ray Box',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'V2Ray Box',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                Text(
+                  _mode == VpnMode.vpn ? 'VPN Mode' : 'Proxy Mode',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 14),
+                ),
+              ],
             ),
           ),
-          Text(
-            _mode == VpnMode.vpn ? 'VPN Mode' : 'Proxy Mode',
-            style: TextStyle(color: Colors.grey[400], fontSize: 14),
+          IconButton(
+            icon: const Icon(Icons.data_object),
+            tooltip: 'Посмотреть конфиг',
+            onPressed: _showActiveConfig,
           ),
         ],
       ),

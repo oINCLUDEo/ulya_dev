@@ -9,11 +9,16 @@ class ConfigEditorPage extends StatefulWidget {
   final String configJson;
   final String configName;
 
+  /// When [readOnly] is true the "Connect with this config" button is hidden
+  /// and the text field is not editable — the page acts as a JSON viewer.
+  final bool readOnly;
+
   const ConfigEditorPage({
     super.key,
     required this.v2rayBox,
     required this.configJson,
     required this.configName,
+    this.readOnly = false,
   });
 
   @override
@@ -177,6 +182,7 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
                 controller: _ctrl,
                 maxLines: null,
                 expands: true,
+                readOnly: widget.readOnly,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.5),
                 decoration: const InputDecoration(
                   border: InputBorder.none,
@@ -187,7 +193,9 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
           ),
         ],
       ),
-      bottomNavigationBar: SafeArea(
+      bottomNavigationBar: widget.readOnly
+          ? null
+          : SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: FilledButton.icon(
