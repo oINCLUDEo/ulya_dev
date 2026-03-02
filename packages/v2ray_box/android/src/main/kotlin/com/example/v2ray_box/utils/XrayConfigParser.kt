@@ -126,16 +126,35 @@ object XrayConfigParser {
     }
 
     private fun buildDns(): Map<String, Any> {
+        // Use IPv4-only strategy with Cloudflare + Google DNS servers so that
+        // DNS resolution works reliably on ISPs that apply whitelist-based
+        // filtering (e.g. Russian mobile operators).
+        // The googleapis.cn override avoids DNS poisoning for CN-hosted APIs.
+        // The plain-string "1.1.1.1" entry is a catch-all fallback recognised
+        // by older Xray versions that require at least one string-form server.
         return mapOf(
-            "hosts" to emptyMap<String, Any>(),
-            "servers" to emptyList<Any>()
+            "hosts" to mapOf("domain:googleapis.cn" to "googleapis.com"),
+            "queryStrategy" to "UseIPv4",
+            "servers" to listOf(
+                mapOf("address" to "1.1.1.1", "domains" to emptyList<String>(), "port" to 53),
+                mapOf("address" to "8.8.8.8", "domains" to emptyList<String>(), "port" to 53),
+                "1.1.1.1" // string fallback for Xray versions that require it
+            )
         )
     }
 
     private fun buildRouting(): Map<String, Any> {
+        // IPIfNonMatch: resolve to IP if domain routing fails, then re-match.
+        // Route Cloudflare DNS (1.1.1.1) through the proxy outbound and
+        // Google DNS (8.8.8.8) directly to avoid double-proxying.
+        // Xray routing rule "port" accepts both int and string; use int here
+        // for consistency with the DNS server "port" field above.
         return mapOf(
-            "domainStrategy" to "AsIs",
-            "rules" to emptyList<Any>()
+            "domainStrategy" to "IPIfNonMatch",
+            "rules" to listOf(
+                mapOf("ip" to listOf("1.1.1.1"), "outboundTag" to "proxy", "port" to 53),
+                mapOf("ip" to listOf("8.8.8.8"), "outboundTag" to "direct", "port" to 53)
+            )
         )
     }
 

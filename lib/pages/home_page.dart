@@ -537,10 +537,11 @@ class _HomePageState extends State<HomePage>
             }
           }
         }
-        // Connect using the library's engine directly — the patched v2ray_box
-        // library now uses a real IP-based dns-direct server (8.8.8.8) in
-        // the sing-box config, so DNS resolution works without any app-side
-        // JSON patching.
+        // Use the library's native connect() which now generates a proper
+        // config via our patched packages/v2ray_box:
+        //  - XrayConfigParser: proper DNS (UseIPv4, 1.1.1.1/8.8.8.8) + routing
+        //  - SingboxConfigParser: dns-direct uses real UDP server (8.8.8.8)
+        //    instead of the broken system local DNS
         final err = await widget.v2rayBox.parseConfig(_selectedConfig!.link);
         if (err.isNotEmpty) {
           if (mounted) {
