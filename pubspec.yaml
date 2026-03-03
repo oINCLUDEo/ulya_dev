@@ -18,6 +18,8 @@ dependencies:
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.0.1
   share_plus: ^11.0.0
+  flutter_svg: ^2.2.3
+  flutter_native_splash: ^2.4.7
 
 dev_dependencies:
   flutter_test:
@@ -28,6 +30,19 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/anim/loading.json
+    - assets/icon/logo.svg
+
+flutter_native_splash:
+  color: "#0F0F1A"
+  image: assets/image/splash_icon.png
+  android: true
+  ios: true
+  android_12:
+    color: "#0F0F1A"
+    image: assets/image/splash_icon.png
+    icon_background_color: "#0F0F1A"
 
 flutter_launcher_icons:
   android: true
