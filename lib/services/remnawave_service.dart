@@ -320,9 +320,7 @@ class RemnawaveService {
         isDisabled: false,
         link: link,
         protocol: scheme,
-
-        // если потом добавишь поле description в модель —
-        // можно будет просто передать сюда description
+        description: description,
       );
     } catch (e) {
       debugPrint('RemnawaveService: failed to parse link: $e');

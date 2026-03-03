@@ -6,11 +6,9 @@ class ServerNode {
   final bool isConnected;
   final bool isDisabled;
   final int? usersOnline;
-  /// The raw VPN config link (vless://, vmess://, trojan://, etc.).
-  /// Populated when node comes from a subscription URL.
   final String? link;
-  /// Protocol identifier: 'vless', 'vmess', 'trojan', 'ss', etc.
   final String? protocol;
+  final String? description;
 
   const ServerNode({
     required this.uuid,
@@ -22,6 +20,7 @@ class ServerNode {
     this.usersOnline,
     this.link,
     this.protocol,
+    this.description,
   });
 
   factory ServerNode.fromJson(Map<String, dynamic> json) {
@@ -35,6 +34,7 @@ class ServerNode {
       usersOnline: json['usersOnline'] as int?,
       link: json['link'] as String?,
       protocol: json['protocol'] as String?,
+      description: json['description'] as String?,
     );
   }
 
@@ -48,8 +48,8 @@ class ServerNode {
     'usersOnline': usersOnline,
     'link': link,
     'protocol': protocol,
+    'description': description,
   };
 
   bool get isAvailable => isConnected && !isDisabled;
 }
-

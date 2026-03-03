@@ -3,6 +3,7 @@ import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 
 import '../models/server_node.dart';
 import '../services/remnawave_service.dart';
+import '../theme/app_colors.dart';
 
 class ServersPage extends StatefulWidget {
   final VoidCallback? onGoToSettings;
@@ -18,7 +19,15 @@ class _ServersPageState extends State<ServersPage> {
   bool _loading = true;
   bool _noSubscription = false;
 
-  // ping ms per node uuid: null = не тестировался, -2 = идёт, -1 = ошибка, >=0 = мс
+  bool _bypassExpanded = true;
+  bool _unlimitedExpanded = true;
+  bool _otherExpanded = true;
+
+  /// ping ms per node uuid:
+  /// null = не тестировался
+  /// -2 = идёт
+  /// -1 = ошибка
+  /// >=0 = мс
   final Map<String, int> _pings = {};
   bool _pingAllInProgress = false;
 
@@ -28,6 +37,10 @@ class _ServersPageState extends State<ServersPage> {
     _loadNodes();
   }
 
+  // ──────────────────────────────────────────────────────────────
+  // LOAD NODES
+  // ──────────────────────────────────────────────────────────────
+
   Future<void> _loadNodes() async {
     setState(() {
       _loading = true;
@@ -35,46 +48,186 @@ class _ServersPageState extends State<ServersPage> {
     });
 
     final subUrl = await RemnawaveService.getSubscriptionUrl();
+
     if (subUrl.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _noSubscription = true;
-          _nodes = [];
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _noSubscription = true;
+        _nodes = [];
+      });
       return;
     }
 
     final nodes = await RemnawaveService.fetchNodes();
-    if (mounted) {
-      setState(() {
-        _nodes = nodes;
-        _loading = false;
-        _noSubscription = false;
-        final uuids = nodes.map((n) => n.uuid).toSet();
-        _pings.removeWhere((k, _) => !uuids.contains(k));
+
+    if (!mounted) return;
+
+    setState(() {
+      _nodes = nodes;
+      _loading = false;
+      _noSubscription = false;
+
+      final uuids = nodes.map((e) => e.uuid).toSet();
+      _pings.removeWhere((k, _) => !uuids.contains(k));
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // GROUPING
+  // ──────────────────────────────────────────────────────────────
+
+  Map<String, List<ServerNode>> _groupedNodes() {
+    final map = {
+      'bypass': <ServerNode>[],
+      'unlimited': <ServerNode>[],
+      'other': <ServerNode>[],
+    };
+
+    for (final node in _nodes) {
+      final desc = (node.description ?? '').toLowerCase();
+
+      if (desc.contains('белые')) {
+        map['bypass']!.add(node);
+      } else if (desc.contains('безлимит')) {
+        map['unlimited']!.add(node);
+      } else {
+        map['other']!.add(node);
+      }
+    }
+
+    // сортировка: сначала по ping (если есть), потом по имени
+    for (final key in map.keys) {
+      map[key]!.sort((a, b) {
+        final pa = _pings[a.uuid];
+        final pb = _pings[b.uuid];
+
+        if (pa != null && pa >= 0 && pb != null && pb >= 0) {
+          return pa.compareTo(pb);
+        }
+        return a.name.compareTo(b.name);
       });
     }
+
+    return map;
   }
+
+  // ──────────────────────────────────────────────────────────────
+  // SECTIONS
+  // ──────────────────────────────────────────────────────────────
+
+  List<Widget> _buildSections() {
+    final groups = _groupedNodes();
+    final List<Widget> slivers = [];
+
+    void addSection({
+      required String title,
+      required String subtitle,
+      required List<ServerNode> nodes,
+      required Color color,
+      required IconData icon,
+      required bool expanded,
+      required VoidCallback onToggle,
+    }) {
+      if (nodes.isEmpty) return;
+
+      slivers.add(
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 6),
+          sliver: SliverToBoxAdapter(
+            child: _SectionHeader(
+              title: title,
+              subtitle: subtitle,
+              color: color,
+              icon: icon,
+              expanded: expanded,
+              onTap: onToggle,
+            ),
+          ),
+        ),
+      );
+
+      slivers.add(
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverToBoxAdapter(
+            child: _AnimatedServerGroup(
+              expanded: expanded,
+              nodes: nodes,
+              pings: _pings,
+              onPing: _pingNode,
+              color: color,
+            ),
+          ),
+        ),
+      );
+    }
+
+    addSection(
+      title: 'Обход ограничений',
+      subtitle: 'Для доступа везде',
+      nodes: groups['bypass']!,
+      color: const Color(0xFF6C5CE7),  // Более яркий синий
+      icon: Icons.shield_outlined,
+      expanded: _bypassExpanded,
+      onToggle: () =>
+          setState(() => _bypassExpanded = !_bypassExpanded),
+    );
+
+    addSection(
+      title: 'Безлимитный трафик',
+      subtitle: 'Без ограничений по объёму',
+      nodes: groups['unlimited']!,
+      color: const Color(0xFF00D9FF),  // Яркий голубой
+      icon: Icons.all_inclusive,
+      expanded: _unlimitedExpanded,
+      onToggle: () =>
+          setState(() => _unlimitedExpanded = !_unlimitedExpanded),
+    );
+
+    addSection(
+      title: 'Все серверы',
+      subtitle: 'Остальные доступные узлы',
+      nodes: groups['other']!,
+      color: const Color(0xFF2ED573), // Светлый зелёный
+      icon: Icons.public,
+      expanded: _otherExpanded,
+      onToggle: () =>
+          setState(() => _otherExpanded = !_otherExpanded),
+    );
+
+    return slivers;
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // PING SINGLE
+  // ──────────────────────────────────────────────────────────────
 
   Future<void> _pingNode(ServerNode node) async {
     if (node.link == null) return;
+
     setState(() => _pings[node.uuid] = -2);
+
     try {
       // flutter_v2ray_plus: getServerDelay принимает полный JSON конфиг
       final parser = FlutterV2ray.parseFromURL(node.link!);
       final config = parser.getFullConfiguration();
       final v2ray = FlutterV2ray();
       final ms = await v2ray.getServerDelay(config: config);
+
       if (mounted) setState(() => _pings[node.uuid] = ms);
     } catch (_) {
       if (mounted) setState(() => _pings[node.uuid] = -1);
     }
   }
 
+  // ──────────────────────────────────────────────────────────────
+  // PING ALL
+  // ──────────────────────────────────────────────────────────────
+
   Future<void> _pingAll() async {
     if (_nodes.isEmpty || _pingAllInProgress) return;
+
     setState(() {
       _pingAllInProgress = true;
       for (final n in _nodes) {
@@ -83,15 +236,22 @@ class _ServersPageState extends State<ServersPage> {
     });
 
     final v2ray = FlutterV2ray();
+
     await Future.wait(
       _nodes.where((n) => n.link != null).map((n) async {
         try {
           final parser = FlutterV2ray.parseFromURL(n.link!);
           final ms = await v2ray.getServerDelay(
-              config: parser.getFullConfiguration());
-          if (mounted) setState(() => _pings[n.uuid] = ms);
+            config: parser.getFullConfiguration(),
+          );
+
+          if (mounted) {
+            setState(() => _pings[n.uuid] = ms);
+          }
         } catch (_) {
-          if (mounted) setState(() => _pings[n.uuid] = -1);
+          if (mounted) {
+            setState(() => _pings[n.uuid] = -1);
+          }
         }
       }),
     );
@@ -133,8 +293,7 @@ class _ServersPageState extends State<ServersPage> {
                                 strokeWidth: 2),
                           )
                               : const Icon(Icons.speed_outlined),
-                          onPressed:
-                          (_loading || _pingAllInProgress)
+                          onPressed: (_loading || _pingAllInProgress)
                               ? null
                               : _pingAll,
                           tooltip: 'Пинг всех',
@@ -158,31 +317,19 @@ class _ServersPageState extends State<ServersPage> {
               SliverFillRemaining(child: _buildNoSubscriptionState())
             else if (_nodes.isEmpty)
                 SliverFillRemaining(child: _buildEmptyState())
-              else ...[
+              else
+                ...[
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     sliver: SliverToBoxAdapter(
                       child: Text(
                         '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
-                        style:
-                        TextStyle(color: Colors.grey[400], fontSize: 13),
+                        style: TextStyle(color: Colors.grey[400], fontSize: 13),
                       ),
                     ),
                   ),
                   const SliverPadding(padding: EdgeInsets.only(top: 8)),
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                            (ctx, i) => _NodeTile(
-                          node: _nodes[i],
-                          ping: _pings[_nodes[i].uuid],
-                          onPing: () => _pingNode(_nodes[i]),
-                        ),
-                        childCount: _nodes.length,
-                      ),
-                    ),
-                  ),
+                  ..._buildSections(),
                 ],
             const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
           ],
@@ -213,21 +360,15 @@ class _ServersPageState extends State<ServersPage> {
                 color: const Color(0xFF6C5CE7).withOpacity(0.15),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.vpn_key_outlined,
-                  size: 48, color: Color(0xFF6C5CE7)),
+              child: const Icon(Icons.vpn_key_outlined, size: 48, color: Color(0xFF6C5CE7)),
             ),
             const SizedBox(height: 20),
-            const Text('Нет подписки',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold)),
+            const Text('Нет подписки', style: TextStyle(
+                color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Text(
-              'Введите URL подписки в Настройках.\n'
-                  'Получите его в Telegram-боте после оформления.',
-              style: TextStyle(
-                  color: Colors.grey[400], fontSize: 14, height: 1.5),
+              'Введите URL подписки в Настройках.\nПолучите его в Telegram-боте после оформления.',
+              style: TextStyle(color: Colors.grey[400], fontSize: 14, height: 1.5),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -235,8 +376,7 @@ class _ServersPageState extends State<ServersPage> {
               onPressed: widget.onGoToSettings,
               icon: const Icon(Icons.settings_outlined),
               label: const Text('Открыть Настройки'),
-              style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF6C5CE7)),
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6C5CE7)),
             ),
           ],
         ),
@@ -253,14 +393,11 @@ class _ServersPageState extends State<ServersPage> {
           children: [
             Icon(Icons.cloud_off, size: 64, color: Colors.grey[600]),
             const SizedBox(height: 16),
-            Text('Серверы не получены',
-                style:
-                TextStyle(color: Colors.grey[400], fontSize: 16)),
+            Text('Серверы не получены', style: TextStyle(color: Colors.grey[400], fontSize: 16)),
             const SizedBox(height: 8),
             Text(
               'Проверьте URL подписки или интернет-соединение',
-              style:
-              TextStyle(color: Colors.grey[600], fontSize: 13),
+              style: TextStyle(color: Colors.grey[600], fontSize: 13),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
@@ -276,6 +413,198 @@ class _ServersPageState extends State<ServersPage> {
   }
 }
 
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const _SectionHeader({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.graphiteSurface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        splashColor: color.withOpacity(0.12),
+        highlightColor: Colors.white.withOpacity(0.02),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                  CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: AppColors.textNeutralMain,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color:
+                        AppColors.textNeutralSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              AnimatedRotation(
+                turns: expanded ? 0.5 : 0,
+                duration:
+                const Duration(milliseconds: 250),
+                curve: Curves.easeInOut,
+                child: const Icon(
+                  Icons.expand_more,
+                  color:
+                  AppColors.textNeutralSecondary,
+                ),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnimatedServerGroup extends StatefulWidget {
+  final bool expanded;
+  final List<ServerNode> nodes;
+  final Map<String, int?> pings;
+  final void Function(ServerNode) onPing;
+  final Color color;
+
+  const _AnimatedServerGroup({
+    required this.expanded,
+    required this.nodes,
+    required this.pings,
+    required this.onPing,
+    required this.color,
+  });
+
+  @override
+  State<_AnimatedServerGroup> createState() =>
+      _AnimatedServerGroupState();
+}
+
+class _AnimatedServerGroupState
+    extends State<_AnimatedServerGroup>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _sizeAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+
+    _sizeAnim = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    );
+
+    if (widget.expanded) {
+      _controller.value = 1;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _AnimatedServerGroup oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.expanded) {
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: SizeTransition(
+        sizeFactor: _sizeAnim,
+        axisAlignment: -1,
+        child: Container(
+          margin: const EdgeInsets.only(top: 8),
+          decoration: BoxDecoration(
+            color: AppColors.graphiteSurface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: AppColors.graphiteElevated,
+            ),
+          ),
+          child: Column(
+            children:
+            List.generate(widget.nodes.length, (i) {
+              final node = widget.nodes[i];
+
+              return Column(
+                children: [
+                  _NodeTile(
+                    node: node,
+                    ping: widget.pings[node.uuid],
+                    onPing: () =>
+                        widget.onPing(node),
+                  ),
+                  if (i != widget.nodes.length - 1)
+                    Divider(
+                      height: 1,
+                      thickness: 0.6,
+                      color:
+                      AppColors.graphiteElevated,
+                    ),
+                ],
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+}
+
 // ── Тайл сервера ──────────────────────────────────────────────────────────────
 
 class _NodeTile extends StatelessWidget {
@@ -283,62 +612,88 @@ class _NodeTile extends StatelessWidget {
   final int? ping;
   final VoidCallback? onPing;
 
-  const _NodeTile({required this.node, this.ping, this.onPing});
+  const _NodeTile({
+    required this.node,
+    this.ping,
+    this.onPing,
+  });
 
   @override
   Widget build(BuildContext context) {
     final protocol = node.protocol ?? '';
     final isPinging = ping == -2;
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+    return InkWell(
+      onTap: () {},
       child: Padding(
-        padding:
-        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(
+            horizontal: 16, vertical: 14),
         child: Row(
           children: [
             Container(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color:
-                _protocolColor(protocol).withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
+                color: _protocolColor(protocol)
+                    .withOpacity(0.12),
+                borderRadius:
+                BorderRadius.circular(12),
               ),
               child: Center(
-                child: Text(_countryEmoji(node.countryCode),
-                    style: const TextStyle(fontSize: 22)),
+                child: Text(
+                  _countryEmoji(node.countryCode),
+                  style:
+                  const TextStyle(fontSize: 22),
+                ),
               ),
             ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
                 children: [
                   Text(
                     node.name,
                     style: const TextStyle(
-                        fontWeight: FontWeight.w600, fontSize: 15),
-                    overflow: TextOverflow.ellipsis,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      color:
+                      AppColors.textNeutralMain,
+                    ),
+                    overflow:
+                    TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
                       if (protocol.isNotEmpty) ...[
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: _protocolColor(protocol)
-                                .withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(6),
+                          padding:
+                          const EdgeInsets
+                              .symmetric(
+                              horizontal: 6,
+                              vertical: 2),
+                          decoration:
+                          BoxDecoration(
+                            color: _protocolColor(
+                                protocol)
+                                .withOpacity(0.18),
+                            borderRadius:
+                            BorderRadius
+                                .circular(6),
                           ),
                           child: Text(
-                            protocol.toUpperCase(),
+                            protocol
+                                .toUpperCase(),
                             style: TextStyle(
-                                color: _protocolColor(protocol),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700),
+                              color:
+                              _protocolColor(
+                                  protocol),
+                              fontSize: 10,
+                              fontWeight:
+                              FontWeight.w700,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 6),
@@ -346,9 +701,13 @@ class _NodeTile extends StatelessWidget {
                       Flexible(
                         child: Text(
                           node.address,
-                          style: TextStyle(
-                              color: Colors.grey[500], fontSize: 12),
-                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors
+                                .textNeutralSecondary,
+                            fontSize: 12,
+                          ),
+                          overflow:
+                          TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -358,28 +717,42 @@ class _NodeTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             GestureDetector(
-              onTap: (isPinging || node.link == null) ? null : onPing,
+              onTap: (isPinging ||
+                  node.link == null)
+                  ? null
+                  : onPing,
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: _pingColor(ping).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(10),
+                padding:
+                const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5),
+                decoration:
+                BoxDecoration(
+                  color: _pingColor(ping)
+                      .withOpacity(0.15),
+                  borderRadius:
+                  BorderRadius.circular(10),
                 ),
                 child: isPinging
                     ? SizedBox(
                   width: 14,
                   height: 14,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: _pingColor(ping)),
+                  child:
+                  CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color:
+                    _pingColor(ping),
+                  ),
                 )
                     : Text(
                   _pingLabel(ping),
                   style: TextStyle(
-                      color: _pingColor(ping),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700),
+                    color:
+                    _pingColor(ping),
+                    fontSize: 11,
+                    fontWeight:
+                    FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -389,26 +762,37 @@ class _NodeTile extends StatelessWidget {
     );
   }
 
+  // ──────────────────────────────────────────────────────────
+  // HELPERS
+  // ──────────────────────────────────────────────────────────
+
   Color _protocolColor(String p) {
     switch (p.toLowerCase()) {
-      case 'vmess':     return const Color(0xFF6C5CE7);
-      case 'vless':     return const Color(0xFF00D9FF);
-      case 'trojan':    return const Color(0xFFFFA502);
-      case 'ss':        return const Color(0xFF2ED573);
+      case 'vmess':
+        return const Color(0xFF6C5CE7);
+      case 'vless':
+        return const Color(0xFF00D9FF);
+      case 'trojan':
+        return const Color(0xFFFFA502);
+      case 'ss':
+        return const Color(0xFF2ED573);
       case 'hysteria2':
       case 'hy2':
-      case 'hysteria':  return const Color(0xFFE84393);
-      case 'tuic':      return const Color(0xFFFD79A8);
-      default:          return Colors.grey;
+      case 'hysteria':
+        return const Color(0xFFE84393);
+      case 'tuic':
+        return const Color(0xFFFD79A8);
+      default:
+        return Colors.grey;
     }
   }
 
   Color _pingColor(int? p) {
-    if (p == null)  return Colors.grey;
-    if (p == -2)    return const Color(0xFFFFA502);
-    if (p < 0)      return Colors.grey;
-    if (p < 100)    return const Color(0xFF2ED573);
-    if (p < 300)    return const Color(0xFFFFA502);
+    if (p == null) return Colors.grey;
+    if (p == -2) return const Color(0xFFFFA502);
+    if (p < 0) return Colors.grey;
+    if (p < 100) return const Color(0xFF2ED573);
+    if (p < 300) return const Color(0xFFFFA502);
     return const Color(0xFFE74C3C);
   }
 
@@ -420,9 +804,12 @@ class _NodeTile extends StatelessWidget {
   String _countryEmoji(String code) {
     if (code.length != 2) return '🌐';
     final u = code.toUpperCase();
-    final f = u.codeUnitAt(0), s = u.codeUnitAt(1);
-    if (f < 0x41 || f > 0x5A || s < 0x41 || s > 0x5A) return '🌐';
+    final f = u.codeUnitAt(0);
+    final s = u.codeUnitAt(1);
+    if (f < 0x41 || f > 0x5A ||
+        s < 0x41 || s > 0x5A) return '🌐';
     const base = 0x1F1E6 - 0x41;
-    return String.fromCharCode(base + f) + String.fromCharCode(base + s);
+    return String.fromCharCode(base + f) +
+        String.fromCharCode(base + s);
   }
 }
