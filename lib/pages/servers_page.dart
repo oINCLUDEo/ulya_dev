@@ -133,7 +133,7 @@ class _ServersPageState extends State<ServersPage> {
 
       slivers.add(
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 24, 16, 6),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
           sliver: SliverToBoxAdapter(
             child: _SectionHeader(
               title: title,
@@ -141,6 +141,7 @@ class _ServersPageState extends State<ServersPage> {
               color: color,
               icon: icon,
               expanded: expanded,
+              nodeCount: nodes.length,
               onTap: onToggle,
             ),
           ),
@@ -149,7 +150,7 @@ class _ServersPageState extends State<ServersPage> {
 
       slivers.add(
         SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
           sliver: SliverToBoxAdapter(
             child: _AnimatedServerGroup(
               expanded: expanded,
@@ -272,36 +273,80 @@ class _ServersPageState extends State<ServersPage> {
               sliver: SliverToBoxAdapter(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Серверы',
-                      style: Theme.of(context)
-                          .textTheme
-                          .headlineMedium
-                          ?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
+                    Container(
+                      decoration: BoxDecoration(
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withOpacity(0.3),
+                            blurRadius: 24,
+                            spreadRadius: -8,
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Серверы',
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineMedium
+                                ?.copyWith(
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                          if (!_loading && !_noSubscription && _nodes.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 12.5,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                     Row(
                       children: [
-                        IconButton(
-                          icon: _pingAllInProgress
-                              ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2),
-                          )
-                              : const Icon(Icons.speed_outlined),
-                          onPressed: (_loading || _pingAllInProgress)
-                              ? null
-                              : _pingAll,
-                          tooltip: 'Пинг всех',
+                        Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceSoft.withOpacity(0.7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: IconButton(
+                            icon: _pingAllInProgress
+                                ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                            )
+                                : const Icon(Icons.speed_outlined),
+                            onPressed: (_loading || _pingAllInProgress)
+                                ? null
+                                : _pingAll,
+                            tooltip: 'Пинг всех',
+                          ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.refresh),
-                          onPressed: _loading ? null : _loadNodes,
-                          tooltip: 'Обновить',
+                        const SizedBox(width: 8),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceSoft.withOpacity(0.7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: IconButton(
+                            icon: const Icon(Icons.refresh),
+                            onPressed: _loading ? null : _loadNodes,
+                            tooltip: 'Обновить',
+                          ),
                         ),
                       ],
                     ),
@@ -319,16 +364,6 @@ class _ServersPageState extends State<ServersPage> {
                 SliverFillRemaining(child: _buildEmptyState())
               else
                 ...[
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverToBoxAdapter(
-                      child: Text(
-                        '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
-                        style: TextStyle(color: Colors.grey[400], fontSize: 13),
-                      ),
-                    ),
-                  ),
-                  const SliverPadding(padding: EdgeInsets.only(top: 8)),
                   ..._buildSections(),
                 ],
             const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
@@ -391,7 +426,14 @@ class _ServersPageState extends State<ServersPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.cloud_off, size: 64, color: Colors.grey[600]),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.grey.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
+            ),
             const SizedBox(height: 16),
             Text('Серверы не получены', style: TextStyle(color: Colors.grey[400], fontSize: 16)),
             const SizedBox(height: 8),
@@ -419,6 +461,7 @@ class _SectionHeader extends StatelessWidget {
   final IconData icon;
   final Color color;
   final bool expanded;
+  final int nodeCount;
   final VoidCallback onTap;
 
   const _SectionHeader({
@@ -427,73 +470,91 @@ class _SectionHeader extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.expanded,
+    required this.nodeCount,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.graphiteSurface,
+    return InkWell(
       borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        splashColor: color.withOpacity(0.12),
-        highlightColor: Colors.white.withOpacity(0.02),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-              horizontal: 16, vertical: 14),
-          child: Row(
-            children: [
-              Container(
-                width: 4,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(3),
-                ),
+      onTap: onTap,
+      splashColor: color.withOpacity(0.12),
+      highlightColor: Colors.white.withOpacity(0.02),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: 4, vertical: 10),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(14),
               ),
-              const SizedBox(width: 14),
-              Icon(icon, color: color, size: 20),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: AppColors.textNeutralMain,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment:
+                CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: AppColors.textNeutralMain,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color:
-                        AppColors.textNeutralSecondary,
-                        fontSize: 12,
-                      ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color:
+                      AppColors.textNeutralSecondary,
+                      fontSize: 12,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              AnimatedRotation(
-                turns: expanded ? 0.5 : 0,
-                duration:
-                const Duration(milliseconds: 250),
-                curve: Curves.easeInOut,
-                child: const Icon(
-                  Icons.expand_more,
-                  color:
-                  AppColors.textNeutralSecondary,
-                ),
-              )
-            ],
-          ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$nodeCount',
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      height: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  AnimatedRotation(
+                    turns: expanded ? 0.5 : 0,
+                    duration:
+                    const Duration(milliseconds: 250),
+                    curve: Curves.easeInOut,
+                    child: Icon(
+                      Icons.expand_more,
+                      color: color,
+                      size: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -556,42 +617,62 @@ class _AnimatedServerGroupState
 
   @override
   Widget build(BuildContext context) {
+    const double groupRadius = 18;
     return ClipRect(
       child: SizeTransition(
         sizeFactor: _sizeAnim,
         axisAlignment: -1,
-        child: Container(
-          margin: const EdgeInsets.only(top: 8),
-          decoration: BoxDecoration(
-            color: AppColors.graphiteSurface,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: AppColors.graphiteElevated,
-            ),
-          ),
-          child: Column(
-            children:
-            List.generate(widget.nodes.length, (i) {
-              final node = widget.nodes[i];
-
-              return Column(
-                children: [
-                  _NodeTile(
-                    node: node,
-                    ping: widget.pings[node.uuid],
-                    onPing: () =>
-                        widget.onPing(node),
+        child: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Separate colored accent bar to the left of the card
+                Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: widget.color.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  if (i != widget.nodes.length - 1)
-                    Divider(
-                      height: 1,
-                      thickness: 0.6,
-                      color:
-                      AppColors.graphiteElevated,
+                ),
+                const SizedBox(width: 8),
+                // Main card
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.graphiteSurface,
+                      borderRadius: BorderRadius.circular(groupRadius),
+                      border: Border.all(color: AppColors.graphiteElevated),
                     ),
-                ],
-              );
-            }),
+                    child: Column(
+                      children:
+                      List.generate(widget.nodes.length, (i) {
+                        final node = widget.nodes[i];
+
+                        return Column(
+                          children: [
+                            _NodeTile(
+                              node: node,
+                              ping: widget.pings[node.uuid],
+                              onPing: () =>
+                                  widget.onPing(node),
+                            ),
+                            if (i != widget.nodes.length - 1)
+                              Divider(
+                                height: 1,
+                                thickness: 0.6,
+                                color:
+                                AppColors.graphiteElevated,
+                              ),
+                          ],
+                        );
+                      }),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -634,10 +715,9 @@ class _NodeTile extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: _protocolColor(protocol)
-                    .withOpacity(0.12),
+                color: AppColors.graphiteElevated,
                 borderRadius:
-                BorderRadius.circular(12),
+                BorderRadius.circular(14),
               ),
               child: Center(
                 child: Text(
@@ -716,11 +796,12 @@ class _NodeTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            GestureDetector(
+            InkWell(
               onTap: (isPinging ||
                   node.link == null)
                   ? null
                   : onPing,
+              borderRadius: BorderRadius.circular(10),
               child: Container(
                 padding:
                 const EdgeInsets.symmetric(
