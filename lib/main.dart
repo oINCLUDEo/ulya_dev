@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'pages/home_page.dart';
-import 'pages/logs_page.dart';
 import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
 
@@ -66,7 +65,7 @@ class _MainShellState extends State<MainShell> {
         onDestinationSelected: (i) =>
             setState(() => _currentIndex = i),
         backgroundColor: const Color(0xFF1A1A2E),
-        indicatorColor: const Color(0xFF6C5CE7).withOpacity(0.3),
+        indicatorColor: const Color(0xFF6C5CE7).withValues(alpha: 0.3),
         destinations: const [
           NavigationDestination(
               icon: Icon(Icons.dns_outlined),

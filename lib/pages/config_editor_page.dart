@@ -176,8 +176,8 @@ class _ConfigEditorPageState extends State<ConfigEditorPage> {
               padding: const EdgeInsets.symmetric(
                   horizontal: 16, vertical: 8),
               color: _isValid
-                  ? const Color(0xFF2ED573).withOpacity(0.15)
-                  : const Color(0xFFE74C3C).withOpacity(0.15),
+                  ? const Color(0xFF2ED573).withValues(alpha: 0.15)
+                  : const Color(0xFFE74C3C).withValues(alpha: 0.15),
               child: Row(children: [
                 Icon(
                   _isValid ? Icons.check_circle : Icons.error,

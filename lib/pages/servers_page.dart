@@ -168,33 +168,33 @@ class _ServersPageState extends State<ServersPage> {
       title: 'Обход ограничений',
       subtitle: 'Для доступа везде',
       nodes: groups['bypass']!,
-      color: const Color(0xFF6C5CE7),  // Более яркий синий
+      color: const Color(0xFF6C5CE7),
+      // Более яркий синий
       icon: Icons.shield_outlined,
       expanded: _bypassExpanded,
-      onToggle: () =>
-          setState(() => _bypassExpanded = !_bypassExpanded),
+      onToggle: () => setState(() => _bypassExpanded = !_bypassExpanded),
     );
 
     addSection(
       title: 'Безлимитный трафик',
       subtitle: 'Без ограничений по объёму',
       nodes: groups['unlimited']!,
-      color: const Color(0xFF00D9FF),  // Яркий голубой
+      color: const Color(0xFF00D9FF),
+      // Яркий голубой
       icon: Icons.all_inclusive,
       expanded: _unlimitedExpanded,
-      onToggle: () =>
-          setState(() => _unlimitedExpanded = !_unlimitedExpanded),
+      onToggle: () => setState(() => _unlimitedExpanded = !_unlimitedExpanded),
     );
 
     addSection(
       title: 'Все серверы',
       subtitle: 'Остальные доступные узлы',
       nodes: groups['other']!,
-      color: const Color(0xFF2ED573), // Светлый зелёный
+      color: const Color(0xFF2ED573),
+      // Светлый зелёный
       icon: Icons.public,
       expanded: _otherExpanded,
-      onToggle: () =>
-          setState(() => _otherExpanded = !_otherExpanded),
+      onToggle: () => setState(() => _otherExpanded = !_otherExpanded),
     );
 
     return slivers;
@@ -279,7 +279,7 @@ class _ServersPageState extends State<ServersPage> {
                       decoration: BoxDecoration(
                         boxShadow: [
                           BoxShadow(
-                            color: AppColors.primary.withOpacity(0.3),
+                            color: AppColors.primary.withValues(alpha: 0.3),
                             blurRadius: 24,
                             spreadRadius: -8,
                           ),
@@ -290,16 +290,16 @@ class _ServersPageState extends State<ServersPage> {
                         children: [
                           Text(
                             'Серверы',
-                            style: Theme.of(context)
-                                .textTheme
-                                .headlineMedium
+                            style: Theme.of(context).textTheme.headlineMedium
                                 ?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                              letterSpacing: 0.4,
-                            ),
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  letterSpacing: 0.4,
+                                ),
                           ),
-                          if (!_loading && !_noSubscription && _nodes.isNotEmpty) ...[
+                          if (!_loading &&
+                              !_noSubscription &&
+                              _nodes.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Text(
                               '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
@@ -316,18 +316,19 @@ class _ServersPageState extends State<ServersPage> {
                       children: [
                         Container(
                           decoration: BoxDecoration(
-                            color: AppColors.surfaceSoft.withOpacity(0.7),
+                            color: AppColors.surfaceSoft.withValues(alpha: 0.7),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: Colors.white10),
                           ),
                           child: IconButton(
                             icon: _pingAllInProgress
                                 ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2),
-                            )
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
                                 : const Icon(Icons.speed_outlined),
                             onPressed: (_loading || _pingAllInProgress)
                                 ? null
@@ -338,7 +339,7 @@ class _ServersPageState extends State<ServersPage> {
                         const SizedBox(width: 8),
                         Container(
                           decoration: BoxDecoration(
-                            color: AppColors.surfaceSoft.withOpacity(0.7),
+                            color: AppColors.surfaceSoft.withValues(alpha: 0.7),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: Colors.white10),
                           ),
@@ -361,11 +362,10 @@ class _ServersPageState extends State<ServersPage> {
             else if (_noSubscription)
               SliverFillRemaining(child: _buildNoSubscriptionState())
             else if (_nodes.isEmpty)
-                SliverFillRemaining(child: _buildEmptyState())
-              else
-                ...[
-                  ..._buildSections(),
-                ],
+              SliverFillRemaining(child: _buildEmptyState())
+            else ...[
+              ..._buildSections(),
+            ],
             const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
           ],
         ),
@@ -392,18 +392,32 @@ class _ServersPageState extends State<ServersPage> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF6C5CE7).withOpacity(0.15),
+                color: const Color(0xFF6C5CE7).withValues(alpha: 0.15),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.vpn_key_outlined, size: 48, color: Color(0xFF6C5CE7)),
+              child: const Icon(
+                Icons.vpn_key_outlined,
+                size: 48,
+                color: Color(0xFF6C5CE7),
+              ),
             ),
             const SizedBox(height: 20),
-            const Text('Нет подписки', style: TextStyle(
-                color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            const Text(
+              'Нет подписки',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             const SizedBox(height: 12),
             Text(
               'Введите URL подписки в Настройках.\nПолучите его в Telegram-боте после оформления.',
-              style: TextStyle(color: Colors.grey[400], fontSize: 14, height: 1.5),
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 14,
+                height: 1.5,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -411,7 +425,9 @@ class _ServersPageState extends State<ServersPage> {
               onPressed: widget.onGoToSettings,
               icon: const Icon(Icons.settings_outlined),
               label: const Text('Открыть Настройки'),
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF6C5CE7)),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF6C5CE7),
+              ),
             ),
           ],
         ),
@@ -429,13 +445,16 @@ class _ServersPageState extends State<ServersPage> {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Colors.grey.withOpacity(0.1),
+                color: Colors.grey.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
             ),
             const SizedBox(height: 16),
-            Text('Серверы не получены', style: TextStyle(color: Colors.grey[400], fontSize: 16)),
+            Text(
+              'Серверы не получены',
+              style: TextStyle(color: Colors.grey[400], fontSize: 16),
+            ),
             const SizedBox(height: 8),
             Text(
               'Проверьте URL подписки или интернет-соединение',
@@ -479,18 +498,17 @@ class _SectionHeader extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
-      splashColor: color.withOpacity(0.12),
-      highlightColor: Colors.white.withOpacity(0.02),
+      splashColor: color.withValues(alpha: 0.12),
+      highlightColor: Colors.white.withValues(alpha: 0.02),
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 4, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
         child: Row(
           children: [
             Container(
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
+                color: color.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(icon, color: color, size: 22),
@@ -498,8 +516,7 @@ class _SectionHeader extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(
               child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     title,
@@ -513,8 +530,7 @@ class _SectionHeader extends StatelessWidget {
                   Text(
                     subtitle,
                     style: const TextStyle(
-                      color:
-                      AppColors.textNeutralSecondary,
+                      color: AppColors.textNeutralSecondary,
                       fontSize: 12,
                     ),
                   ),
@@ -524,7 +540,7 @@ class _SectionHeader extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.12),
+                color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -542,14 +558,9 @@ class _SectionHeader extends StatelessWidget {
                   const SizedBox(height: 2),
                   AnimatedRotation(
                     turns: expanded ? 0.5 : 0,
-                    duration:
-                    const Duration(milliseconds: 250),
+                    duration: const Duration(milliseconds: 250),
                     curve: Curves.easeInOut,
-                    child: Icon(
-                      Icons.expand_more,
-                      color: color,
-                      size: 18,
-                    ),
+                    child: Icon(Icons.expand_more, color: color, size: 18),
                   ),
                 ],
               ),
@@ -577,12 +588,10 @@ class _AnimatedServerGroup extends StatefulWidget {
   });
 
   @override
-  State<_AnimatedServerGroup> createState() =>
-      _AnimatedServerGroupState();
+  State<_AnimatedServerGroup> createState() => _AnimatedServerGroupState();
 }
 
-class _AnimatedServerGroupState
-    extends State<_AnimatedServerGroup>
+class _AnimatedServerGroupState extends State<_AnimatedServerGroup>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _sizeAnim;
@@ -595,10 +604,7 @@ class _AnimatedServerGroupState
       duration: const Duration(milliseconds: 300),
     );
 
-    _sizeAnim = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeInOut,
-    );
+    _sizeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
 
     if (widget.expanded) {
       _controller.value = 1;
@@ -632,7 +638,7 @@ class _AnimatedServerGroupState
                 Container(
                   width: 4,
                   decoration: BoxDecoration(
-                    color: widget.color.withOpacity(0.4),
+                    color: widget.color.withValues(alpha: 0.4),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -646,8 +652,7 @@ class _AnimatedServerGroupState
                       border: Border.all(color: AppColors.graphiteElevated),
                     ),
                     child: Column(
-                      children:
-                      List.generate(widget.nodes.length, (i) {
+                      children: List.generate(widget.nodes.length, (i) {
                         final node = widget.nodes[i];
 
                         return Column(
@@ -655,15 +660,13 @@ class _AnimatedServerGroupState
                             _NodeTile(
                               node: node,
                               ping: widget.pings[node.uuid],
-                              onPing: () =>
-                                  widget.onPing(node),
+                              onPing: () => widget.onPing(node),
                             ),
                             if (i != widget.nodes.length - 1)
                               Divider(
                                 height: 1,
                                 thickness: 0.6,
-                                color:
-                                AppColors.graphiteElevated,
+                                color: AppColors.graphiteElevated,
                               ),
                           ],
                         );
@@ -693,11 +696,7 @@ class _NodeTile extends StatelessWidget {
   final int? ping;
   final VoidCallback? onPing;
 
-  const _NodeTile({
-    required this.node,
-    this.ping,
-    this.onPing,
-  });
+  const _NodeTile({required this.node, this.ping, this.onPing});
 
   @override
   Widget build(BuildContext context) {
@@ -707,8 +706,7 @@ class _NodeTile extends StatelessWidget {
     return InkWell(
       onTap: () {},
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
             Container(
@@ -716,63 +714,50 @@ class _NodeTile extends StatelessWidget {
               height: 44,
               decoration: BoxDecoration(
                 color: AppColors.graphiteElevated,
-                borderRadius:
-                BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(14),
               ),
               child: Center(
                 child: Text(
                   _countryEmoji(node.countryCode),
-                  style:
-                  const TextStyle(fontSize: 22),
+                  style: const TextStyle(fontSize: 22),
                 ),
               ),
             ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
-                crossAxisAlignment:
-                CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     node.name,
                     style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 15,
-                      color:
-                      AppColors.textNeutralMain,
+                      color: AppColors.textNeutralMain,
                     ),
-                    overflow:
-                    TextOverflow.ellipsis,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 4),
                   Row(
                     children: [
                       if (protocol.isNotEmpty) ...[
                         Container(
-                          padding:
-                          const EdgeInsets
-                              .symmetric(
-                              horizontal: 6,
-                              vertical: 2),
-                          decoration:
-                          BoxDecoration(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
                             color: _protocolColor(
-                                protocol)
-                                .withOpacity(0.18),
-                            borderRadius:
-                            BorderRadius
-                                .circular(6),
+                              protocol,
+                            ).withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
-                            protocol
-                                .toUpperCase(),
+                            protocol.toUpperCase(),
                             style: TextStyle(
-                              color:
-                              _protocolColor(
-                                  protocol),
+                              color: _protocolColor(protocol),
                               fontSize: 10,
-                              fontWeight:
-                              FontWeight.w700,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
@@ -782,12 +767,10 @@ class _NodeTile extends StatelessWidget {
                         child: Text(
                           node.address,
                           style: const TextStyle(
-                            color: AppColors
-                                .textNeutralSecondary,
+                            color: AppColors.textNeutralSecondary,
                             fontSize: 12,
                           ),
-                          overflow:
-                          TextOverflow.ellipsis,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
@@ -797,44 +780,34 @@ class _NodeTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             InkWell(
-              onTap: (isPinging ||
-                  node.link == null)
-                  ? null
-                  : onPing,
+              onTap: (isPinging || node.link == null) ? null : onPing,
               borderRadius: BorderRadius.circular(10),
               child: Container(
-                padding:
-                const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5),
-                decoration:
-                BoxDecoration(
-                  color: _pingColor(ping)
-                      .withOpacity(0.15),
-                  borderRadius:
-                  BorderRadius.circular(10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: _pingColor(ping).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
                 ),
                 child: isPinging
                     ? SizedBox(
-                  width: 14,
-                  height: 14,
-                  child:
-                  CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color:
-                    _pingColor(ping),
-                  ),
-                )
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _pingColor(ping),
+                        ),
+                      )
                     : Text(
-                  _pingLabel(ping),
-                  style: TextStyle(
-                    color:
-                    _pingColor(ping),
-                    fontSize: 11,
-                    fontWeight:
-                    FontWeight.w700,
-                  ),
-                ),
+                        _pingLabel(ping),
+                        style: TextStyle(
+                          color: _pingColor(ping),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
               ),
             ),
           ],
@@ -887,10 +860,10 @@ class _NodeTile extends StatelessWidget {
     final u = code.toUpperCase();
     final f = u.codeUnitAt(0);
     final s = u.codeUnitAt(1);
-    if (f < 0x41 || f > 0x5A ||
-        s < 0x41 || s > 0x5A) return '🌐';
+    if (f < 0x41 || f > 0x5A || s < 0x41 || s > 0x5A) {
+      return '🌐';
+    }
     const base = 0x1F1E6 - 0x41;
-    return String.fromCharCode(base + f) +
-        String.fromCharCode(base + s);
+    return String.fromCharCode(base + f) + String.fromCharCode(base + s);
   }
 }

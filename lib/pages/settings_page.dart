@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -75,6 +74,7 @@ class _SettingsPageState extends State<SettingsPage> {
       AppsRepository.instance.preload();
     }
   }
+
   // Новый метод для загрузки информации о ядре
   Future<void> _loadCoreInfo() async {
     try {
@@ -198,32 +198,33 @@ class _SettingsPageState extends State<SettingsPage> {
           // ── Режим работы ───────────────────────────────────────────
           _sliver(
             _buildSection('Режим подключения', [
-              RadioListTile<bool>(
-                title: const Text('VPN'),
-                subtitle: Text(
-                  'Весь трафик проходит через VPN-туннель',
-                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                ),
-                value: false,
+              RadioGroup<bool>(
                 groupValue: _proxyOnly,
-                onChanged: (v) async {
-                  setState(() => _proxyOnly = false);
+                onChanged: (bool? value) async {
+                  if (value == null) return;
+                  setState(() => _proxyOnly = value);
                   await _save();
                 },
-              ),
-              RadioListTile<bool>(
-                title: const Text('Только прокси'),
-                subtitle: Text(
-                  'Только локальный SOCKS5/HTTP прокси, без VPN-туннеля. '
-                  'Порт: 10808',
-                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                child: Column(
+                  children: [
+                    RadioListTile<bool>(
+                      title: const Text('VPN'),
+                      subtitle: Text(
+                        'Весь трафик проходит через VPN-туннель',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                      ),
+                      value: false,
+                    ),
+                    RadioListTile<bool>(
+                      title: const Text('Только прокси'),
+                      subtitle: Text(
+                        'Только локальный SOCKS5/HTTP прокси, без VPN-туннеля. Порт: 10808',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                      ),
+                      value: true,
+                    ),
+                  ],
                 ),
-                value: true,
-                groupValue: _proxyOnly,
-                onChanged: (v) async {
-                  setState(() => _proxyOnly = true);
-                  await _save();
-                },
               ),
             ]),
           ),
@@ -301,7 +302,9 @@ class _SettingsPageState extends State<SettingsPage> {
                     dense: true,
                     leading: CircleAvatar(
                       radius: 12,
-                      backgroundColor: const Color(0xFF6C5CE7).withOpacity(0.2),
+                      backgroundColor: const Color(
+                        0xFF6C5CE7,
+                      ).withValues(alpha: 0.2),
                       child: Text(
                         '${e.key + 1}',
                         style: const TextStyle(
@@ -425,7 +428,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: const Color(0xFF6C5CE7).withOpacity(0.2),
+                color: const Color(0xFF6C5CE7).withValues(alpha: 0.2),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: const Icon(
@@ -486,7 +489,9 @@ class _SettingsPageState extends State<SettingsPage> {
                           vertical: 3,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF2ED573).withOpacity(0.18),
+                          color: const Color(
+                            0xFF2ED573,
+                          ).withValues(alpha: 0.18),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
@@ -816,10 +821,10 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
     final base = lower.isEmpty
         ? _apps
         : _apps.where((a) {
-      final name = (a['appName'] as String).toLowerCase();
-      final pkg = (a['packageName'] as String).toLowerCase();
-      return name.contains(lower) || pkg.contains(lower);
-    }).toList();
+            final name = (a['appName'] as String).toLowerCase();
+            final pkg = (a['packageName'] as String).toLowerCase();
+            return name.contains(lower) || pkg.contains(lower);
+          }).toList();
 
     setState(() {
       _filtered = _sort(base);
@@ -827,10 +832,8 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
   }
 
   List<Map<String, dynamic>> _sort(List<Map<String, dynamic>> list) {
-    final blocked =
-    list.where((a) => _blocked.contains(a['packageName']));
-    final rest =
-    list.where((a) => !_blocked.contains(a['packageName']));
+    final blocked = list.where((a) => _blocked.contains(a['packageName']));
+    final rest = list.where((a) => !_blocked.contains(a['packageName']));
 
     return [...blocked, ...rest];
   }
@@ -859,8 +862,7 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
       builder: (_, scrollCtrl) => Container(
         decoration: const BoxDecoration(
           color: Color(0xFF1A1A2E),
-          borderRadius:
-          BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Column(
           children: [
@@ -879,11 +881,9 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
 
             /// ================= HEADER =================
             Padding(
-              padding:
-              const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
-                mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text(
                     'Исключить приложения',
@@ -894,8 +894,7 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () =>
-                        Navigator.pop(context),
+                    onPressed: () => Navigator.pop(context),
                     child: const Text('Готово'),
                   ),
                 ],
@@ -903,40 +902,30 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
             ),
 
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Text(
                 'Отмеченные приложения будут обходить VPN-туннель.',
-                style: TextStyle(
-                    color: Colors.grey[500], fontSize: 12),
+                style: TextStyle(color: Colors.grey[500], fontSize: 12),
               ),
             ),
 
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: TextField(
                 controller: _searchCtrl,
                 onChanged: _search,
-                style:
-                const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Поиск приложения...',
-                  hintStyle:
-                  const TextStyle(color: Colors.grey),
-                  prefixIcon: const Icon(Icons.search,
-                      color: Colors.grey),
+                  hintStyle: const TextStyle(color: Colors.grey),
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
                   filled: true,
-                  fillColor:
-                  const Color(0xFF0F0F1A),
+                  fillColor: const Color(0xFF0F0F1A),
                   border: OutlineInputBorder(
-                    borderRadius:
-                    BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(10),
                     borderSide: BorderSide.none,
                   ),
-                  contentPadding:
-                  const EdgeInsets.symmetric(
-                      vertical: 8),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
                 ),
               ),
             ),
@@ -949,59 +938,48 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
                 children: [
                   /// Список
                   ValueListenableBuilder<int>(
-                    valueListenable:
-                    AppsRepository.instance.iconsVersion,
-                    builder: (_, __, ___) {
+                    valueListenable: AppsRepository.instance.iconsVersion,
+                    builder: (_, _, _) {
                       return ListView.builder(
                         controller: scrollCtrl,
                         itemCount: _filtered.length,
                         itemBuilder: (_, i) {
                           final app = _filtered[i];
-                          final pkg =
-                          app['packageName'] as String;
-                          final name =
-                          app['appName'] as String;
-                          final isBlocked =
-                          _blocked.contains(pkg);
+                          final pkg = app['packageName'] as String;
+                          final name = app['appName'] as String;
+                          final isBlocked = _blocked.contains(pkg);
 
-                          final icon =
-                          AppsRepository.instance
-                              .icons[pkg];
+                          final icon = AppsRepository.instance.icons[pkg];
 
                           return ListTile(
                             leading: icon != null
                                 ? Image.memory(
-                              icon,
-                              width: 28,
-                              height: 28,
-                              gaplessPlayback: true,
-                              filterQuality:
-                              FilterQuality.none,
-                            )
+                                    icon,
+                                    width: 28,
+                                    height: 28,
+                                    gaplessPlayback: true,
+                                    filterQuality: FilterQuality.none,
+                                  )
                                 : const Icon(
-                              Icons.android,
-                              size: 28,
-                              color: Colors.grey,
-                            ),
+                                    Icons.android,
+                                    size: 28,
+                                    color: Colors.grey,
+                                  ),
                             title: Text(
                               name,
-                              style: const TextStyle(
-                                  color: Colors.white),
+                              style: const TextStyle(color: Colors.white),
                             ),
                             subtitle: Text(
                               pkg,
-                              style:
-                              const TextStyle(
+                              style: const TextStyle(
                                 color: Colors.grey,
                                 fontSize: 11,
-                                fontFamily:
-                                'monospace',
+                                fontFamily: 'monospace',
                               ),
                             ),
                             trailing: Checkbox(
                               value: isBlocked,
-                              onChanged: (_) =>
-                                  _toggle(pkg),
+                              onChanged: (_) => _toggle(pkg),
                             ),
                           );
                         },
@@ -1014,10 +992,8 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
                     const Align(
                       alignment: Alignment.bottomCenter,
                       child: Padding(
-                        padding: EdgeInsets.only(
-                            bottom: 16),
-                        child:
-                        CircularProgressIndicator(
+                        padding: EdgeInsets.only(bottom: 16),
+                        child: CircularProgressIndicator(
                           strokeWidth: 2,
                           color: Colors.white,
                         ),

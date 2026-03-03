@@ -123,17 +123,20 @@ class _LogsPageState extends State<LogsPage> {
 
   String _fmtSpeed(int bytesPerSec) {
     if (bytesPerSec < 1024) return '${bytesPerSec}B/s';
-    if (bytesPerSec < 1024 * 1024)
+    if (bytesPerSec < 1024 * 1024) {
       return '${(bytesPerSec / 1024).toStringAsFixed(1)}KB/s';
+    }
     return '${(bytesPerSec / (1024 * 1024)).toStringAsFixed(1)}MB/s';
   }
 
   String _fmtBytes(int bytes) {
     if (bytes < 1024) return '${bytes}B';
-    if (bytes < 1024 * 1024)
+    if (bytes < 1024 * 1024) {
       return '${(bytes / 1024).toStringAsFixed(1)}KB';
-    if (bytes < 1024 * 1024 * 1024)
+    }
+    if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)}GB';
   }
 
@@ -161,7 +164,7 @@ class _LogsPageState extends State<LogsPage> {
               padding:
               const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
-                color: const Color(0xFF6C5CE7).withOpacity(0.25),
+                color: const Color(0xFF6C5CE7).withValues(alpha: 0.25),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Text(

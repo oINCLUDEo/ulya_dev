@@ -73,12 +73,12 @@ class RemnawaveService {
     // Set version bits (v4) and variant bits per RFC 4122.
     bytes[6] = (bytes[6] & 0x0F) | 0x40;
     bytes[8] = (bytes[8] & 0x3F) | 0x80;
-    String _h(int b) => b.toRadixString(16).padLeft(2, '0');
-    return '${bytes.sublist(0, 4).map(_h).join()}'
-        '-${bytes.sublist(4, 6).map(_h).join()}'
-        '-${bytes.sublist(6, 8).map(_h).join()}'
-        '-${bytes.sublist(8, 10).map(_h).join()}'
-        '-${bytes.sublist(10, 16).map(_h).join()}';
+    String h(int b) => b.toRadixString(16).padLeft(2, '0');
+    return '${bytes.sublist(0, 4).map(h).join()}'
+        '-${bytes.sublist(4, 6).map(h).join()}'
+        '-${bytes.sublist(6, 8).map(h).join()}'
+        '-${bytes.sublist(8, 10).map(h).join()}'
+        '-${bytes.sublist(10, 16).map(h).join()}';
   }
 
   static final Random _rng = Random.secure();

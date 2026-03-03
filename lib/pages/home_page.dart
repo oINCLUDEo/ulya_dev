@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -47,12 +46,6 @@ class _HomePageState extends State<HomePage>
       _status.state.toUpperCase() == 'CONNECTING' ||
           _status.state.toUpperCase() == 'DISCONNECTING' ||
           _isConnecting;
-
-  Color get _statusColor {
-    if (_isConnected) return const Color(0xFF2ED573);
-    if (_isTransitioning) return const Color(0xFFFFA502);
-    return Colors.grey;
-  }
 
   String get _statusLabel {
     final s = _status.state.toUpperCase();
@@ -319,7 +312,7 @@ class _HomePageState extends State<HomePage>
                         margin: const EdgeInsets.only(bottom: 6),
                         color: isSel
                             ? const Color(0xFF6C5CE7)
-                            .withOpacity(0.15)
+                            .withValues(alpha: 0.15)
                             : null,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -427,7 +420,7 @@ class _HomePageState extends State<HomePage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.2),
+        color: color.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(protocol.toUpperCase(),
@@ -438,21 +431,22 @@ class _HomePageState extends State<HomePage>
 
   String _fmtBytes(int bytes) {
     if (bytes < 1024) return '${bytes}B';
-    if (bytes < 1024 * 1024)
+    if (bytes < 1024 * 1024) {
       return '${(bytes / 1024).toStringAsFixed(1)}KB';
-    if (bytes < 1024 * 1024 * 1024)
+    }
+    if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)}GB';
   }
-
-  String _fmtSpeed(int bps) => '${_fmtBytes(bps)}/с';
 
   String _fmtDuration(int sec) {
     final h = sec ~/ 3600;
     final m = (sec % 3600) ~/ 60;
     final s = sec % 60;
-    if (h > 0)
-      return '${h}ч ${m.toString().padLeft(2, '0')}м';
+    if (h > 0) {
+      return '$hч ${m.toString().padLeft(2, '0')}м';
+      }
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
@@ -505,7 +499,7 @@ class _HomePageState extends State<HomePage>
               decoration: BoxDecoration(
                 boxShadow: [
                   BoxShadow(
-                    color: AppColors.primary.withOpacity(0.35),
+                    color: AppColors.primary.withValues(alpha: 0.35),
                     blurRadius: 24,
                     spreadRadius: -8,
                   ),
@@ -534,7 +528,7 @@ class _HomePageState extends State<HomePage>
                           gradient: AppColors.gradientAccent,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: Colors.white.withOpacity(0.08),
+                            color: Colors.white.withValues(alpha: 0.08),
                           ),
                         ),
                         child: const Text(
@@ -570,7 +564,7 @@ class _HomePageState extends State<HomePage>
 
         Container(
           decoration: BoxDecoration(
-            color: AppColors.surfaceSoft.withOpacity(0.7),
+            color: AppColors.surfaceSoft.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.white10),
           ),
@@ -606,13 +600,13 @@ class _HomePageState extends State<HomePage>
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.5),
+            color: Colors.black.withValues(alpha: 0.5),
             blurRadius: 40,
             offset: const Offset(0, 20),
           ),
           if (connected)
             BoxShadow(
-              color: const Color(0xFF7C5CFF).withOpacity(0.25),
+              color: const Color(0xFF7C5CFF).withValues(alpha: 0.25),
               blurRadius: 50,
               spreadRadius: -10,
             ),
@@ -761,13 +755,13 @@ class _HomePageState extends State<HomePage>
         border: Border.all(color: const Color(0xFF2A2F3A)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.5),
+            color: Colors.black.withValues(alpha: 0.5),
             blurRadius: 40,
             offset: const Offset(0, 20),
           ),
           if (uploadActive || downloadActive)
             BoxShadow(
-              color: const Color(0xFF7C5CFF).withOpacity(0.08),
+              color: const Color(0xFF7C5CFF).withValues(alpha: 0.08),
               blurRadius: 50,
               spreadRadius: -10,
             ),
@@ -966,13 +960,6 @@ class _HomePageState extends State<HomePage>
       totalBytes: info.totalBytes,
     ).formattedUsed; // re-use formatter
   }
-
-  String _fmtSubBytes(int bytes) {
-    final gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 0.1) return '${gb.toStringAsFixed(2)} ГБ';
-    final mb = bytes / (1024 * 1024);
-    return '${mb.toStringAsFixed(0)} МБ';
-  }
 }
 
 // ── Вспомогательные виджеты ───────────────────────────────────────────────────
@@ -1103,9 +1090,9 @@ class _ExpiryBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1120,30 +1107,6 @@ class _ExpiryBadge extends StatelessWidget {
                   fontWeight: FontWeight.w600)),
         ],
       ),
-    );
-  }
-}
-
-class _SubTrafficChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-
-  const _SubTrafficChip(
-      {required this.icon, required this.label, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 12, color: color),
-        const SizedBox(width: 4),
-        Text(label,
-            style: TextStyle(
-                color: Colors.grey[400],
-                fontSize: 12)),
-      ],
     );
   }
 }
@@ -1185,19 +1148,19 @@ class PremiumConnectButton extends StatelessWidget {
         boxShadow: [
           if (isOff)
             BoxShadow(
-              color: const Color(0xFF5E6C8A).withOpacity(0.35),
+              color: const Color(0xFF5E6C8A).withValues(alpha: 0.35),
               blurRadius: 40,
               offset: const Offset(0, 18),
             )
           else if (isConnected)
             BoxShadow(
-              color: const Color(0xFFC9D1D9).withOpacity(0.35),
+              color: const Color(0xFFC9D1D9).withValues(alpha: 0.35),
               blurRadius: 45,
               spreadRadius: -6,
             )
           else
             BoxShadow(
-              color: Colors.black.withOpacity(0.45),
+              color: Colors.black.withValues(alpha: 0.45),
               blurRadius: 28,
               offset: const Offset(0, 14),
             ),
