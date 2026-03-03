@@ -230,6 +230,28 @@ class _SettingsPageState extends State<SettingsPage> {
 
           const SliverPadding(padding: EdgeInsets.only(top: 16)),
 
+          // ── Исключение приложений ──────────────────────────────────
+          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+            _sliver(
+              _buildSection('Исключение приложений (blockedApps)', [
+                ListTile(
+                  leading: const Icon(Icons.apps_outlined, size: 20),
+                  title: const Text('Исключённые приложения'),
+                  subtitle: Text(
+                    _blockedApps.isEmpty
+                        ? 'Все приложения идут через VPN'
+                        : '${_blockedApps.length} прил. обходят VPN',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right, size: 18),
+                  onTap: _showBlockedAppsSheet,
+                ),
+              ]),
+            ),
+
+          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+            const SliverPadding(padding: EdgeInsets.only(top: 16)),
+
           // ── Обход DPI ──────────────────────────────────────────────
           _sliver(
             _buildSection('Обход фильтрации (DPI)', [
@@ -333,28 +355,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
 
           const SliverPadding(padding: EdgeInsets.only(top: 16)),
-
-          // ── Исключение приложений ──────────────────────────────────
-          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
-            _sliver(
-              _buildSection('Исключение приложений (blockedApps)', [
-                ListTile(
-                  leading: const Icon(Icons.apps_outlined, size: 20),
-                  title: const Text('Исключённые приложения'),
-                  subtitle: Text(
-                    _blockedApps.isEmpty
-                        ? 'Все приложения идут через VPN'
-                        : '${_blockedApps.length} прил. обходят VPN',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                  ),
-                  trailing: const Icon(Icons.chevron_right, size: 18),
-                  onTap: _showBlockedAppsSheet,
-                ),
-              ]),
-            ),
-
-          if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
-            const SliverPadding(padding: EdgeInsets.only(top: 16)),
 
           // ── Дополнительно ──────────────────────────────────────────
           _sliver(
