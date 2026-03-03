@@ -122,7 +122,9 @@ class _SettingsPageState extends State<SettingsPage> {
       // Сохраняем сразу, чтобы следующий запуск не перезаписывал
       final prefs2 = await SharedPreferences.getInstance();
       await prefs2.setString(
-          _keyBlockedApps, jsonEncode(_blockedApps.toList()));
+        _keyBlockedApps,
+        jsonEncode(_blockedApps.toList()),
+      );
     }
 
     if (mounted) setState(() => _loading = false);
@@ -208,7 +210,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 title: const Text('Только прокси'),
                 subtitle: Text(
                   'Только локальный SOCKS5/HTTP прокси, без VPN-туннеля. '
-                      'Порт: 10808',
+                  'Порт: 10808',
                   style: TextStyle(color: Colors.grey[400], fontSize: 12),
                 ),
                 value: true,
@@ -230,9 +232,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 secondary: const Icon(Icons.security_outlined, size: 20),
                 title: const Text('TLS Fragment'),
                 subtitle: Text(
-                  'Разбивает TLS ClientHello на фрагменты, скрывая SNI от '
-                      'глубокой инспекции пакетов. Помогает при мобильном '
-                      'интернете с белыми списками (особенно РФ-операторы).',
+                  'Разбивает TLS ClientHello на фрагменты.',
                   style: TextStyle(color: Colors.grey[400], fontSize: 12),
                 ),
                 value: _fragmentEnabled,
@@ -270,7 +270,7 @@ class _SettingsPageState extends State<SettingsPage> {
               if (_useCustomDns) ...[
                 const Divider(height: 1),
                 ..._dnsServers.asMap().entries.map(
-                      (e) => ListTile(
+                  (e) => ListTile(
                     dense: true,
                     leading: CircleAvatar(
                       radius: 12,
@@ -612,7 +612,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ActionChip(
                   label: const Text('gstatic', style: TextStyle(fontSize: 11)),
                   onPressed: () =>
-                  ctrl.text = 'https://www.gstatic.com/generate_204',
+                      ctrl.text = 'https://www.gstatic.com/generate_204',
                 ),
                 ActionChip(
                   label: const Text(
@@ -624,7 +624,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ActionChip(
                   label: const Text('Google', style: TextStyle(fontSize: 11)),
                   onPressed: () =>
-                  ctrl.text = 'http://www.google.com/generate_204',
+                      ctrl.text = 'http://www.google.com/generate_204',
                 ),
               ],
             ),
@@ -756,10 +756,7 @@ class _BlockedAppsSheet extends StatefulWidget {
   final Set<String> initialBlocked;
   final void Function(Set<String> updated) onSave;
 
-  const _BlockedAppsSheet({
-    required this.initialBlocked,
-    required this.onSave,
-  });
+  const _BlockedAppsSheet({required this.initialBlocked, required this.onSave});
 
   @override
   State<_BlockedAppsSheet> createState() => _BlockedAppsSheetState();
@@ -822,10 +819,12 @@ class _BlockedAppsSheetState extends State<_BlockedAppsSheet> {
       final base = lower.isEmpty
           ? _allApps
           : _allApps
-          .where((a) =>
-      (a.name ?? '').toLowerCase().contains(lower) ||
-          (a.packageName ?? '').toLowerCase().contains(lower))
-          .toList();
+                .where(
+                  (a) =>
+                      (a.name ?? '').toLowerCase().contains(lower) ||
+                      (a.packageName ?? '').toLowerCase().contains(lower),
+                )
+                .toList();
       _filtered = _buildSorted(base);
     });
   }
@@ -929,73 +928,77 @@ class _BlockedAppsSheetState extends State<_BlockedAppsSheet> {
                 ? const Center(child: CircularProgressIndicator())
                 : _filtered.isEmpty
                 ? Center(
-              child: Text(
-                'Ничего не найдено',
-                style: TextStyle(
-                    color: Colors.grey[600], fontSize: 13),
-              ),
-            )
-                : ListView.builder(
-              controller: scrollCtrl,
-              itemCount: _filtered.length,
-              itemBuilder: (_, i) {
-                final app = _filtered[i];
-                final pkg = app.packageName ?? '';
-                final isBlocked = _blocked.contains(pkg);
-
-                return ListTile(
-                  dense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 2),
-                  leading: app.icon != null
-                      ? ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(
-                      app.icon!,
-                      width: 36,
-                      height: 36,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                      const Icon(Icons.android,
-                          size: 36,
-                          color: Colors.white38),
+                    child: Text(
+                      'Ничего не найдено',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
                     ),
                   )
-                      : const Icon(Icons.android,
-                      size: 36, color: Colors.white38),
-                  title: Text(
-                    app.name ?? pkg,
-                    style: TextStyle(
-                      color: isBlocked
-                          ? Colors.white
-                          : Colors.white70,
-                      fontSize: 13,
-                      fontWeight: isBlocked
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+                : ListView.builder(
+                    controller: scrollCtrl,
+                    itemCount: _filtered.length,
+                    itemBuilder: (_, i) {
+                      final app = _filtered[i];
+                      final pkg = app.packageName ?? '';
+                      final isBlocked = _blocked.contains(pkg);
+
+                      return ListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 2,
+                        ),
+                        leading: app.icon != null
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.memory(
+                                  app.icon!,
+                                  width: 36,
+                                  height: 36,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => const Icon(
+                                    Icons.android,
+                                    size: 36,
+                                    color: Colors.white38,
+                                  ),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.android,
+                                size: 36,
+                                color: Colors.white38,
+                              ),
+                        title: Text(
+                          app.name ?? pkg,
+                          style: TextStyle(
+                            color: isBlocked ? Colors.white : Colors.white70,
+                            fontSize: 13,
+                            fontWeight: isBlocked
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          pkg,
+                          style: TextStyle(
+                            color: Colors.grey[500],
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Checkbox(
+                          value: isBlocked,
+                          activeColor: const Color(0xFF6C5CE7),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          onChanged: (_) => _toggle(pkg),
+                        ),
+                        onTap: () => _toggle(pkg),
+                      );
+                    },
                   ),
-                  subtitle: Text(
-                    pkg,
-                    style: TextStyle(
-                      color: Colors.grey[500],
-                      fontSize: 10,
-                      fontFamily: 'monospace',
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: Checkbox(
-                    value: isBlocked,
-                    activeColor: const Color(0xFF6C5CE7),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(4)),
-                    onChanged: (_) => _toggle(pkg),
-                  ),
-                  onTap: () => _toggle(pkg),
-                );
-              },
-            ),
           ),
         ],
       ),

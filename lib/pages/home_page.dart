@@ -943,26 +943,6 @@ class _HomePageState extends State<HomePage>
                   ),
                 ],
               ),
-
-              // Детали (upload / download отдельно)
-              const SizedBox(height: 8),
-              const Divider(height: 1, color: Colors.white10),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  _SubTrafficChip(
-                    icon: Icons.arrow_upward,
-                    label: '↑ ${_fmtSubBytes(info.uploadBytes)}',
-                    color: const Color(0xFF6C5CE7),
-                  ),
-                  const SizedBox(width: 12),
-                  _SubTrafficChip(
-                    icon: Icons.arrow_downward,
-                    label: '↓ ${_fmtSubBytes(info.downloadBytes)}',
-                    color: const Color(0xFF00D9FF),
-                  ),
-                ],
-              ),
             ],
           ],
         ),
