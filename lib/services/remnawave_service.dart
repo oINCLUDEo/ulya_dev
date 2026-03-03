@@ -250,6 +250,39 @@ class RemnawaveService {
     );
   }
 
+  static ({String name, String? description}) _parseFragment(
+      String fragment,
+      String fallbackHost,
+      ) {
+    if (fragment.isEmpty) {
+      return (name: fallbackHost, description: null);
+    }
+
+    final parts = fragment.split('?');
+
+    final rawName = parts.first.trim();
+    final name = Uri.decodeComponent(rawName);
+
+    String? description;
+
+    if (parts.length > 1) {
+      final queryPart = parts.sublist(1).join('?');
+
+      try {
+        final params = Uri.splitQueryString(queryPart);
+
+        final encoded = params['serverDescription'];
+        if (encoded != null && encoded.isNotEmpty) {
+          description = utf8.decode(base64.decode(encoded));
+        }
+      } catch (_) {
+        // игнорируем кривой base64 или кривой query
+      }
+    }
+
+    return (name: name, description: description);
+  }
+
   /// Parses a single VPN config link into a [ServerNode].
   /// Supported schemes: vless, vmess, trojan, ss, hysteria2, hy2, tuic, wg.
   /// Returns `null` for unrecognised links.
@@ -261,23 +294,21 @@ class RemnawaveService {
       final uri = Uri.parse(link);
       final scheme = uri.scheme.toLowerCase();
 
-      // Only handle known VPN schemes.
       const knownSchemes = {
         'vless', 'vmess', 'trojan', 'ss',
-        'hysteria2', 'hy2', 'hysteria', 'tuic', 'wireguard', 'wg',
+        'hysteria2', 'hy2', 'hysteria',
+        'tuic', 'wireguard', 'wg',
       };
-      if (!knownSchemes.contains(scheme)) return null;
 
-      // Decode name from URL fragment (#ServerName).
-      final rawFragment = uri.fragment;
-      final name = rawFragment.isNotEmpty
-          ? Uri.decodeComponent(rawFragment)
-          : uri.host;
+      if (!knownSchemes.contains(scheme)) return null;
 
       final host = uri.host;
       if (host.isEmpty) return null;
 
-      // Try to infer 2-letter country code from the server name.
+      final parsed = _parseFragment(uri.fragment, host);
+      final name = parsed.name;
+      final description = parsed.description; // пока не используем
+
       final countryCode = _countryCodeFromName(name);
 
       return ServerNode(
@@ -285,10 +316,13 @@ class RemnawaveService {
         name: name,
         address: host,
         countryCode: countryCode,
-        isConnected: true,  // nodes from an active subscription are considered reachable
+        isConnected: true,
         isDisabled: false,
         link: link,
         protocol: scheme,
+
+        // если потом добавишь поле description в модель —
+        // можно будет просто передать сюда description
       );
     } catch (e) {
       debugPrint('RemnawaveService: failed to parse link: $e');
