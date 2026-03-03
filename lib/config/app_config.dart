@@ -12,4 +12,14 @@ class AppConfig {
   ///
   /// Set this to your panel URL before building the release APK/IPA.
   static const String panelBaseUrl = 'https://panel.example.com';
+
+  /// Package names excluded from VPN tunnel by default (on first launch).
+  static const List<String> defaultBlockedApps = [
+    'com.vk.vkvideo',        // VK Video
+    'com.vkontakte.android', // VK (старый)
+    'ru.mail.mailapp',       // MAX (Mail.ru)
+    'ru.rostel',             // Госуслуги (Новая)
+    'ru.gosuslugi.mobile',   // Госуслуги
+
+  ];
 }
