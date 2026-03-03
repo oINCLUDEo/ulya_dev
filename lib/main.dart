@@ -47,16 +47,15 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
-  int _currentIndex = 0;
+  int _currentIndex = 1;
 
   @override
   Widget build(BuildContext context) {
     final pages = [
       // Передаём callback чтобы со страницы серверов переключаться на настройки
       ServersPage(
-          onGoToSettings: () => setState(() => _currentIndex = 3)),
+          onGoToSettings: () => setState(() => _currentIndex = 2)),
       const HomePage(),
-      const LogsPage(),
       const SettingsPage(),
     ];
 
@@ -77,10 +76,6 @@ class _MainShellState extends State<MainShell> {
               icon: Icon(Icons.home_outlined),
               selectedIcon: Icon(Icons.home),
               label: 'Главная'),
-          NavigationDestination(
-              icon: Icon(Icons.article_outlined),
-              selectedIcon: Icon(Icons.article),
-              label: 'Логи'),
           NavigationDestination(
               icon: Icon(Icons.settings_outlined),
               selectedIcon: Icon(Icons.settings),
