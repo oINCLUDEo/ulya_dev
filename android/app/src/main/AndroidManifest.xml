@@ -16,7 +16,7 @@
     <application
             android:usesCleartextTraffic="true"
             tools:targetApi="35.0.1"
-            android:label="V2Ray Box Ulya"
+            android:label="Ulya"
             android:name="${applicationName}"
             android:icon="@mipmap/ic_launcher">
         <activity
