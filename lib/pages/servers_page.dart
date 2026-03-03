@@ -141,6 +141,7 @@ class _ServersPageState extends State<ServersPage> {
               color: color,
               icon: icon,
               expanded: expanded,
+              nodeCount: nodes.length,
               onTap: onToggle,
             ),
           ),
@@ -149,7 +150,7 @@ class _ServersPageState extends State<ServersPage> {
 
       slivers.add(
         SliverPadding(
-          padding: const EdgeInsets.only(left: 24, right: 16),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
           sliver: SliverToBoxAdapter(
             child: _AnimatedServerGroup(
               expanded: expanded,
@@ -460,6 +461,7 @@ class _SectionHeader extends StatelessWidget {
   final IconData icon;
   final Color color;
   final bool expanded;
+  final int nodeCount;
   final VoidCallback onTap;
 
   const _SectionHeader({
@@ -468,6 +470,7 @@ class _SectionHeader extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.expanded,
+    required this.nodeCount,
     required this.onTap,
   });
 
@@ -519,22 +522,36 @@ class _SectionHeader extends StatelessWidget {
               ),
             ),
             Container(
-              width: 28,
-              height: 28,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
               decoration: BoxDecoration(
                 color: color.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: AnimatedRotation(
-                turns: expanded ? 0.5 : 0,
-                duration:
-                const Duration(milliseconds: 250),
-                curve: Curves.easeInOut,
-                child: Icon(
-                  Icons.expand_more,
-                  color: color,
-                  size: 20,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '$nodeCount',
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      height: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  AnimatedRotation(
+                    turns: expanded ? 0.5 : 0,
+                    duration:
+                    const Duration(milliseconds: 250),
+                    curve: Curves.easeInOut,
+                    child: Icon(
+                      Icons.expand_more,
+                      color: color,
+                      size: 18,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -605,56 +622,57 @@ class _AnimatedServerGroupState
       child: SizeTransition(
         sizeFactor: _sizeAnim,
         axisAlignment: -1,
-        child: Container(
-          margin: const EdgeInsets.only(top: 4),
-          decoration: BoxDecoration(
-            color: AppColors.graphiteSurface,
-            borderRadius: BorderRadius.circular(groupRadius),
-            border: Border.all(color: AppColors.graphiteElevated),
-          ),
-          child: Stack(
-            children: [
-              // Colored left accent bar
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                child: Container(
-                  width: 3,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Separate colored accent bar to the left of the card
+                Container(
+                  width: 4,
                   decoration: BoxDecoration(
                     color: widget.color.withOpacity(0.4),
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(groupRadius),
-                      bottomLeft: Radius.circular(groupRadius),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Main card
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.graphiteSurface,
+                      borderRadius: BorderRadius.circular(groupRadius),
+                      border: Border.all(color: AppColors.graphiteElevated),
+                    ),
+                    child: Column(
+                      children:
+                      List.generate(widget.nodes.length, (i) {
+                        final node = widget.nodes[i];
+
+                        return Column(
+                          children: [
+                            _NodeTile(
+                              node: node,
+                              ping: widget.pings[node.uuid],
+                              onPing: () =>
+                                  widget.onPing(node),
+                            ),
+                            if (i != widget.nodes.length - 1)
+                              Divider(
+                                height: 1,
+                                thickness: 0.6,
+                                color:
+                                AppColors.graphiteElevated,
+                              ),
+                          ],
+                        );
+                      }),
                     ),
                   ),
                 ),
-              ),
-              Column(
-            children:
-            List.generate(widget.nodes.length, (i) {
-              final node = widget.nodes[i];
-
-              return Column(
-                children: [
-                  _NodeTile(
-                    node: node,
-                    ping: widget.pings[node.uuid],
-                    onPing: () =>
-                        widget.onPing(node),
-                  ),
-                  if (i != widget.nodes.length - 1)
-                    Divider(
-                      height: 1,
-                      thickness: 0.6,
-                      color:
-                      AppColors.graphiteElevated,
-                    ),
-                ],
-              );
-            }),
-          ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
