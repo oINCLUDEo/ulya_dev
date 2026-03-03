@@ -600,6 +600,7 @@ class _AnimatedServerGroupState
 
   @override
   Widget build(BuildContext context) {
+    const double groupRadius = 18;
     return ClipRect(
       child: SizeTransition(
         sizeFactor: _sizeAnim,
@@ -608,15 +609,28 @@ class _AnimatedServerGroupState
           margin: const EdgeInsets.only(top: 4),
           decoration: BoxDecoration(
             color: AppColors.graphiteSurface,
-            borderRadius: BorderRadius.circular(18),
-            border: Border(
-              left: BorderSide(color: widget.color.withOpacity(0.4), width: 3),
-              top: const BorderSide(color: AppColors.graphiteElevated),
-              right: const BorderSide(color: AppColors.graphiteElevated),
-              bottom: const BorderSide(color: AppColors.graphiteElevated),
-            ),
+            borderRadius: BorderRadius.circular(groupRadius),
+            border: Border.all(color: AppColors.graphiteElevated),
           ),
-          child: Column(
+          child: Stack(
+            children: [
+              // Colored left accent bar
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 3,
+                  decoration: BoxDecoration(
+                    color: widget.color.withOpacity(0.4),
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(groupRadius),
+                      bottomLeft: Radius.circular(groupRadius),
+                    ),
+                  ),
+                ),
+              ),
+              Column(
             children:
             List.generate(widget.nodes.length, (i) {
               final node = widget.nodes[i];
@@ -639,6 +653,8 @@ class _AnimatedServerGroupState
                 ],
               );
             }),
+          ),
+            ],
           ),
         ),
       ),
