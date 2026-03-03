@@ -10,6 +10,7 @@ import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 import '../services/remnawave_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/speed_calculator.dart';
 import 'config_editor_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -61,6 +62,12 @@ class _HomePageState extends State<HomePage>
     return 'Отключено';
   }
 
+  double _normalizeSpeed(int bytesPerSecond) {
+    return bytesPerSecond / (1024 * 1024); // → MB/s стабильно
+  }
+
+  late final SpeedCalculator _speedCalc;
+
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @override
@@ -76,6 +83,8 @@ class _HomePageState extends State<HomePage>
       CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
     );
 
+    _speedCalc = SpeedCalculator(smoothing: 0.25);
+
     _v2ray = FlutterV2ray();
     _init();
   }
@@ -85,10 +94,28 @@ class _HomePageState extends State<HomePage>
       notificationIconResourceType: 'mipmap',
       notificationIconResourceName: 'ic_launcher',
     );
+
     _statusSub = _v2ray.onStatusChanged.listen((s) {
-      if (mounted) setState(() => _status = s);
+      if (!mounted) return;
+
+      // обновляем калькулятор ДО setState
+      _speedCalc.update(
+        totalUploadBytes: s.upload,
+        totalDownloadBytes: s.download,
+      );
+
+      setState(() {
+        _status = s;
+      });
+
+      // если отключились — сбрасываем скорость
+      if (s.state.toUpperCase() != 'CONNECTED') {
+        _speedCalc.reset();
+      }
     });
+
     if (mounted) setState(() => _initialized = true);
+
     _loadNodes();
   }
 
@@ -343,7 +370,7 @@ class _HomePageState extends State<HomePage>
                                     Icons.code_outlined,
                                     size: 18,
                                     color: Colors.white38),
-                                tooltip: 'Конф��г',
+                                tooltip: 'Конфиг',
                                 visualDensity: VisualDensity.compact,
                                 onPressed: () {
                                   Navigator.pop(ctx);
@@ -565,107 +592,107 @@ class _HomePageState extends State<HomePage>
   // ── Карточка подключения ──────────────────────────────────────────────────
 
   Widget _buildConnectionCard() {
-    return Card(
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: _isConnected
-              ? LinearGradient(
-            colors: [
-              const Color(0xFF2ED573).withOpacity(0.15),
-              const Color(0xFF6C5CE7).withOpacity(0.08),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          )
-              : null,
+    final bool connected = _isConnected;
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(26),
+        color: const Color(0xFF171A21),
+        border: Border.all(
+          color: connected
+              ? const Color(0xFF7C5CFF)
+              : const Color(0xFF2A2F3A),
+          width: 1.2,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 40,
+            offset: const Offset(0, 20),
+          ),
+          if (connected)
+            BoxShadow(
+              color: const Color(0xFF7C5CFF).withOpacity(0.25),
+              blurRadius: 50,
+              spreadRadius: -10,
+            ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(26, 28, 26, 26),
         child: Column(
           children: [
-            // Иконка + статус
-            GestureDetector(
-              onTap: _toggleConnection,
-              child: Row(
-                children: [
-                  AnimatedBuilder(
-                    animation: _pulseAnim,
-                    builder: (_, __) => Transform.scale(
-                      scale: _isTransitioning ? _pulseAnim.value : 1.0,
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: _statusColor.withOpacity(0.18),
-                        ),
-                        child: _isTransitioning
-                            ? SizedBox(
-                          width: 32,
-                          height: 32,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 3,
-                            valueColor: AlwaysStoppedAnimation(
-                                _statusColor),
-                          ),
-                        )
-                            : Icon(
-                          _isConnected
-                              ? Icons.shield
-                              : Icons.shield_outlined,
-                          color: _statusColor,
-                          size: 32,
-                        ),
-                      ),
-                    ),
+
+            /// STATUS
+
+            Column(
+              children: [
+                Text(
+                  _statusLabel,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.4,
+                    color: connected
+                        ? const Color(0xFFE2E8F0)
+                        : const Color(0xFFC9D1D9),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _statusLabel,
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: _statusColor,
-                          ),
-                        ),
-                        if (_isConnected)
-                          Text(
-                            'Сессия: ${_fmtDuration(_status.duration)}',
-                            style: TextStyle(
-                                color: Colors.grey[400], fontSize: 13),
-                          ),
-                      ],
-                    ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  connected
+                      ? 'Сессия: ${_fmtDuration(_status.duration)}'
+                      : 'Выберите сервер и подключитесь',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF8A94A6),
                   ),
-                  Icon(
-                    _isConnected
-                        ? Icons.stop_circle_outlined
-                        : Icons.play_circle_outline,
-                    color: _statusColor,
-                    size: 40,
-                  ),
-                ],
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 32),
+
+            /// BUTTON
+            Center(
+              child: PremiumConnectButton(
+                isConnected: _isConnected,
+                isLoading: _isTransitioning,
+                onTap: _toggleConnection,
               ),
             ),
 
-            const SizedBox(height: 16),
-            const Divider(height: 1, color: Colors.white10),
-            const SizedBox(height: 12),
+            const SizedBox(height: 34),
 
-            // Выбор сервера
+            Container(
+              height: 1,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.transparent,
+                    Color(0xFF2A2F3A),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 22),
+
+            /// SERVER PICKER
+
             InkWell(
               onTap: _showServerPicker,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(18),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
+                    horizontal: 18, vertical: 16),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white10),
+                  color: const Color(0xFF1F2430),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: const Color(0xFF2E3442),
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -675,76 +702,40 @@ class _HomePageState extends State<HomePage>
                           : '🌐',
                       style: const TextStyle(fontSize: 22),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment:
+                        CrossAxisAlignment.start,
                         children: [
                           Text(
                             _selectedNode?.name ?? 'Выберите сервер',
                             style: TextStyle(
                               color: _selectedNode != null
-                                  ? Colors.white
-                                  : const Color(0xFF6C5CE7),
-                              fontWeight: _selectedNode != null
-                                  ? FontWeight.w600
-                                  : FontWeight.bold,
-                              fontSize: 14,
+                                  ? const Color(0xFFE2E8F0)
+                                  : const Color(0xFF7C5CFF),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
                           if (_selectedNode != null)
                             Text(
                               _selectedNode!.address,
-                              style: TextStyle(
-                                  color: Colors.grey[500], fontSize: 12),
-                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF8A94A6),
+                                fontSize: 12,
+                              ),
                             ),
                         ],
                       ),
                     ),
-                    if (_selectedNode != null)
-                      IconButton(
-                        icon: const Icon(Icons.code_outlined,
-                            size: 20, color: Colors.white38),
-                        tooltip: 'Посмотреть конфиг',
-                        visualDensity: VisualDensity.compact,
-                        onPressed: () => _openConfigEditor(_selectedNode!),
-                      ),
-                    const Icon(Icons.expand_more_rounded,
-                        color: Colors.white38),
+                    const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 16,
+                      color: Color(0xFF7C5CFF),
+                    ),
                   ],
                 ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // Кнопка подключения
-            FilledButton.icon(
-              onPressed: _isTransitioning ? null : _toggleConnection,
-              icon: _isTransitioning
-                  ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
-                  : Icon(
-                  _isConnected ? Icons.stop : Icons.play_arrow),
-              label: Text(
-                _isConnected
-                    ? 'Отключить'
-                    : _isTransitioning
-                    ? 'Подождите…'
-                    : 'Подключить',
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: _isConnected
-                    ? const Color(0xFFE74C3C)
-                    : const Color(0xFF6C5CE7),
-                minimumSize: const Size.fromHeight(50),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
               ),
             ),
           ],
@@ -756,28 +747,69 @@ class _HomePageState extends State<HomePage>
   // ── Карточка текущего трафика (скорость) ──────────────────────────────────
 
   Widget _buildTrafficCard() {
-    return Card(
+    final uploadMB = _normalizeSpeed(_status.uploadSpeed);
+    final downloadMB = _normalizeSpeed(_status.downloadSpeed);
+
+    final uploadActive = uploadMB > 0.01;
+    final downloadActive = downloadMB > 0.01;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        color: const Color(0xFF171A21),
+        border: Border.all(color: const Color(0xFF2A2F3A)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 40,
+            offset: const Offset(0, 20),
+          ),
+          if (uploadActive || downloadActive)
+            BoxShadow(
+              color: const Color(0xFF7C5CFF).withOpacity(0.08),
+              blurRadius: 50,
+              spreadRadius: -10,
+            ),
+        ],
+      ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
         child: Row(
           children: [
             Expanded(
               child: _StatTile(
                 icon: Icons.arrow_upward,
                 label: 'Загрузка',
-                value: _fmtSpeed(_status.uploadSpeed),
-                sub: _fmtBytes(_status.upload),
-                color: const Color(0xFF6C5CE7),
+                value: _speedCalc.uploadSpeed,
+                sub: _fmtBytes(_status.uploadSpeed),
+                color: uploadActive
+                    ? const Color(0xFF7C5CFF)
+                    : const Color(0xFF5E6C8A),
               ),
             ),
-            Container(width: 1, height: 48, color: Colors.white10),
+            Container(
+              width: 1,
+              height: 60,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.transparent,
+                    Color(0xFF2E3442),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+            ),
             Expanded(
               child: _StatTile(
                 icon: Icons.arrow_downward,
                 label: 'Скачивание',
-                value: _fmtSpeed(_status.downloadSpeed),
+                value: _speedCalc.downloadSpeed,
                 sub: _fmtBytes(_status.download),
-                color: const Color(0xFF00D9FF),
+                color: downloadActive
+                    ? const Color(0xFF00E0FF)
+                    : const Color(0xFF5E6C8A),
               ),
             ),
           ],
@@ -791,25 +823,32 @@ class _HomePageState extends State<HomePage>
   Widget _buildSubscriptionCard() {
     final info = _subscriptionInfo;
 
-    return Card(
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: AppColors.graphiteSurface,
+        border: Border.all(
+          color: AppColors.graphiteElevated,
+        ),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Заголовок
+
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Row(
                   children: [
                     Icon(Icons.account_circle_outlined,
-                        color: const Color(0xFF6C5CE7), size: 20),
+                        color: AppColors.accentSmoky, size: 20),
                     const SizedBox(width: 8),
                     const Text(
                       'Подписка',
                       style: TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 15),
+                          fontWeight: FontWeight.w600, fontSize: 15),
                     ),
                   ],
                 ),
@@ -818,21 +857,18 @@ class _HomePageState extends State<HomePage>
               ],
             ),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
 
-            if (info == null) ...[
-              // Подписка ещё не загружена
-              Center(
+            if (info == null)
+              const Center(
                 child: Text(
-                  _subscriptionInfo == null && !_isLoadingNodes
-                      ? 'Задайте URL подписки в Настройках'
-                      : 'Загрузка данных подписки…',
-                  style:
-                  TextStyle(color: Colors.grey[500], fontSize: 13),
-                  textAlign: TextAlign.center,
+                  'Загрузка данных подписки…',
+                  style: TextStyle(
+                      color: AppColors.textNeutralSecondary,
+                      fontSize: 13),
                 ),
-              ),
-            ] else ...[
+              )
+            else ...[
               // ── Трафик ─────────────────────────────────────────────
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -961,10 +997,10 @@ class _HomePageState extends State<HomePage>
 
 // ── Вспомогательные виджеты ───────────────────────────────────────────────────
 
-class _StatTile extends StatelessWidget {
+class _StatTile extends StatefulWidget {
   final IconData icon;
   final String label;
-  final String value;
+  final double value;
   final String sub;
   final Color color;
 
@@ -977,26 +1013,85 @@ class _StatTile extends StatelessWidget {
   });
 
   @override
+  State<_StatTile> createState() => _StatTileState();
+}
+
+class _StatTileState extends State<_StatTile> {
+  late double _displayValue;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayValue = widget.value;
+  }
+
+  @override
+  void didUpdateWidget(covariant _StatTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      _displayValue = oldWidget.value;
+    }
+  }
+
+  String _format(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return "${bytesPerSecond.toStringAsFixed(0)} B/s";
+    } else if (bytesPerSecond < 1024 * 1024) {
+      return "${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s";
+    } else {
+      return "${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(2)} MB/s";
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: color, size: 13),
-            const SizedBox(width: 4),
-            Text(label,
-                style: TextStyle(color: Colors.grey[400], fontSize: 11)),
+            Icon(widget.icon, color: widget.color, size: 15),
+            const SizedBox(width: 6),
+            Text(
+              widget.label,
+              style: const TextStyle(
+                color: Color(0xFF8A94A6),
+                fontSize: 11,
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 4),
-        Text(value,
-            style: TextStyle(
-                color: color,
-                fontSize: 16,
-                fontWeight: FontWeight.bold)),
-        Text(sub,
-            style: TextStyle(color: Colors.grey[600], fontSize: 11)),
+        const SizedBox(height: 6),
+
+        TweenAnimationBuilder<double>(
+          tween: Tween<double>(
+            begin: _displayValue,
+            end: widget.value,
+          ),
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeOutCubic,
+          builder: (context, animatedValue, child) {
+            return Text(
+              _format(animatedValue),
+              style: TextStyle(
+                color: widget.color,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.4,
+              ),
+            );
+          },
+        ),
+
+        const SizedBox(height: 3),
+
+        Text(
+          widget.sub,
+          style: const TextStyle(
+            color: Color(0xFF5F6B7A),
+            fontSize: 11,
+          ),
+        ),
       ],
     );
   }
@@ -1069,6 +1164,92 @@ class _SubTrafficChip extends StatelessWidget {
                 color: Colors.grey[400],
                 fontSize: 12)),
       ],
+    );
+  }
+}
+
+class PremiumConnectButton extends StatelessWidget {
+  final bool isConnected;
+  final bool isLoading;
+  final VoidCallback onTap;
+
+  const PremiumConnectButton({
+    super.key,
+    required this.isConnected,
+    required this.isLoading,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isOff = !isConnected && !isLoading;
+
+    final backgroundColor = isOff
+        ? const Color(0xFF5E6C8A) // акцент
+        : isConnected
+        ? const Color(0xFFC9D1D9) // platinum
+        : AppColors.graphiteElevated;
+
+    final foreground = isConnected
+        ? AppColors.graphiteBackground
+        : AppColors.textNeutralMain;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+      height: 60,
+      width: 240,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          if (isOff)
+            BoxShadow(
+              color: const Color(0xFF5E6C8A).withOpacity(0.35),
+              blurRadius: 40,
+              offset: const Offset(0, 18),
+            )
+          else if (isConnected)
+            BoxShadow(
+              color: const Color(0xFFC9D1D9).withOpacity(0.35),
+              blurRadius: 45,
+              spreadRadius: -6,
+            )
+          else
+            BoxShadow(
+              color: Colors.black.withOpacity(0.45),
+              blurRadius: 28,
+              offset: const Offset(0, 14),
+            ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(22),
+          onTap: isLoading ? null : onTap,
+          child: Center(
+            child: isLoading
+                ? SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: foreground,
+              ),
+            )
+                : Text(
+              isConnected ? 'Отключить' : 'Подключить',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+                letterSpacing: 0.4,
+                color: foreground,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
