@@ -8,9 +8,14 @@ import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
 
 class ServersPage extends StatefulWidget {
+  final VoidCallback onGoToHome;
   final VoidCallback? onGoToSettings;
 
-  const ServersPage({super.key, this.onGoToSettings});
+  const ServersPage({
+    required this.onGoToHome,
+    required this.onGoToSettings,
+    super.key,
+  });
 
   @override
   State<ServersPage> createState() => _ServersPageState();
@@ -144,6 +149,7 @@ class _ServersPageState extends State<ServersPage> {
       selectedServerNotifier.value = node;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('selected_node_uuid', node.uuid);
+      widget.onGoToHome();
     }
 
     void addSection({

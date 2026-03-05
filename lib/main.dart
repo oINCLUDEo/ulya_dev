@@ -51,8 +51,8 @@ class _MainShellState extends State<MainShell> {
   @override
   Widget build(BuildContext context) {
     final pages = [
-      // Передаём callback чтобы со страницы серверов переключаться на настройки
       ServersPage(
+          onGoToHome: () => setState(() => _currentIndex = 1),
           onGoToSettings: () => setState(() => _currentIndex = 2)),
       const HomePage(),
       const SettingsPage(),
