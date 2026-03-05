@@ -157,8 +157,22 @@ class RemnawaveService {
 
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final list = body['servers'] as List<dynamic>? ?? [];
-      final nodes =
-      list.map((e) => ServerNode.fromJson(e as Map<String, dynamic>)).toList();
+      final nodes = list.map((e) {
+        final serverJson = Map<String, dynamic>.from(e as Map<String, dynamic>);
+
+        final name = serverJson['name']?.toString() ?? '';
+
+        if ((serverJson['countryCode'] == null || serverJson['countryCode'].toString().isEmpty) &&
+            name.isNotEmpty) {
+          final code = _countryCodeFromName(name);
+          if (code.isNotEmpty) {
+            serverJson['countryCode'] = code;
+          }
+        }
+
+        return ServerNode.fromJson(serverJson);
+      }).toList();
+
       debugPrint('RemnawaveService: loaded ${nodes.length} public servers');
       return nodes;
     } catch (e) {
