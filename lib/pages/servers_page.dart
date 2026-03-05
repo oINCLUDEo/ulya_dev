@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 
 import '../models/server_node.dart';
+import '../services/mobile_api_service.dart';
 import '../services/remnawave_service.dart';
 import '../theme/app_colors.dart';
 
@@ -18,6 +19,10 @@ class _ServersPageState extends State<ServersPage> {
   List<ServerNode> _nodes = [];
   bool _loading = true;
   bool _noSubscription = false;
+
+  /// `true` when the displayed servers come from the public catalog
+  /// (no personal subscription URL is configured).
+  bool _isPublicCatalog = false;
 
   bool _bypassExpanded = true;
   bool _unlimitedExpanded = true;
@@ -45,16 +50,23 @@ class _ServersPageState extends State<ServersPage> {
     setState(() {
       _loading = true;
       _noSubscription = false;
+      _isPublicCatalog = false;
     });
 
     final subUrl = await RemnawaveService.getSubscriptionUrl();
 
     if (subUrl.isEmpty) {
+      // No personal subscription — try the public server catalog.
+      final publicNodes = await MobileApiService.fetchPublicServers();
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _noSubscription = true;
-        _nodes = [];
+        _nodes = publicNodes;
+        _isPublicCatalog = publicNodes.isNotEmpty;
+        _noSubscription = publicNodes.isEmpty;
+
+        final uuids = publicNodes.map((e) => e.uuid).toSet();
+        _pings.removeWhere((k, _) => !uuids.contains(k));
       });
       return;
     }
@@ -67,6 +79,7 @@ class _ServersPageState extends State<ServersPage> {
       _nodes = nodes;
       _loading = false;
       _noSubscription = false;
+      _isPublicCatalog = false;
 
       final uuids = nodes.map((e) => e.uuid).toSet();
       _pings.removeWhere((k, _) => !uuids.contains(k));
@@ -302,7 +315,9 @@ class _ServersPageState extends State<ServersPage> {
                               _nodes.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             Text(
-                              '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
+                              _isPublicCatalog
+                                  ? '${_nodes.length} ${_pluralServers(_nodes.length)} в каталоге'
+                                  : '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
                               style: const TextStyle(
                                 color: AppColors.textSecondary,
                                 fontSize: 12.5,
@@ -364,6 +379,15 @@ class _ServersPageState extends State<ServersPage> {
             else if (_nodes.isEmpty)
               SliverFillRemaining(child: _buildEmptyState())
             else ...[
+              if (_isPublicCatalog)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  sliver: SliverToBoxAdapter(
+                    child: _PublicCatalogBanner(
+                      onGoToSettings: widget.onGoToSettings,
+                    ),
+                  ),
+                ),
               ..._buildSections(),
             ],
             const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
@@ -865,5 +889,75 @@ class _NodeTile extends StatelessWidget {
     }
     const base = 0x1F1E6 - 0x41;
     return String.fromCharCode(base + f) + String.fromCharCode(base + s);
+  }
+}
+
+// ── Баннер публичного каталога ────────────────────────────────────────────────
+
+class _PublicCatalogBanner extends StatelessWidget {
+  final VoidCallback? onGoToSettings;
+
+  const _PublicCatalogBanner({this.onGoToSettings});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF6C5CE7).withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFF6C5CE7).withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.public,
+            color: Color(0xFF6C5CE7),
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Публичный каталог серверов',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Для подключения добавьте URL подписки в Настройках.',
+                  style: TextStyle(
+                    color: Colors.grey[400],
+                    fontSize: 11.5,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: onGoToSettings,
+            style: TextButton.styleFrom(
+              foregroundColor: const Color(0xFF6C5CE7),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'Настройки',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
