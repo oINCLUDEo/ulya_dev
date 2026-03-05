@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 import '../services/remnawave_service.dart';
+import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
 import '../utils/speed_calculator.dart';
 import 'config_editor_page.dart';
@@ -30,6 +31,9 @@ class _HomePageState extends State<HomePage>
   List<ServerNode> _nodes = [];
   ServerNode? _selectedNode;
   bool _isLoadingNodes = false;
+
+  /// true when [_nodes] was loaded from the public catalog (no subscription URL).
+  bool _isPublicCatalog = false;
   SubscriptionInfo? _subscriptionInfo;
 
   // ── Анимация ─────────────────────────────────────────────────────────────
@@ -40,12 +44,12 @@ class _HomePageState extends State<HomePage>
   bool _isConnecting = false;
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  bool get _isConnected =>
-      _status.state.toUpperCase() == 'CONNECTED';
+  bool get _isConnected => _status.state.toUpperCase() == 'CONNECTED';
+
   bool get _isTransitioning =>
       _status.state.toUpperCase() == 'CONNECTING' ||
-          _status.state.toUpperCase() == 'DISCONNECTING' ||
-          _isConnecting;
+      _status.state.toUpperCase() == 'DISCONNECTING' ||
+      _isConnecting;
 
   String get _statusLabel {
     final s = _status.state.toUpperCase();
@@ -67,19 +71,30 @@ class _HomePageState extends State<HomePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    selectedServerNotifier.addListener(_onSelectedServerChanged);
 
     _pulseCtrl = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
     )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.85, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
-    );
+    _pulseAnim = Tween<double>(
+      begin: 0.85,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
 
     _speedCalc = SpeedCalculator(smoothing: 0.25);
 
     _v2ray = FlutterV2ray();
     _init();
+  }
+
+  /// Called when [ServersPage] updates the selection.
+  void _onSelectedServerChanged() {
+    if (!mounted) return;
+    final node = selectedServerNotifier.value;
+    if (node?.uuid != _selectedNode?.uuid) {
+      setState(() => _selectedNode = node);
+    }
   }
 
   Future<void> _init() async {
@@ -120,6 +135,7 @@ class _HomePageState extends State<HomePage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    selectedServerNotifier.removeListener(_onSelectedServerChanged);
     _statusSub?.cancel();
     _pulseCtrl.dispose();
     super.dispose();
@@ -130,25 +146,46 @@ class _HomePageState extends State<HomePage>
   Future<void> _loadNodes() async {
     if (!mounted) return;
     setState(() => _isLoadingNodes = true);
-    final nodes = await RemnawaveService.fetchNodes();
+
+    final subUrl = await RemnawaveService.getSubscriptionUrl();
+    final List<ServerNode> nodes;
+    final bool isPublic;
+
+    if (subUrl.isEmpty) {
+      nodes = await RemnawaveService.fetchPublicServers();
+      isPublic = true;
+    } else {
+      nodes = await RemnawaveService.fetchNodes();
+      isPublic = false;
+    }
+
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
     final savedUuid = prefs.getString('selected_node_uuid');
     setState(() {
       _nodes = nodes;
-      _subscriptionInfo = RemnawaveService.lastSubscriptionInfo;
+      _isPublicCatalog = isPublic;
+      _subscriptionInfo = isPublic
+          ? null
+          : RemnawaveService.lastSubscriptionInfo;
       _isLoadingNodes = false;
       if (_selectedNode != null) {
         _selectedNode = nodes.cast<ServerNode?>().firstWhere(
-              (n) => n?.uuid == _selectedNode!.uuid,
+          (n) => n?.uuid == _selectedNode!.uuid,
           orElse: () => null,
         );
       }
       if (_selectedNode == null && savedUuid != null) {
         _selectedNode = nodes.cast<ServerNode?>().firstWhere(
-              (n) => n?.uuid == savedUuid,
+          (n) => n?.uuid == savedUuid,
           orElse: () => null,
         );
+      }
+      // Sync restored selection with the shared notifier so ServersPage
+      // reflects the same selected server.
+      if (_selectedNode != null &&
+          selectedServerNotifier.value?.uuid != _selectedNode!.uuid) {
+        selectedServerNotifier.value = _selectedNode;
       }
     });
   }
@@ -164,8 +201,17 @@ class _HomePageState extends State<HomePage>
     }
 
     final node = _selectedNode;
-    if (node == null || node.link == null) {
+    if (node == null) {
       _snack('Сначала выберите сервер');
+      return;
+    }
+
+    // Public catalog servers have no link — connection is not possible.
+    if (node.isDisabled || node.link == null) {
+      _snack(
+        'Этот сервер доступен только для предпросмотра. '
+        'Оформите подписку в Telegram-боте для подключения.',
+      );
       return;
     }
 
@@ -199,15 +245,14 @@ class _HomePageState extends State<HomePage>
     }
     try {
       final parser = FlutterV2ray.parseFromURL(node.link!);
-      final json = const JsonEncoder.withIndent('  ')
-          .convert(jsonDecode(parser.getFullConfiguration()));
+      final json = const JsonEncoder.withIndent(
+        '  ',
+      ).convert(jsonDecode(parser.getFullConfiguration()));
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ConfigEditorPage(
-            configJson: json,
-            configName: node.name,
-          ),
+          builder: (_) =>
+              ConfigEditorPage(configJson: json, configName: node.name),
         ),
       );
     } catch (e) {
@@ -252,130 +297,189 @@ class _HomePageState extends State<HomePage>
                       const Text(
                         'Выбрать сервер',
                         style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold),
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       _isLoadingNodes
                           ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child:
-                          CircularProgressIndicator(strokeWidth: 2))
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : IconButton(
-                        icon: const Icon(Icons.refresh, size: 20),
-                        onPressed: () async {
-                          setSheet(() {});
-                          await _loadNodes();
-                          setSheet(() {});
-                        },
-                      ),
+                              icon: const Icon(Icons.refresh, size: 20),
+                              onPressed: () async {
+                                setSheet(() {});
+                                await _loadNodes();
+                                setSheet(() {});
+                              },
+                            ),
                     ],
                   ),
                 ),
-                const Divider(height: 1),
-                Expanded(
-                  child: _nodes.isEmpty
-                      ? Center(
-                    child: _isLoadingNodes
-                        ? const CircularProgressIndicator()
-                        : Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
+                // Banner for public catalog mode.
+                if (_isPublicCatalog)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: Colors.orange.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: Row(
                         children: [
-                          Icon(Icons.cloud_off,
-                              size: 48,
-                              color: Colors.grey[600]),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Серверы не получены.\nПроверьте URL подписки в Настройках.',
-                            style: TextStyle(
-                                color: Colors.grey[400],
-                                fontSize: 14),
-                            textAlign: TextAlign.center,
+                          Icon(
+                            Icons.info_outline,
+                            size: 14,
+                            color: Colors.orange[300],
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Публичный каталог. Для подключения нужна подписка.',
+                              style: TextStyle(
+                                color: Colors.orange[300],
+                                fontSize: 11,
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
-                  )
-                      : ListView.builder(
-                    controller: scrollCtrl,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
-                    itemCount: _nodes.length,
-                    itemBuilder: (_, i) {
-                      final node = _nodes[i];
-                      final isSel =
-                          _selectedNode?.uuid == node.uuid;
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        color: isSel
-                            ? const Color(0xFF6C5CE7)
-                            .withValues(alpha: 0.15)
-                            : null,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: isSel
-                              ? const BorderSide(
-                              color: Color(0xFF6C5CE7),
-                              width: 1.5)
-                              : BorderSide.none,
-                        ),
-                        child: ListTile(
-                          onTap: () async {
-                            setState(() => _selectedNode = node);
-                            final prefs =
-                            await SharedPreferences.getInstance();
-                            await prefs.setString(
-                                'selected_node_uuid', node.uuid);
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
-                          leading: Text(
-                            _countryEmoji(node.countryCode),
-                            style: const TextStyle(fontSize: 24),
-                          ),
-                          title: Text(
-                            node.name,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            node.address,
-                            style: TextStyle(
-                                color: Colors.grey[500],
-                                fontSize: 12),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (isSel)
-                                const Icon(Icons.check_circle,
-                                    color: Color(0xFF6C5CE7))
-                              else
-                                _protocolBadge(
-                                    node.protocol ?? ''),
-                              IconButton(
-                                icon: const Icon(
-                                    Icons.code_outlined,
-                                    size: 18,
-                                    color: Colors.white38),
-                                tooltip: 'Конфиг',
-                                visualDensity: VisualDensity.compact,
-                                onPressed: () {
-                                  Navigator.pop(ctx);
-                                  _openConfigEditor(node);
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
                   ),
+                const Divider(height: 1),
+                Expanded(
+                  child: _nodes.isEmpty
+                      ? Center(
+                          child: _isLoadingNodes
+                              ? const CircularProgressIndicator()
+                              : Padding(
+                                  padding: const EdgeInsets.all(32),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.cloud_off,
+                                        size: 48,
+                                        color: Colors.grey[600],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'Серверы не получены.\nПроверьте URL подписки в Настройках.',
+                                        style: TextStyle(
+                                          color: Colors.grey[400],
+                                          fontSize: 14,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                        )
+                      : ListView.builder(
+                          controller: scrollCtrl,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          itemCount: _nodes.length,
+                          itemBuilder: (_, i) {
+                            final node = _nodes[i];
+                            final isSel = _selectedNode?.uuid == node.uuid;
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              color: isSel
+                                  ? const Color(
+                                      0xFF6C5CE7,
+                                    ).withValues(alpha: 0.15)
+                                  : null,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: isSel
+                                    ? const BorderSide(
+                                        color: Color(0xFF6C5CE7),
+                                        width: 1.5,
+                                      )
+                                    : BorderSide.none,
+                              ),
+                              child: ListTile(
+                                onTap: () async {
+                                  setState(() => _selectedNode = node);
+                                  // Sync selection with ServersPage.
+                                  selectedServerNotifier.value = node;
+                                  final prefs =
+                                      await SharedPreferences.getInstance();
+                                  await prefs.setString(
+                                    'selected_node_uuid',
+                                    node.uuid,
+                                  );
+                                  if (ctx.mounted) Navigator.pop(ctx);
+                                },
+                                leading: Text(
+                                  _countryEmoji(node.countryCode),
+                                  style: const TextStyle(fontSize: 24),
+                                ),
+                                title: Text(
+                                  node.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  node.address,
+                                  style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontSize: 12,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (isSel)
+                                      const Icon(
+                                        Icons.check_circle,
+                                        color: Color(0xFF6C5CE7),
+                                      )
+                                    else if (_isPublicCatalog)
+                                      const Icon(
+                                        Icons.lock_outline,
+                                        size: 16,
+                                        color: Colors.grey,
+                                      )
+                                    else
+                                      _protocolBadge(node.protocol ?? ''),
+                                    if (!_isPublicCatalog)
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.code_outlined,
+                                          size: 18,
+                                          color: Colors.white38,
+                                        ),
+                                        tooltip: 'Конфиг',
+                                        visualDensity: VisualDensity.compact,
+                                        onPressed: () {
+                                          Navigator.pop(ctx);
+                                          _openConfigEditor(node);
+                                        },
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                 ),
               ],
             ),
@@ -389,13 +493,14 @@ class _HomePageState extends State<HomePage>
 
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: const Color(0xFF2D2D44),
-      shape:
-      RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    ));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF2D2D44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   String _countryEmoji(String code) {
@@ -411,11 +516,20 @@ class _HomePageState extends State<HomePage>
     if (protocol.isEmpty) return const SizedBox.shrink();
     Color color;
     switch (protocol.toLowerCase()) {
-      case 'vless':  color = const Color(0xFF00D9FF); break;
-      case 'vmess':  color = const Color(0xFF6C5CE7); break;
-      case 'trojan': color = const Color(0xFFFFA502); break;
-      case 'ss':     color = const Color(0xFF2ED573); break;
-      default:       color = Colors.grey;
+      case 'vless':
+        color = const Color(0xFF00D9FF);
+        break;
+      case 'vmess':
+        color = const Color(0xFF6C5CE7);
+        break;
+      case 'trojan':
+        color = const Color(0xFFFFA502);
+        break;
+      case 'ss':
+        color = const Color(0xFF2ED573);
+        break;
+      default:
+        color = Colors.grey;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -423,9 +537,14 @@ class _HomePageState extends State<HomePage>
         color: color.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(protocol.toUpperCase(),
-          style: TextStyle(
-              color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+      child: Text(
+        protocol.toUpperCase(),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 
@@ -446,7 +565,7 @@ class _HomePageState extends State<HomePage>
     final s = sec % 60;
     if (h > 0) {
       return '$hч ${m.toString().padLeft(2, '0')}м';
-      }
+    }
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
@@ -523,7 +642,9 @@ class _HomePageState extends State<HomePage>
                       // Тёмная BETA плашка (без розовости)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
                           gradient: AppColors.gradientAccent,
                           borderRadius: BorderRadius.circular(8),
@@ -571,10 +692,10 @@ class _HomePageState extends State<HomePage>
           child: IconButton(
             icon: _isLoadingNodes
                 ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.refresh_rounded),
             onPressed: _isLoadingNodes ? null : _loadNodes,
             tooltip: 'Обновить серверы',
@@ -583,6 +704,7 @@ class _HomePageState extends State<HomePage>
       ],
     );
   }
+
   // ── Карточка подключения ──────────────────────────────────────────────────
 
   Widget _buildConnectionCard() {
@@ -593,9 +715,7 @@ class _HomePageState extends State<HomePage>
         borderRadius: BorderRadius.circular(26),
         color: const Color(0xFF171A21),
         border: Border.all(
-          color: connected
-              ? const Color(0xFF7C5CFF)
-              : const Color(0xFF2A2F3A),
+          color: connected ? const Color(0xFF7C5CFF) : const Color(0xFF2A2F3A),
           width: 1.2,
         ),
         boxShadow: [
@@ -616,9 +736,7 @@ class _HomePageState extends State<HomePage>
         padding: const EdgeInsets.fromLTRB(26, 28, 26, 26),
         child: Column(
           children: [
-
             /// STATUS
-
             Column(
               children: [
                 Text(
@@ -674,19 +792,18 @@ class _HomePageState extends State<HomePage>
             const SizedBox(height: 22),
 
             /// SERVER PICKER
-
             InkWell(
               onTap: _showServerPicker,
               borderRadius: BorderRadius.circular(18),
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 18, vertical: 16),
+                  horizontal: 18,
+                  vertical: 16,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1F2430),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: const Color(0xFF2E3442),
-                  ),
+                  border: Border.all(color: const Color(0xFF2E3442)),
                 ),
                 child: Row(
                   children: [
@@ -699,8 +816,7 @@ class _HomePageState extends State<HomePage>
                     const SizedBox(width: 14),
                     Expanded(
                       child: Column(
-                        crossAxisAlignment:
-                        CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             _selectedNode?.name ?? 'Выберите сервер',
@@ -821,28 +937,30 @@ class _HomePageState extends State<HomePage>
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         color: AppColors.graphiteSurface,
-        border: Border.all(
-          color: AppColors.graphiteElevated,
-        ),
+        border: Border.all(color: AppColors.graphiteElevated),
       ),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Row(
                   children: [
-                    Icon(Icons.account_circle_outlined,
-                        color: AppColors.accentSmoky, size: 20),
+                    Icon(
+                      Icons.account_circle_outlined,
+                      color: AppColors.accentSmoky,
+                      size: 20,
+                    ),
                     const SizedBox(width: 8),
                     const Text(
                       'Подписка',
                       style: TextStyle(
-                          fontWeight: FontWeight.w600, fontSize: 15),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
                     ),
                   ],
                 ),
@@ -858,8 +976,9 @@ class _HomePageState extends State<HomePage>
                 child: Text(
                   'Загрузка данных подписки…',
                   style: TextStyle(
-                      color: AppColors.textNeutralSecondary,
-                      fontSize: 13),
+                    color: AppColors.textNeutralSecondary,
+                    fontSize: 13,
+                  ),
                 ),
               )
             else ...[
@@ -870,32 +989,36 @@ class _HomePageState extends State<HomePage>
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Использовано',
-                          style: TextStyle(
-                              color: Colors.grey[500], fontSize: 11)),
+                      Text(
+                        'Использовано',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                      ),
                       const SizedBox(height: 2),
                       Text(
                         info.formattedUsed,
                         style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold),
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text('Всего',
-                          style: TextStyle(
-                              color: Colors.grey[500], fontSize: 11)),
+                      Text(
+                        'Всего',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                      ),
                       const SizedBox(height: 2),
                       Text(
                         info.formattedTotal,
                         style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold),
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
@@ -925,15 +1048,15 @@ class _HomePageState extends State<HomePage>
                 children: [
                   Text(
                     'Осталось: ${_remainingTraffic(info)}',
-                    style: TextStyle(
-                        color: Colors.grey[400], fontSize: 12),
+                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
                   ),
                   Text(
                     '${(info.usedFraction * 100).toStringAsFixed(1)}%',
                     style: TextStyle(
-                        color: _progressColor(info.usedFraction),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600),
+                      color: _progressColor(info.usedFraction),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
@@ -1021,20 +1144,14 @@ class _StatTileState extends State<_StatTile> {
             const SizedBox(width: 6),
             Text(
               widget.label,
-              style: const TextStyle(
-                color: Color(0xFF8A94A6),
-                fontSize: 11,
-              ),
+              style: const TextStyle(color: Color(0xFF8A94A6), fontSize: 11),
             ),
           ],
         ),
         const SizedBox(height: 6),
 
         TweenAnimationBuilder<double>(
-          tween: Tween<double>(
-            begin: _displayValue,
-            end: widget.value,
-          ),
+          tween: Tween<double>(begin: _displayValue, end: widget.value),
           duration: const Duration(milliseconds: 350),
           curve: Curves.easeOutCubic,
           builder: (context, animatedValue, child) {
@@ -1054,10 +1171,7 @@ class _StatTileState extends State<_StatTile> {
 
         Text(
           widget.sub,
-          style: const TextStyle(
-            color: Color(0xFF5F6B7A),
-            fontSize: 11,
-          ),
+          style: const TextStyle(color: Color(0xFF5F6B7A), fontSize: 11),
         ),
       ],
     );
@@ -1066,6 +1180,7 @@ class _StatTileState extends State<_StatTile> {
 
 class _ExpiryBadge extends StatelessWidget {
   final DateTime expireDate;
+
   const _ExpiryBadge({required this.expireDate});
 
   @override
@@ -1097,14 +1212,20 @@ class _ExpiryBadge extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(expired ? Icons.timer_off : Icons.timer_outlined,
-              color: color, size: 12),
+          Icon(
+            expired ? Icons.timer_off : Icons.timer_outlined,
+            color: color,
+            size: 12,
+          ),
           const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600)),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ],
       ),
     );
@@ -1174,22 +1295,22 @@ class PremiumConnectButton extends StatelessWidget {
           child: Center(
             child: isLoading
                 ? SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: foreground,
-              ),
-            )
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: foreground,
+                    ),
+                  )
                 : Text(
-              isConnected ? 'Отключить' : 'Подключить',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-                letterSpacing: 0.4,
-                color: foreground,
-              ),
-            ),
+                    isConnected ? 'Отключить' : 'Подключить',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      letterSpacing: 0.4,
+                      color: foreground,
+                    ),
+                  ),
           ),
         ),
       ),

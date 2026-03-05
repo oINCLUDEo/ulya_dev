@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/app_config.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 
@@ -129,6 +130,40 @@ class RemnawaveService {
     } catch (e) {
       debugPrint('RemnawaveService: fetchNodes error: $e');
       return await _loadFromCache();
+    }
+  }
+
+  // ── Public catalog (no subscription required) ─────────────────────────────
+
+  /// Fetches the public server catalog from the mobile API backend.
+  ///
+  /// Called when no personal subscription URL is configured.
+  /// These servers are for preview only — [ServerNode.link] is `null` and
+  /// [ServerNode.isDisabled] is `true`, so they cannot be used to connect.
+  static Future<List<ServerNode>> fetchPublicServers() async {
+    final url = '${AppConfig.backendBaseUrl}/mobile/v1/servers';
+    final uri = Uri.tryParse(url);
+    if (uri == null) return [];
+
+    try {
+      final response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode != 200) {
+        debugPrint('RemnawaveService: public servers returned ${response.statusCode}');
+        return [];
+      }
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = body['servers'] as List<dynamic>? ?? [];
+      final nodes =
+      list.map((e) => ServerNode.fromJson(e as Map<String, dynamic>)).toList();
+      debugPrint('RemnawaveService: loaded ${nodes.length} public servers');
+      return nodes;
+    } catch (e) {
+      debugPrint('RemnawaveService: fetchPublicServers error: $e');
+      return [];
     }
   }
 
@@ -370,4 +405,3 @@ class RemnawaveService {
     return '';
   }
 }
-
