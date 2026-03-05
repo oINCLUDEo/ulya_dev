@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
@@ -1232,7 +1233,13 @@ class _ExpiryBadge extends StatelessWidget {
   }
 }
 
-class PremiumConnectButton extends StatelessWidget {
+enum ConnectButtonState {
+  off,
+  connected,
+  loading,
+}
+
+class PremiumConnectButton extends StatefulWidget {
   final bool isConnected;
   final bool isLoading;
   final VoidCallback onTap;
@@ -1245,75 +1252,347 @@ class PremiumConnectButton extends StatelessWidget {
   });
 
   @override
+  State<PremiumConnectButton> createState() => _PremiumConnectButtonState();
+}
+
+class _PremiumConnectButtonState extends State<PremiumConnectButton>
+    with TickerProviderStateMixin {
+
+  late final AnimationController _pulseController;
+  late final AnimationController _rippleController;
+  late final AnimationController _particleController;
+  late final AnimationController _burstController;
+
+  late final Animation<double> _pulse;
+  late final Animation<double> _ripple;
+  late final Animation<double> _burst;
+
+  double _scale = 1;
+
+  static const _radius = BorderRadius.all(Radius.circular(22));
+
+  ConnectButtonState get state {
+    if (widget.isLoading) return ConnectButtonState.loading;
+    if (widget.isConnected) return ConnectButtonState.connected;
+    return ConnectButtonState.off;
+  }
+
+  bool get showPulse => state == ConnectButtonState.off;
+
+  @override
+  void initState() {
+    super.initState();
+
+    /// pulse glow
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    );
+
+    _pulse = Tween<double>(begin: 1, end: 1.06).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    /// ripple
+    _rippleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+
+    _ripple = CurvedAnimation(
+      parent: _rippleController,
+      curve: Curves.easeOut,
+    );
+
+    /// particles
+    _particleController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 6),
+    )..repeat();
+
+    /// connection burst
+    _burstController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+
+    _burst = CurvedAnimation(
+      parent: _burstController,
+      curve: Curves.easeOut,
+    );
+
+    _updatePulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant PremiumConnectButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (!oldWidget.isConnected && widget.isConnected) {
+      _burstController.forward(from: 0);
+    }
+
+    _updatePulse();
+  }
+
+  void _updatePulse() {
+    if (showPulse) {
+      _pulseController.repeat(reverse: true);
+    } else {
+      _pulseController.stop();
+      _pulseController.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    _rippleController.dispose();
+    _particleController.dispose();
+    _burstController.dispose();
+    super.dispose();
+  }
+
+  void _onTapDown(TapDownDetails _) {
+    if (!widget.isLoading) {
+      setState(() => _scale = 0.94);
+    }
+  }
+
+  void _onTapUp(TapUpDetails _) {
+    if (!widget.isLoading) {
+      setState(() => _scale = 1);
+    }
+  }
+
+  void _onTapCancel() {
+    setState(() => _scale = 1);
+  }
+
+  void _handleTap() {
+    if (widget.isLoading) return;
+
+    _rippleController.forward(from: 0);
+    widget.onTap();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final bool isOff = !isConnected && !isLoading;
 
-    final backgroundColor = isOff
-        ? const Color(0xFF5E6C8A) // акцент
-        : isConnected
-        ? const Color(0xFFC9D1D9) // platinum
-        : AppColors.graphiteElevated;
+    final backgroundColor = switch (state) {
+      ConnectButtonState.off => const Color(0xFF5E6C8A),
+      ConnectButtonState.connected => const Color(0xFFC9D1D9),
+      ConnectButtonState.loading => const Color(0xFF2A2F36),
+    };
 
-    final foreground = isConnected
-        ? AppColors.graphiteBackground
-        : AppColors.textNeutralMain;
+    final foreground = state == ConnectButtonState.connected
+        ? const Color(0xFF0F1114)
+        : Colors.white;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOutCubic,
-      height: 60,
-      width: 240,
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          if (isOff)
-            BoxShadow(
-              color: const Color(0xFF5E6C8A).withValues(alpha: 0.35),
-              blurRadius: 40,
-              offset: const Offset(0, 18),
-            )
-          else if (isConnected)
-            BoxShadow(
-              color: const Color(0xFFC9D1D9).withValues(alpha: 0.35),
-              blurRadius: 45,
-              spreadRadius: -6,
-            )
-          else
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.45),
-              blurRadius: 28,
-              offset: const Offset(0, 14),
+    return GestureDetector(
+      onTapDown: _onTapDown,
+      onTapUp: _onTapUp,
+      onTapCancel: _onTapCancel,
+      child: SizedBox(
+        height: 160,
+        width: 300,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+
+            /// glow ring
+            if (showPulse)
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: _pulseController,
+                  builder: (_, __) {
+
+                    final glow = _pulse.value;
+
+                    return Center(
+                      child: Container(
+                        width: 260 * glow,
+                        height: 80 * glow,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(40),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF5E6C8A)
+                                  .withValues(alpha: 0.35),
+                              blurRadius: 60 * glow,
+                              spreadRadius: 8,
+                            )
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+
+            /// orbital particles
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _particleController,
+                builder: (_, __) {
+
+                  final angle = _particleController.value * 2 * pi;
+
+                  return CustomPaint(
+                    painter: _ParticlePainter(angle),
+                  );
+                },
+              ),
             ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(22),
-          onTap: isLoading ? null : onTap,
-          child: Center(
-            child: isLoading
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: foreground,
-                    ),
-                  )
-                : Text(
-                    isConnected ? 'Отключить' : 'Подключить',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 15,
-                      letterSpacing: 0.4,
-                      color: foreground,
+
+            /// ripple
+            AnimatedBuilder(
+              animation: _rippleController,
+              builder: (_, __) {
+
+                final progress = _ripple.value;
+
+                if (progress == 0) return const SizedBox();
+
+                final size = 200 + progress * 200;
+
+                return Opacity(
+                  opacity: 1 - progress,
+                  child: Container(
+                    width: size,
+                    height: size,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: const Color(0xFF5E6C8A),
+                        width: 2,
+                      ),
                     ),
                   ),
-          ),
+                );
+              },
+            ),
+
+            /// burst
+            AnimatedBuilder(
+              animation: _burstController,
+              builder: (_, __) {
+
+                final progress = _burst.value;
+
+                if (progress == 0) return const SizedBox();
+
+                final size = 100 + progress * 250;
+
+                return Opacity(
+                  opacity: 1 - progress,
+                  child: Container(
+                    width: size,
+                    height: size,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: const Color(0xFFC9D1D9).withValues(alpha: 0.15),
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            /// button
+            AnimatedBuilder(
+              animation: _pulseController,
+              builder: (_, child) {
+
+                final scale = showPulse
+                    ? _pulse.value * _scale
+                    : _scale;
+
+                return Transform.scale(
+                  scale: scale,
+                  child: child,
+                );
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                height: 60,
+                width: 240,
+                decoration: BoxDecoration(
+                  color: backgroundColor,
+                  borderRadius: _radius,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      blurRadius: 28,
+                      offset: const Offset(0, 14),
+                    )
+                  ],
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: _radius,
+                    onTap: _handleTap,
+                    child: Center(
+                      child: state == ConnectButtonState.loading
+                          ? SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: foreground,
+                        ),
+                      )
+                          : Text(
+                        state == ConnectButtonState.connected
+                            ? 'Отключить'
+                            : 'Подключить',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                          letterSpacing: 0.4,
+                          color: foreground,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+class _ParticlePainter extends CustomPainter {
+
+  final double angle;
+
+  _ParticlePainter(this.angle);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+
+    final paint = Paint()
+      ..color = const Color(0xFF5E6C8A).withValues(alpha: 0.35);
+
+    final center = Offset(size.width / 2, size.height / 2);
+
+    const radius = 80;
+
+    for (int i = 0; i < 6; i++) {
+
+      final a = angle + (i * pi / 3);
+
+      final x = center.dx + cos(a) * radius;
+      final y = center.dy + sin(a) * radius;
+
+      canvas.drawCircle(Offset(x, y), 2, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
