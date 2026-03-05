@@ -802,8 +802,10 @@ class _NodeTile extends StatelessWidget {
       color: isSelected
           ? const Color(0xFF6C5CE7).withValues(alpha: 0.08)
           : Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onSelect,
+        borderRadius: BorderRadius.circular(14),
         splashColor: const Color(0xFF6C5CE7).withValues(alpha: 0.1),
         highlightColor: Colors.transparent,
         child: Padding(
