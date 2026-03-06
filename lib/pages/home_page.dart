@@ -1567,7 +1567,7 @@ class _PremiumConnectButtonState extends State<PremiumConnectButton>
               Positioned.fill(
                 child: AnimatedBuilder(
                   animation: _pulseController,
-                  builder: (_, __) {
+                  builder: (_, _) {
 
                     final glow = _pulse.value;
 
@@ -1596,7 +1596,7 @@ class _PremiumConnectButtonState extends State<PremiumConnectButton>
             Positioned.fill(
               child: AnimatedBuilder(
                 animation: _particleController,
-                builder: (_, __) {
+                builder: (_, _) {
 
                   final angle = _particleController.value * 2 * pi;
 
@@ -1610,7 +1610,7 @@ class _PremiumConnectButtonState extends State<PremiumConnectButton>
             /// ripple
             AnimatedBuilder(
               animation: _rippleController,
-              builder: (_, __) {
+              builder: (_, _) {
 
                 final progress = _ripple.value;
 
@@ -1638,7 +1638,7 @@ class _PremiumConnectButtonState extends State<PremiumConnectButton>
             /// burst
             AnimatedBuilder(
               animation: _burstController,
-              builder: (_, __) {
+              builder: (_, _) {
 
                 final progress = _burst.value;
 

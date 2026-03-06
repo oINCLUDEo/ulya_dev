@@ -107,11 +107,11 @@ class _GlassNavBar extends StatelessWidget {
           height: 68,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(32),
-            color: const Color(0xFF171A21).withOpacity(0.85),
+            color: const Color(0xFF171A21).withValues(alpha: 0.85),
             border: Border.all(color: Colors.white10),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.35),
+                color: Colors.black.withValues(alpha: 0.35),
                 blurRadius: 25,
                 offset: const Offset(0, 8),
               ),
