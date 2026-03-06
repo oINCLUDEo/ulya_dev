@@ -111,7 +111,7 @@ class RemnawaveService {
     }
 
     return {
-      'User-Agent': 'Ulya/1.0.1/$platform',
+      'User-Agent': 'Happ/1.5.1/Ulya/1.0.1',
       'X-HWID': hwid,
       'X-Ver-OS': osVersion,
       'X-Device-OS': platform,
@@ -388,7 +388,7 @@ class RemnawaveService {
 
       final parsed = _parseFragment(uri.fragment, host);
       final name = parsed.name;
-      final description = parsed.description; // пока не используем
+      final description = parsed.description;
 
       final countryCode = _countryCodeFromName(name);
 
