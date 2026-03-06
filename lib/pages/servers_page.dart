@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -188,7 +190,7 @@ class _ServersPageState extends State<ServersPage> {
               expanded: expanded,
               nodes: nodes,
               pings: _pings,
-              onPing: _pingNode,
+              onPing: _tcpPingNode,
               color: color,
               selectedUuid: selectedUuid,
               onSelect: onSelect,
@@ -295,6 +297,63 @@ class _ServersPageState extends State<ServersPage> {
     if (mounted) setState(() => _pingAllInProgress = false);
   }
 
+  Future<int?> tcpPing(String host, int port,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      final socket = await Socket.connect(
+        host,
+        port,
+        timeout: timeout,
+      );
+
+      stopwatch.stop();
+      socket.destroy();
+
+      return stopwatch.elapsedMilliseconds;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _tcpPingNode(ServerNode node) async {
+    if (node.link == null) return;
+
+    setState(() => _pings[node.uuid] = -2);
+
+    try {
+      final uri = Uri.parse(node.link!);
+      final host = uri.host;
+      final port = uri.hasPort ? uri.port : 443;
+
+      final ms = await tcpPing(host, port);
+
+      if (mounted) {
+        setState(() => _pings[node.uuid] = ms ?? -1);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _pings[node.uuid] = -1);
+      }
+    }
+  }
+
+  Future<void> tcpPingAll() async {
+    const maxConcurrent = 5;
+
+    final queue = _nodes.where((n) => n.link != null).toList();
+
+    Future<void> worker() async {
+      while (queue.isNotEmpty) {
+        final node = queue.removeLast();
+        await _tcpPingNode(node);
+      }
+    }
+
+    await Future.wait(List.generate(maxConcurrent, (_) => worker()));
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -371,7 +430,7 @@ class _ServersPageState extends State<ServersPage> {
                                     _pingAllInProgress ||
                                     _isPublicCatalog)
                                 ? null
-                                : _pingAll,
+                                : tcpPingAll,
                             tooltip: 'Пинг всех',
                           ),
                         ),
