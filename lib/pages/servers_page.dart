@@ -5,9 +5,11 @@ import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
+import '../services/auth_state.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
+import 'auth_bottom_sheet.dart';
 
 class ServersPage extends StatefulWidget {
   final VoidCallback onGoToHome;
@@ -46,17 +48,25 @@ class _ServersPageState extends State<ServersPage> {
   void initState() {
     super.initState();
     selectedServerNotifier.addListener(_onSelectionChanged);
+    authStateNotifier.addListener(_onAuthChanged);
     _loadNodes();
   }
 
   @override
   void dispose() {
     selectedServerNotifier.removeListener(_onSelectionChanged);
+    authStateNotifier.removeListener(_onAuthChanged);
     super.dispose();
   }
 
   void _onSelectionChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// Reload nodes when the user logs in so that subscription servers replace
+  /// the public catalog automatically.
+  void _onAuthChanged() {
+    _loadNodes();
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -148,6 +158,12 @@ class _ServersPageState extends State<ServersPage> {
     final selectedUuid = selectedServerNotifier.value?.uuid;
 
     Future<void> onSelect(ServerNode node) async {
+      if (_isPublicCatalog) {
+        // Tapping a catalog server prompts authentication.
+        // The _onAuthChanged listener handles the reload after successful login.
+        await showAuthBottomSheet(context);
+        return;
+      }
       selectedServerNotifier.value = node;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('selected_node_uuid', node.uuid);
@@ -386,10 +402,10 @@ class _ServersPageState extends State<ServersPage> {
                             'Серверы',
                             style: Theme.of(context).textTheme.headlineMedium
                                 ?.copyWith(
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.white,
-                                  letterSpacing: 0.4,
-                                ),
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                              letterSpacing: 0.4,
+                            ),
                           ),
                           if (!_loading && _nodes.isNotEmpty) ...[
                             const SizedBox(height: 4),
@@ -417,18 +433,18 @@ class _ServersPageState extends State<ServersPage> {
                           child: IconButton(
                             icon: _pingAllInProgress
                                 ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
                                 : const Icon(Icons.speed_outlined),
                             // Ping is only useful for subscription servers that have links.
                             onPressed:
-                                (_loading ||
-                                    _pingAllInProgress ||
-                                    _isPublicCatalog)
+                            (_loading ||
+                                _pingAllInProgress ||
+                                _isPublicCatalog)
                                 ? null
                                 : tcpPingAll,
                             tooltip: 'Пинг всех',
@@ -470,8 +486,8 @@ class _ServersPageState extends State<ServersPage> {
                     : _buildEmptyState(),
               )
             else ...[
-              ..._buildSections(),
-            ],
+                ..._buildSections(),
+              ],
             const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
           ],
         ),
@@ -495,7 +511,7 @@ class _ServersPageState extends State<ServersPage> {
           Expanded(
             child: Text(
               'Публичный каталог — только предпросмотр. '
-              'Для подключения оформите подписку.',
+                  'Для подключения оформите подписку.',
               style: TextStyle(color: Colors.orange[300], fontSize: 12),
             ),
           ),
@@ -536,7 +552,7 @@ class _ServersPageState extends State<ServersPage> {
             const SizedBox(height: 8),
             Text(
               'Не удалось загрузить серверы.\nПроверьте интернет-соединение или '
-              'добавьте URL подписки в Настройках.',
+                  'добавьте URL подписки в Настройках.',
               style: TextStyle(color: Colors.grey[600], fontSize: 13),
               textAlign: TextAlign.center,
             ),
@@ -987,21 +1003,21 @@ class _NodeTile extends StatelessWidget {
                     ),
                     child: isPinging
                         ? SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: _pingColor(ping),
-                            ),
-                          )
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _pingColor(ping),
+                      ),
+                    )
                         : Text(
-                            _pingLabel(ping),
-                            style: TextStyle(
-                              color: _pingColor(ping),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                      _pingLabel(ping),
+                      style: TextStyle(
+                        color: _pingColor(ping),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ),
             ],

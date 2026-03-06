@@ -1,10 +1,21 @@
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
+
 import 'pages/home_page.dart';
+import 'pages/premium_page.dart';
 import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/subscription_page.dart';
+import 'services/auth_state.dart';
+import 'services/me_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Restore previous auth session (if any) before rendering.
+  await loadAuthState();
+  // Pre-fetch /me data if already logged in.
+  MeService.refresh();
   runApp(const UlyaVpnApp());
 }
 
@@ -45,26 +56,27 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> with TickerProviderStateMixin {
-  int _currentIndex = 1;
+  // Home is index 2 (center)
+  int _currentIndex = 2;
 
   @override
   Widget build(BuildContext context) {
     final pages = [
       ServersPage(
-        onGoToHome: () => setState(() => _currentIndex = 1),
-        onGoToSettings: () => setState(() => _currentIndex = 2),
+        onGoToHome: () => setState(() => _currentIndex = 2),
+        onGoToSettings: () => setState(() => _currentIndex = 4),
       ),
+      const SubscriptionPage(),
       const HomePage(),
+      const PremiumPage(),
       const SettingsPage(),
     ];
 
     return Scaffold(
-      extendBody: true, // фон под панелью будет сквозным
+      extendBody: true,
       body: IndexedStack(index: _currentIndex, children: pages),
-
-      // Здесь просто размещаем наш Glass Nav Bar
       bottomNavigationBar: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24), // отступы от краев и снизу
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         child: _GlassNavBar(
           currentIndex: _currentIndex,
           onTabSelected: (i) => setState(() => _currentIndex = i),
@@ -74,7 +86,8 @@ class _MainShellState extends State<MainShell> with TickerProviderStateMixin {
   }
 }
 
-/// ── Плавающий стеклянный навбар ───────────────────────────────
+// ── Glass Nav Bar ──────────────────────────────────────────────────────────────
+
 class _GlassNavBar extends StatelessWidget {
   final int currentIndex;
   final ValueChanged<int> onTabSelected;
@@ -115,18 +128,30 @@ class _GlassNavBar extends StatelessWidget {
                 onTap: () => onTabSelected(0),
               ),
               _NavItem(
-                icon: Icons.home_outlined,
-                activeIcon: Icons.home,
-                label: 'Главная',
+                icon: Icons.card_membership_outlined,
+                activeIcon: Icons.card_membership,
+                label: 'Подписка',
                 selected: currentIndex == 1,
                 onTap: () => onTabSelected(1),
+              ),
+              // ── Center Home button ──────────────────────────────────────
+              _HomeNavItem(
+                selected: currentIndex == 2,
+                onTap: () => onTabSelected(2),
+              ),
+              _NavItem(
+                icon: Icons.workspace_premium_outlined,
+                activeIcon: Icons.workspace_premium,
+                label: 'Premium',
+                selected: currentIndex == 3,
+                onTap: () => onTabSelected(3),
               ),
               _NavItem(
                 icon: Icons.settings_outlined,
                 activeIcon: Icons.settings,
                 label: 'Настройки',
-                selected: currentIndex == 2,
-                onTap: () => onTabSelected(2),
+                selected: currentIndex == 4,
+                onTap: () => onTabSelected(4),
               ),
             ],
           ),
@@ -135,6 +160,109 @@ class _GlassNavBar extends StatelessWidget {
     );
   }
 }
+
+// ── Elevated center Home button ────────────────────────────────────────────────
+
+class _HomeNavItem extends StatefulWidget {
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _HomeNavItem({required this.selected, required this.onTap});
+
+  @override
+  State<_HomeNavItem> createState() => _HomeNavItemState();
+}
+
+class _HomeNavItemState extends State<_HomeNavItem>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+      lowerBound: 0.9,
+      upperBound: 1.0,
+      value: widget.selected ? 1.0 : 0.9,
+    );
+    super.initState();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomeNavItem oldWidget) {
+    if (widget.selected) {
+      _ctrl.forward();
+    } else {
+      _ctrl.reverse();
+    }
+    super.didUpdateWidget(oldWidget);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: widget.onTap,
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (_, child) => Transform.scale(scale: _ctrl.value, child: child),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: widget.selected
+                        ? [const Color(0xFF6C5CE7), const Color(0xFF4834D4)]
+                        : [const Color(0xFF3D3463), const Color(0xFF2D2550)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: widget.selected
+                      ? [
+                    BoxShadow(
+                      color: const Color(0xFF6C5CE7).withValues(alpha: 0.4),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                      : [],
+                ),
+                child: Icon(
+                  widget.selected ? Icons.home : Icons.home_outlined,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Главная',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: widget.selected ? Colors.white : Colors.white54,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Regular nav item ──────────────────────────────────────────────────────────
 
 class _NavItem extends StatefulWidget {
   final IconData icon;
@@ -181,9 +309,15 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
   }
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final activeColor = Colors.white;
-    final inactiveColor = Colors.white54;
+    const activeColor = Colors.white;
+    const inactiveColor = Colors.white54;
 
     return Expanded(
       child: GestureDetector(
@@ -200,14 +334,14 @@ class _NavItemState extends State<_NavItem> with SingleTickerProviderStateMixin 
             children: [
               Icon(
                 widget.selected ? widget.activeIcon : widget.icon,
-                size: 24,
+                size: 22,
                 color: widget.selected ? activeColor : inactiveColor,
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               Text(
                 widget.label,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 10,
                   fontWeight: FontWeight.w600,
                   color: widget.selected ? activeColor : inactiveColor,
                 ),
