@@ -578,21 +578,27 @@ class _HomePageState extends State<HomePage>
     }
 
     return Scaffold(
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _loadNodes,
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
-            children: [
-              _buildHeader(),
-              const SizedBox(height: 16),
-              _buildConnectionCard(),
-              const SizedBox(height: 12),
-              _buildTrafficCard(),
-              const SizedBox(height: 12),
-              _buildSubscriptionCard(),
-            ],
-          ),
+      body: RefreshIndicator(
+        onRefresh: _loadNodes,
+        color: AppColors.primary,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 16, 16, 100),              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+                  _buildHeader(),
+                  const SizedBox(height: 16),
+                  _buildConnectionCard(),
+                  const SizedBox(height: 12),
+                  _buildTrafficCard(),
+                  const SizedBox(height: 12),
+                  _buildSubscriptionCard(),
+                  const SizedBox(height: 12),
+                ]),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -733,7 +739,7 @@ class _HomePageState extends State<HomePage>
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(26, 28, 26, 26),
+        padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
         child: Column(
           children: [
             /// STATUS
@@ -763,7 +769,7 @@ class _HomePageState extends State<HomePage>
               ],
             ),
 
-            const SizedBox(height: 32),
+            const SizedBox(height: 24),
 
             /// BUTTON
             Center(
@@ -774,7 +780,7 @@ class _HomePageState extends State<HomePage>
               ),
             ),
 
-            const SizedBox(height: 34),
+            const SizedBox(height: 24),
 
             Container(
               height: 1,
@@ -789,7 +795,7 @@ class _HomePageState extends State<HomePage>
               ),
             ),
 
-            const SizedBox(height: 22),
+            const SizedBox(height: 16),
 
             /// SERVER PICKER
             InkWell(
@@ -884,7 +890,7 @@ class _HomePageState extends State<HomePage>
         ],
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         child: Row(
           children: [
             Expanded(
