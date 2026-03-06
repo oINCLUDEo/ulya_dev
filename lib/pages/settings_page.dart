@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 import '../services/apps_repository.dart';
-import '../services/remnawave_service.dart';
+//import '../services/remnawave_service.dart';
 import '../utils/core_info_parser.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -20,7 +20,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   // ── Настройки подписки ────────────────────────────────────────────────────
-  String _subscriptionUrl = '';
+  //String _subscriptionUrl = '';
 
   // ── Режим работы ─────────────────────────────────────────────────────────
   bool _proxyOnly = false;
@@ -102,7 +102,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
 
-    _subscriptionUrl = await RemnawaveService.getSubscriptionUrl();
+    //_subscriptionUrl = await RemnawaveService.getSubscriptionUrl();
     _proxyOnly = prefs.getBool(_keyProxyOnly) ?? false;
     _useCustomDns = prefs.getBool(_keyCustomDns) ?? false;
     _fragmentEnabled = prefs.getBool(_keyFragment) ?? false;
@@ -171,22 +171,22 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
 
           // ── Подписка ──────────────────────────────────────────────
-          _sliver(
-            _buildSection('Подписка', [
-              ListTile(
-                leading: const Icon(Icons.link, size: 20),
-                title: const Text('URL подписки'),
-                subtitle: Text(
-                  _subscriptionUrl.isEmpty ? 'Не задан' : _subscriptionUrl,
-                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                ),
-                trailing: const Icon(Icons.edit, size: 18),
-                onTap: _showSubscriptionDialog,
-              ),
-            ]),
-          ),
+          //sliver(
+          // _buildSection('Подписка', [
+          //   ListTile(
+          //     leading: const Icon(Icons.link, size: 20),
+          //     title: const Text('URL подписки'),
+          //     subtitle: Text(
+          //       _subscriptionUrl.isEmpty ? 'Не задан' : _subscriptionUrl,
+          //       style: TextStyle(color: Colors.grey[400], fontSize: 12),
+          //       overflow: TextOverflow.ellipsis,
+          //       maxLines: 1,
+          //     ),
+          //     trailing: const Icon(Icons.edit, size: 18),
+          //     onTap: _showSubscriptionDialog,
+          //   ),
+          // ]),
+          //,
 
           const SliverPadding(padding: EdgeInsets.only(top: 16)),
 
@@ -552,50 +552,50 @@ class _SettingsPageState extends State<SettingsPage> {
 
   // ── Диалоги ───────────────────────────────────────────────────────────────
 
-  void _showSubscriptionDialog() {
-    final ctrl = TextEditingController(text: _subscriptionUrl);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('URL подписки'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: ctrl,
-              decoration: const InputDecoration(
-                hintText: 'https://panel.example.com/sub/...',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.url,
-              maxLines: 3,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Получите ссылку в Telegram-боте или личном кабинете панели.',
-              style: TextStyle(color: Colors.grey[500], fontSize: 11),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final url = ctrl.text.trim();
-              await RemnawaveService.saveSubscriptionUrl(url);
-              setState(() => _subscriptionUrl = url);
-              if (ctx.mounted) Navigator.pop(ctx);
-            },
-            child: const Text('Сохранить'),
-          ),
-        ],
-      ),
-    );
-  }
+  //void _showSubscriptionDialog() {
+  //  final ctrl = TextEditingController(text: _subscriptionUrl);
+  //  showDialog(
+  //    context: context,
+  //    builder: (ctx) => AlertDialog(
+  //      title: const Text('URL подписки'),
+  //      content: Column(
+  //        mainAxisSize: MainAxisSize.min,
+  //        crossAxisAlignment: CrossAxisAlignment.start,
+  //        children: [
+  //          TextField(
+  //            controller: ctrl,
+  //            decoration: const InputDecoration(
+  //              hintText: 'https://panel.example.com/sub/...',
+  //              border: OutlineInputBorder(),
+  //            ),
+  //            keyboardType: TextInputType.url,
+  //            maxLines: 3,
+  //          ),
+  //          const SizedBox(height: 8),
+  //          Text(
+  //            'Получите ссылку в Telegram-боте или личном кабинете панели.',
+  //            style: TextStyle(color: Colors.grey[500], fontSize: 11),
+  //          ),
+  //        ],
+  //      ),
+  //      actions: [
+  //        TextButton(
+  //          onPressed: () => Navigator.pop(ctx),
+  //          child: const Text('Отмена'),
+  //        ),
+  //        FilledButton(
+  //          onPressed: () async {
+  //            final url = ctrl.text.trim();
+  //            await RemnawaveService.saveSubscriptionUrl(url);
+  //            setState(() => _subscriptionUrl = url);
+  //            if (ctx.mounted) Navigator.pop(ctx);
+  //          },
+  //          child: const Text('Сохранить'),
+  //        ),
+  //      ],
+  //    ),
+  //  );
+  //}
 
   void _showPingUrlDialog() {
     final ctrl = TextEditingController(text: _pingTestUrl);
