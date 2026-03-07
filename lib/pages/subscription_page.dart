@@ -124,13 +124,17 @@ class _SubscriptionPageState extends State<SubscriptionPage>
           title: 'Подписка',
           subtitle: 'Управляйте подпиской',
           showBeta: false,
-          trailing: IconButton(
-            icon: const Icon(
-              Icons.refresh,
-              color: AppColors.textNeutralSecondary,
+          trailing: Container(
+            decoration: BoxDecoration(
+              color: AppColors.surfaceSoft.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white10),
             ),
-            onPressed: _refresh,
-            tooltip: 'Обновить',
+            child: IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _refresh,
+              tooltip: 'Обновить',
+            ),
           ),
         ),
       ),
