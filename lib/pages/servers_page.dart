@@ -81,7 +81,7 @@ class _ServersPageState extends State<ServersPage> {
     });
 
     final subUrl = await RemnawaveService.getSubscriptionUrl();
-
+    debugPrint('ServersPage: subUrl - ${subUrl}');
     if (subUrl.isEmpty) {
       // No personal subscription — load the public server catalog.
       final nodes = await RemnawaveService.fetchPublicServers();

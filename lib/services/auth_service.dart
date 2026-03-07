@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_config.dart';
@@ -188,8 +190,28 @@ class AuthService {
 
   /// Clear the authenticated session and subscription URL.
   static Future<void> logout() async {
-    await clearAuthState();
-    await RemnawaveService.saveSubscriptionUrl('');
-    MeService.clear();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      debugPrint('Logout: Все ключи: ${prefs.getKeys()}');
+      for (String key in prefs.getKeys()) {
+        debugPrint('$key: ${prefs.get(key)}');
+      }
+
+      MeService.clear();
+      await Future.wait([
+        RemnawaveService.clearCache(),
+        clearAuthState(),
+      ]);
+
+      debugPrint('Logout: все данные успешно очищены');
+      debugPrint('Logout: Ключи после выхода: ${prefs.getKeys()}');
+      for (String key in prefs.getKeys()) {
+        debugPrint('$key: ${prefs.get(key)}');
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Logout: ошибка при очистке данных: $e\n$stackTrace');
+      // Даже при ошибке пробуем очистить всё, что можно
+      //await _forceCleanup();
+    }
   }
 }

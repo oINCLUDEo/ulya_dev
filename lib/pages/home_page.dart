@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
+import '../services/auth_state.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
@@ -73,6 +74,7 @@ class _HomePageState extends State<HomePage>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     selectedServerNotifier.addListener(_onSelectedServerChanged);
+    authStateNotifier.addListener(_onAuthChanged);
 
     _pulseCtrl = AnimationController(
       duration: const Duration(seconds: 2),
@@ -137,9 +139,14 @@ class _HomePageState extends State<HomePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     selectedServerNotifier.removeListener(_onSelectedServerChanged);
+    authStateNotifier.removeListener(_onAuthChanged);
     _statusSub?.cancel();
     _pulseCtrl.dispose();
     super.dispose();
+  }
+
+  void _onAuthChanged() {
+    _loadNodes();
   }
 
   // ── Загрузка серверов ─────────────────────────────────────────────────────
@@ -151,7 +158,7 @@ class _HomePageState extends State<HomePage>
     final subUrl = await RemnawaveService.getSubscriptionUrl();
     final List<ServerNode> nodes;
     final bool isPublic;
-
+    debugPrint('HomePage: loading nodes - ${subUrl}');
     if (subUrl.isEmpty) {
       nodes = await RemnawaveService.fetchPublicServers();
       isPublic = true;
@@ -163,6 +170,7 @@ class _HomePageState extends State<HomePage>
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
     final savedUuid = prefs.getString('selected_node_uuid');
+    debugPrint('HomePage: selected_node from cache - ${savedUuid}');
     setState(() {
       _nodes = nodes;
       _isPublicCatalog = isPublic;

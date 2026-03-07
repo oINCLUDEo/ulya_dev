@@ -29,6 +29,7 @@ class RemnawaveService {
   static const _prefHwid = 'device_hwid';
   static const _prefCachedNodes = 'cached_nodes';
   static const _prefCachedSubscriptionInfo = 'cached_subscription_info';
+  static const _prefSelectedNodeUUID = 'selected_node_uuid';
 
   // ── Cached subscription info ──────────────────────────────────────────────
 
@@ -258,6 +259,14 @@ class RemnawaveService {
       debugPrint('RemnawaveService: failed to load cache: $e');
       return [];
     }
+  }
+
+  static Future<void> clearCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefSubscriptionUrl);
+    await prefs.remove(_prefCachedNodes);
+    await prefs.remove(_prefCachedSubscriptionInfo);
+    await prefs.remove(_prefSelectedNodeUUID);
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────

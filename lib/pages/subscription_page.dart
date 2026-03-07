@@ -175,7 +175,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     );
     if (confirm == true) {
       await AuthService.logout();
-      MeService.clear();
+      debugPrint('SubPage: logout proccess compeleted');
     }
   }
 }
