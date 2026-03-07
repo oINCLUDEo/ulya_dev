@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/purple_header.dart';
 import 'auth_bottom_sheet.dart';
 
 class SubscriptionPage extends StatefulWidget {
@@ -65,7 +66,6 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     final me = meNotifier.value;
 
     return Scaffold(
-      backgroundColor: AppColors.graphiteBackground,
       body: RefreshIndicator(
         color: AppColors.primary,
         onRefresh: _refresh,
@@ -85,7 +85,9 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                   ] else if (_loading && me == null) ...[
                     const SizedBox(height: 60),
                     const Center(
-                      child: CircularProgressIndicator(color: AppColors.primary),
+                      child: CircularProgressIndicator(
+                        color: AppColors.primary,
+                      ),
                     ),
                   ] else ...[
                     _UserCard(me: me, auth: auth),
@@ -98,7 +100,9 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                       _SubscriptionDetailsCard(sub: me.subscription!),
                       const SizedBox(height: 12),
                       if (me.subscription!.subscriptionUrl != null)
-                        _SubscriptionUrlCard(url: me.subscription!.subscriptionUrl!),
+                        _SubscriptionUrlCard(
+                          url: me.subscription!.subscriptionUrl!,
+                        ),
                       const SizedBox(height: 12),
                     ],
                     _QuickActionsCard(onLogout: _onLogout),
@@ -112,27 +116,24 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     );
   }
 
-  SliverAppBar _buildAppBar() {
-    return SliverAppBar(
-      backgroundColor: AppColors.graphiteBackground,
-      elevation: 0,
-      floating: true,
-      snap: true,
-      title: Text(
-        'Подписка',
-        style: Theme.of(context).textTheme.headlineMedium
-            ?.copyWith(
-          fontWeight: FontWeight.w900,
-          color: AppColors.textMain,
-          letterSpacing: 0.4,
+  SliverToBoxAdapter _buildAppBar() {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 16, 16, 16),
+        child: PurpleHeader(
+          title: 'Подписка',
+          subtitle: 'Управляйте подпиской',
+          showBeta: false,
+          trailing: IconButton(
+            icon: const Icon(
+              Icons.refresh,
+              color: AppColors.textNeutralSecondary,
+            ),
+            onPressed: _refresh,
+            tooltip: 'Обновить',
+          ),
         ),
       ),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh, color: AppColors.textNeutralSecondary),
-          onPressed: _refresh,
-        ),
-      ],
     );
   }
 
@@ -160,7 +161,10 @@ class _SubscriptionPageState extends State<SubscriptionPage>
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Выйти', style: TextStyle(color: AppColors.danger)),
+            child: const Text(
+              'Выйти',
+              style: TextStyle(color: AppColors.danger),
+            ),
           ),
         ],
       ),
@@ -283,7 +287,11 @@ class _BuySubscriptionCard extends StatelessWidget {
               ],
             ),
           ),
-          Icon(Icons.chevron_right, color: AppColors.textNeutralMuted, size: 20),
+          Icon(
+            Icons.chevron_right,
+            color: AppColors.textNeutralMuted,
+            size: 20,
+          ),
         ],
       ),
     );
@@ -520,7 +528,10 @@ class _SubscriptionDetailsCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          _DetailRow(label: 'Тип', value: sub.isTrial ? 'Пробный период' : 'Платная'),
+          _DetailRow(
+            label: 'Тип',
+            value: sub.isTrial ? 'Пробный период' : 'Платная',
+          ),
           _DetailRow(label: 'Устройства', value: '${sub.deviceLimit}'),
           _DetailRow(label: 'Истекает', value: sub.formattedExpiry),
           _DetailRow(

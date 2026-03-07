@@ -11,6 +11,7 @@ import '../services/apps_repository.dart';
 //import '../services/remnawave_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/core_info_parser.dart';
+import '../widgets/purple_header.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -161,13 +162,9 @@ class _SettingsPageState extends State<SettingsPage> {
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             sliver: SliverToBoxAdapter(
-              child: Text(
-                'Настройки',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.textMain,
-                  letterSpacing: 0.4,
-                ),
+              child: PurpleHeader(
+                title: 'Настройки',
+                subtitle: 'Параметры приложения',
               ),
             ),
           ),

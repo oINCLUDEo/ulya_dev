@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/purple_header.dart';
 
 class PremiumPage extends StatelessWidget {
   const PremiumPage({super.key});
@@ -8,21 +9,19 @@ class PremiumPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.graphiteBackground,
       body: CustomScrollView(
         slivers: [
-          SliverAppBar(
-            backgroundColor: AppColors.graphiteBackground,
-            elevation: 0,
-            floating: true,
-            snap: true,
-            title: Text(
-              'Премиум',
-              style: Theme.of(context).textTheme.headlineMedium  // Базовый стиль из темы
-                  ?.copyWith(
-                fontWeight: FontWeight.w900,
-                color: AppColors.textMain,
-                letterSpacing: 0.4,
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              MediaQuery.of(context).padding.top + 16,
+              16,
+              8,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: PurpleHeader(
+                title: 'Премиум',
+                subtitle: 'Все возможности без ограничений',
               ),
             ),
           ),
@@ -275,87 +274,133 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: highlight
-            ? AppColors.primary.withValues(alpha: 0.12)
-            : AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: highlight
-              ? AppColors.primary.withValues(alpha: 0.5)
-              : Colors.white.withValues(alpha: 0.06),
-          width: highlight ? 1.5 : 1,
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: highlight
+                ? const Color(0xFF6C5CE7).withValues(alpha: 0.15)
+                : AppColors.graphiteSurface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: highlight
+                  ? const Color(0xFF6C5CE7)
+                  : Colors.white.withValues(alpha: 0.06),
+              width: highlight ? 1.5 : 1,
+            ),
+
+            // ✨ мягкое свечение выбранного тарифа
+            boxShadow: highlight
+                ? [
+              BoxShadow(
+                color: const Color(0xFF6C5CE7).withValues(alpha: 0.25),
+                blurRadius: 30,
+                spreadRadius: -6,
+              ),
+            ]
+                : null,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: highlight
-                            ? AppColors.primary
-                            : AppColors.textNeutralMain,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                      ),
-                    ),
-                    if (badge != null) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          badge!,
-                          style: const TextStyle(
-                            color: AppColors.primary,
-                            fontSize: 11,
+                    Row(
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            color: highlight
+                                ? const Color(0xFF6C5CE7)
+                                : AppColors.textNeutralMain,
                             fontWeight: FontWeight.w600,
+                            fontSize: 15,
                           ),
                         ),
-                      ),
-                    ],
+
+                        if (badge != null) ...[
+                          const SizedBox(width: 8),
+
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6C5CE7)
+                                  .withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              badge!,
+                              style: const TextStyle(
+                                color: Color(0xFF6C5CE7),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ],
                 ),
-              ],
+              ),
+
+              RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: price,
+                      style: const TextStyle(
+                        color: AppColors.textNeutralMain,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 20,
+                      ),
+                    ),
+                    TextSpan(
+                      text: price == '—' ? '' : period,
+                      style: const TextStyle(
+                        color: AppColors.textNeutralSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // ⭐ плашка популярного тарифа
+        if (highlight)
+          Positioned(
+            top: -10,
+            left: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 4,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6C5CE7),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'ПОПУЛЯРНО',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
+                ),
+              ),
             ),
           ),
-          RichText(
-            text: TextSpan(
-              children: [
-                TextSpan(
-                  text: price,
-                  style: const TextStyle(
-                    color: AppColors.textNeutralMain,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 20,
-                  ),
-                ),
-                TextSpan(
-                  text: price == '—' ? '' : period,
-                  style: const TextStyle(
-                    color: AppColors.textNeutralSecondary,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+      ],
     );
   }
 }

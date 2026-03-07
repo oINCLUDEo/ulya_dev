@@ -9,6 +9,7 @@ import '../services/auth_state.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
+import '../widgets/purple_header.dart';
 import 'auth_bottom_sheet.dart';
 
 class ServersPage extends StatefulWidget {
@@ -381,91 +382,51 @@ class _ServersPageState extends State<ServersPage> {
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               sliver: SliverToBoxAdapter(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withValues(alpha: 0.3),
-                            blurRadius: 24,
-                            spreadRadius: -8,
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Серверы',
-                            style: Theme.of(context).textTheme.headlineMedium
-                                ?.copyWith(
-                              fontWeight: FontWeight.w900,
-                              color: AppColors.textMain,
-                              letterSpacing: 0.4,
-                            ),
-                          ),
-                          if (!_loading && _nodes.isNotEmpty) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              _isPublicCatalog
-                                  ? '${_nodes.length} ${_pluralServers(_nodes.length)} (каталог)'
-                                  : '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке',
-                              style: const TextStyle(
-                                color: AppColors.textSecondary,
-                                fontSize: 12.5,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Container(
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceSoft.withValues(alpha: 0.7),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: IconButton(
-                            icon: _pingAllInProgress
-                                ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
-                            )
-                                : const Icon(Icons.speed_outlined),
-                            // Ping is only useful for subscription servers that have links.
-                            onPressed:
-                            (_loading ||
-                                _pingAllInProgress ||
-                                _isPublicCatalog)
-                                ? null
-                                : tcpPingAll,
-                            tooltip: 'Пинг всех',
-                          ),
+                child: PurpleHeader(
+                  title: 'Серверы',
+                  subtitle: !_loading && _nodes.isNotEmpty
+                      ? _isPublicCatalog
+                      ? '${_nodes.length} ${_pluralServers(_nodes.length)} (каталог)'
+                      : '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке'
+                      : null,
+                  showBeta: false, // здесь BETA не нужен
+                  trailing: Row(
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceSoft.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white10),
                         ),
-                        const SizedBox(width: 8),
-                        Container(
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceSoft.withValues(alpha: 0.7),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: IconButton(
-                            icon: const Icon(Icons.refresh),
-                            onPressed: _loading ? null : _loadNodes,
-                            tooltip: 'Обновить',
-                          ),
+                        child: IconButton(
+                          icon: _pingAllInProgress
+                              ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                              : const Icon(Icons.speed_outlined),
+                          onPressed: (_loading || _pingAllInProgress || _isPublicCatalog)
+                              ? null
+                              : tcpPingAll,
+                          tooltip: 'Пинг всех',
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceSoft.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: IconButton(
+                          icon: const Icon(Icons.refresh),
+                          onPressed: _loading ? null : _loadNodes,
+                          tooltip: 'Обновить',
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),

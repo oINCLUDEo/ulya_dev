@@ -4,6 +4,7 @@ class AppColors {
   // ── Base Background (CURRENT PURPLE SYSTEM) ─────────────────
   static const background = Color(0xFF150326);
   static const backgroundDeep = Color(0xFF07010D);
+  static const neutralBackground = Color(0xFF0F0F1A);
 
   // ── Primary Brand (Dark Purple Core) ─────────────────────────
   static const primary = Color(0xFF311459);

@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:dev_vpn/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 
 import 'pages/home_page.dart';
@@ -36,7 +37,7 @@ class UlyaVpnApp extends StatelessWidget {
           surface: const Color(0xFF1A1A2E),
           onSurface: Colors.white,
         ),
-        scaffoldBackgroundColor: const Color(0xFF0F0F1A),
+        scaffoldBackgroundColor: AppColors.neutralBackground,
         cardTheme: CardThemeData(
           color: const Color(0xFF1A1A2E),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),

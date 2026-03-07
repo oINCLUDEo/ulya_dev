@@ -11,6 +11,7 @@ import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
 import '../utils/speed_calculator.dart';
+import '../widgets/purple_header.dart';
 import 'config_editor_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -574,7 +575,9 @@ class _HomePageState extends State<HomePage>
   @override
   Widget build(BuildContext context) {
     if (!_initialized) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
 
     return Scaffold(
@@ -585,7 +588,13 @@ class _HomePageState extends State<HomePage>
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPadding(
-              padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 16, 16, 100),              sliver: SliverList(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                MediaQuery.of(context).padding.top + 16,
+                16,
+                100,
+              ),
+              sliver: SliverList(
                 delegate: SliverChildListDelegate([
                   _buildHeader(),
                   const SizedBox(height: 16),
@@ -604,110 +613,35 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-  // ── Заголовок ─────────────────────────────────────────────────────────────
+// ── Заголовок ─────────────────────────────────────────────────────────────
 
   Widget _buildHeader() {
-    final theme = Theme.of(context);
-
     final subtitle = _isConnected
         ? 'Соединение защищено'
         : 'Свобода начинается с приватности';
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Мягкое темное свечение
-            Container(
-              decoration: BoxDecoration(
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withValues(alpha: 0.35),
-                    blurRadius: 24,
-                    spreadRadius: -8,
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        'Ulya VPN',
-                        style: theme.textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.w900,
-                          color: AppColors.textMain,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-
-                      // Тёмная BETA плашка (без розовости)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
-                        ),
-                        decoration: BoxDecoration(
-                          gradient: AppColors.gradientAccent,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.08),
-                          ),
-                        ),
-                        child: const Text(
-                          'BETA',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                            letterSpacing: 0.8,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: Text(
-                      subtitle,
-                      key: ValueKey(subtitle),
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+    return PurpleHeader(
+      title: 'Ulya VPN',
+      subtitle: subtitle,
+      showBeta: true,
+      trailing: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surfaceSoft.withValues(alpha: 0.7),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white10),
         ),
-
-        Container(
-          decoration: BoxDecoration(
-            color: AppColors.surfaceSoft.withValues(alpha: 0.7),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white10),
-          ),
-          child: IconButton(
-            icon: _isLoadingNodes
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh_rounded),
-            onPressed: _isLoadingNodes ? null : _loadNodes,
-            tooltip: 'Обновить серверы',
-          ),
+        child: IconButton(
+          icon: _isLoadingNodes
+              ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+              : const Icon(Icons.refresh_rounded),
+          onPressed: _isLoadingNodes ? null : _loadNodes,
+          tooltip: 'Обновить серверы',
         ),
-      ],
+      ),
     );
   }
 
