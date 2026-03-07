@@ -7,12 +7,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
+import '../services/auth_service.dart';
 import '../services/auth_state.dart';
+import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
 import '../utils/speed_calculator.dart';
 import '../widgets/purple_header.dart';
+import 'auth_bottom_sheet.dart';
 import 'config_editor_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -132,7 +135,10 @@ class _HomePageState extends State<HomePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _loadNodes();
+    if (state == AppLifecycleState.resumed) {
+      _loadNodes();
+      MeService.refresh();
+    }
   }
 
   @override
@@ -201,6 +207,12 @@ class _HomePageState extends State<HomePage>
 
   // ── Подключение ───────────────────────────────────────────────────────────
 
+  /// Clear Telegram auth session and reload in public-catalog mode.
+  Future<void> _performLogout() async {
+    await AuthService.logout();
+    // _onAuthChanged listener will call _loadNodes automatically.
+  }
+
   Future<void> _toggleConnection() async {
     if (_isTransitioning) return;
 
@@ -217,10 +229,7 @@ class _HomePageState extends State<HomePage>
 
     // Public catalog servers have no link — connection is not possible.
     if (node.isDisabled || node.link == null) {
-      _snack(
-        'Этот сервер доступен только для предпросмотра. '
-        'Оформите подписку в Telegram-боте для подключения.',
-      );
+      await showAuthBottomSheet(context);
       return;
     }
 
@@ -422,6 +431,14 @@ class _HomePageState extends State<HomePage>
                               ),
                               child: ListTile(
                                 onTap: () async {
+                                  if (_isPublicCatalog) {
+                                    // Catalog server → show auth prompt.
+                                    Navigator.pop(ctx);
+                                    if (context.mounted) {
+                                      await showAuthBottomSheet(context);
+                                    }
+                                    return;
+                                  }
                                   setState(() => _selectedNode = node);
                                   // Sync selection with ServersPage.
                                   selectedServerNotifier.value = node;
@@ -880,6 +897,7 @@ class _HomePageState extends State<HomePage>
 
   Widget _buildSubscriptionCard() {
     final info = _subscriptionInfo;
+    final authState = authStateNotifier.value;
 
     return Container(
       decoration: BoxDecoration(
@@ -917,9 +935,47 @@ class _HomePageState extends State<HomePage>
               ],
             ),
 
+            // ── Telegram auth user row ─────────────────────────────────
+            if (authState.isLoggedIn) ...[
+              const SizedBox(height: 12),
+              _TelegramUserRow(
+                authState: authState,
+                onLogout: () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      backgroundColor: const Color(0xFF1A1A2E),
+                      title: const Text('Выйти из аккаунта?'),
+                      content: const Text(
+                        'Данные подписки будут удалены с устройства. '
+                            'Вы сможете войти снова в любое время.',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('Отмена'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.redAccent,
+                          ),
+                          child: const Text('Выйти'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirmed == true && mounted) {
+                    await _performLogout();
+                  }
+                },
+              ),
+            ],
+
             const SizedBox(height: 16),
 
-            if (info == null)
+            if (info == null && !_isPublicCatalog)
               const Center(
                 child: Text(
                   'Загрузка данных подписки…',
@@ -929,85 +985,89 @@ class _HomePageState extends State<HomePage>
                   ),
                 ),
               )
-            else ...[
-              // ── Трафик ─────────────────────────────────────────────
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            else if (_isPublicCatalog && !authState.isLoggedIn)
+              _buildLoginPromptInCard()
+            else if (info == null)
+                const SizedBox.shrink()
+              else ...[
+                  // ── Трафик ─────────────────────────────────────────────
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        'Использовано',
-                        style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Использовано',
+                            style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            info.formattedUsed,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        info.formattedUsed,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'Всего',
+                            style: TextStyle(color: Colors.grey[500], fontSize: 11),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            info.formattedTotal,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Всего',
-                        style: TextStyle(color: Colors.grey[500], fontSize: 11),
+
+                  const SizedBox(height: 10),
+
+                  // Прогресс-бар
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: info.usedFraction,
+                      minHeight: 8,
+                      backgroundColor: Colors.white12,
+                      valueColor: AlwaysStoppedAnimation(
+                        _progressColor(info.usedFraction),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        info.formattedTotal,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 10),
-
-              // Прогресс-бар
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: info.usedFraction,
-                  minHeight: 8,
-                  backgroundColor: Colors.white12,
-                  valueColor: AlwaysStoppedAnimation(
-                    _progressColor(info.usedFraction),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
-              // Оставшийся трафик
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Осталось: ${_remainingTraffic(info)}',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                  ),
-                  Text(
-                    '${(info.usedFraction * 100).toStringAsFixed(1)}%',
-                    style: TextStyle(
-                      color: _progressColor(info.usedFraction),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
-              ),
+
+                  const SizedBox(height: 8),
+
+                  // Оставшийся трафик
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Осталось: ${_remainingTraffic(info)}',
+                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                      ),
+                      Text(
+                        '${(info.usedFraction * 100).toStringAsFixed(1)}%',
+                        style: TextStyle(
+                          color: _progressColor(info.usedFraction),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
             ],
           ],
         ),
@@ -1031,9 +1091,101 @@ class _HomePageState extends State<HomePage>
       totalBytes: info.totalBytes,
     ).formattedUsed; // re-use formatter
   }
+  /// Card content shown when the app is in public-catalog mode and the user
+  /// is NOT logged in — invites them to authenticate.
+  Widget _buildLoginPromptInCard() {
+    return Column(
+      children: [
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Icon(Icons.telegram, color: Colors.grey[400], size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Войдите через Telegram, чтобы активировать подписку.',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () => showAuthBottomSheet(context),
+            icon: const Icon(Icons.login, size: 16),
+            label: const Text('Войти'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF229ED9),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 // ── Вспомогательные виджеты ───────────────────────────────────────────────────
+
+/// Row shown in the subscription card when the user is authenticated via Telegram.
+class _TelegramUserRow extends StatelessWidget {
+  final AuthState authState;
+  final VoidCallback onLogout;
+
+  const _TelegramUserRow({
+    required this.authState,
+    required this.onLogout,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF229ED9).withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: const Color(0xFF229ED9).withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.telegram, color: Color(0xFF229ED9), size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              authState.displayName,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          GestureDetector(
+            onTap: onLogout,
+            child: Icon(
+              Icons.logout,
+              size: 16,
+              color: Colors.grey[500],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _StatTile extends StatefulWidget {
   final IconData icon;
