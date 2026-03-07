@@ -16,12 +16,13 @@ class PremiumPage extends StatelessWidget {
             elevation: 0,
             floating: true,
             snap: true,
-            title: const Text(
-              'Premium',
-              style: TextStyle(
-                color: AppColors.textNeutralMain,
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
+            title: Text(
+              'Премиум',
+              style: Theme.of(context).textTheme.headlineMedium  // Базовый стиль из темы
+                  ?.copyWith(
+                fontWeight: FontWeight.w900,
+                color: AppColors.textMain,
+                letterSpacing: 0.4,
               ),
             ),
           ),

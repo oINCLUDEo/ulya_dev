@@ -75,12 +75,42 @@ class _MainShellState extends State<MainShell> with TickerProviderStateMixin {
     return Scaffold(
       extendBody: true,
       body: IndexedStack(index: _currentIndex, children: pages),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-        child: _GlassNavBar(
-          currentIndex: _currentIndex,
-          onTabSelected: (i) => setState(() => _currentIndex = i),
-        ),
+      bottomNavigationBar: Stack(
+        alignment: Alignment.bottomCenter,
+        children: [
+          // Легкий туман под меню
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 120, // растягиваем градиент выше для плавности
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.bottomCenter,
+                    end: Alignment.topCenter,
+                    colors: [
+                      const Color(0xFF171A21).withOpacity(1), // чуть заметная плотность
+                      const Color(0xFF171A21).withOpacity(0.5),
+                      const Color(0xFF171A21).withOpacity(0.04), // почти прозрачный
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.3, 0.6, 1.0], // плавное уменьшение эффекта
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Меню навигации
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: _GlassNavBar(
+              currentIndex: _currentIndex,
+              onTabSelected: (i) => setState(() => _currentIndex = i),
+            ),
+          ),
+        ],
       ),
     );
   }

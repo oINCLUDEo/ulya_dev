@@ -118,12 +118,13 @@ class _SubscriptionPageState extends State<SubscriptionPage>
       elevation: 0,
       floating: true,
       snap: true,
-      title: const Text(
+      title: Text(
         'Подписка',
-        style: TextStyle(
-          color: AppColors.textNeutralMain,
-          fontWeight: FontWeight.bold,
-          fontSize: 20,
+        style: Theme.of(context).textTheme.headlineMedium
+            ?.copyWith(
+          fontWeight: FontWeight.w900,
+          color: AppColors.textMain,
+          letterSpacing: 0.4,
         ),
       ),
       actions: [

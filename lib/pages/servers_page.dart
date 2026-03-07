@@ -403,7 +403,7 @@ class _ServersPageState extends State<ServersPage> {
                             style: Theme.of(context).textTheme.headlineMedium
                                 ?.copyWith(
                               fontWeight: FontWeight.w900,
-                              color: Colors.white,
+                              color: AppColors.textMain,
                               letterSpacing: 0.4,
                             ),
                           ),

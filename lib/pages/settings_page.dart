@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../services/apps_repository.dart';
 //import '../services/remnawave_service.dart';
+import '../theme/app_colors.dart';
 import '../utils/core_info_parser.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -163,8 +164,9 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Text(
                 'Настройки',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                  color: AppColors.textMain,
+                  letterSpacing: 0.4,
                 ),
               ),
             ),
