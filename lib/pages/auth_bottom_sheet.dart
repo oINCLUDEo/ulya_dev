@@ -138,8 +138,10 @@ class _AuthBottomSheetState extends State<_AuthBottomSheet>
     if (!mounted) return;
     setState(() => _step = _AuthStep.success);
     await _successCtrl.forward();
-    await Future<void>.delayed(const Duration(milliseconds: 800));
-    if (mounted) Navigator.pop(context, true);
+    await Future<void>.delayed(const Duration(milliseconds: 1000));
+    if (mounted) {
+      Navigator.pop(context, true);
+    }
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
