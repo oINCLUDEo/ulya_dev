@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -845,23 +846,15 @@ class _NodeTile extends StatelessWidget {
         splashColor: const Color(0xFF6C5CE7).withValues(alpha: 0.1),
         highlightColor: Colors.transparent,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
           child: Row(
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? const Color(0xFF6C5CE7).withValues(alpha: 0.15)
-                      : AppColors.graphiteElevated,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Center(
-                  child: Text(
-                    _countryEmoji(node.countryCode),
-                    style: const TextStyle(fontSize: 22),
-                  ),
+              CountryFlag.fromCountryCode(
+                node.countryCode,
+                theme: ImageTheme(
+                  width: 40,
+                  height: 32,
+                  shape: RoundedRectangle(12),
                 ),
               ),
               const SizedBox(width: 14),
@@ -1025,17 +1018,5 @@ class _NodeTile extends StatelessWidget {
   String _pingLabel(int? p) {
     if (p == null || p < 0) return '—';
     return '${p}ms';
-  }
-
-  String _countryEmoji(String code) {
-    if (code.length != 2) return '🌐';
-    final u = code.toUpperCase();
-    final f = u.codeUnitAt(0);
-    final s = u.codeUnitAt(1);
-    if (f < 0x41 || f > 0x5A || s < 0x41 || s > 0x5A) {
-      return '🌐';
-    }
-    const base = 0x1F1E6 - 0x41;
-    return String.fromCharCode(base + f) + String.fromCharCode(base + s);
   }
 }
