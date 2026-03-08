@@ -22,6 +22,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     with WidgetsBindingObserver {
   bool _loading = false;
   SubscriptionInfo? _trafficInfo;
+  DateTime? _lastRefresh;
 
   @override
   void initState() {
@@ -29,7 +30,13 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     WidgetsBinding.instance.addObserver(this);
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
+
+    _loadCachedMe();
     _refresh();
+  }
+
+  Future<void> _loadCachedMe() async {
+    await MeService.loadFromCache();
   }
 
   @override
@@ -54,28 +61,49 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     if (mounted) setState(() {});
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({bool force = false}) async {
     if (!mounted) return;
+
+    // защита от частых обновлений
+    if (!force &&
+        _lastRefresh != null &&
+        DateTime.now().difference(_lastRefresh!) <
+            const Duration(seconds: 8)) {
+      return;
+    }
+
+    _lastRefresh = DateTime.now();
 
     setState(() => _loading = true);
 
-    // Обновляем данные из MeService
-    await MeService.refresh();
+    try {
+      // обновляем /me (использует TTL cache)
+      await MeService.refresh();
 
-    // Обновляем данные о трафике из RemnawaveService
-    final subUrl = await RemnawaveService.getSubscriptionUrl();
-    if (subUrl.isNotEmpty) {
-      await RemnawaveService.fetchNodes();
-      setState(() {
-        _trafficInfo = RemnawaveService.lastSubscriptionInfo;
-      });
-    } else {
-      setState(() {
-        _trafficInfo = null;
-      });
+      final subUrl = await RemnawaveService.getSubscriptionUrl();
+
+      if (subUrl.isNotEmpty) {
+        await RemnawaveService.fetchNodes();
+
+        if (mounted) {
+          setState(() {
+            _trafficInfo = RemnawaveService.lastSubscriptionInfo;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _trafficInfo = null;
+          });
+        }
+      }
+    } catch (e, st) {
+      debugPrint('SubscriptionPage refresh error: $e\n$st');
     }
 
-    if (mounted) setState(() => _loading = false);
+    if (mounted) {
+      setState(() => _loading = false);
+    }
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
@@ -88,7 +116,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     return Scaffold(
       body: RefreshIndicator(
         color: AppColors.primary,
-        onRefresh: _refresh,
+        onRefresh: () => _refresh(force: true),
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
@@ -164,7 +192,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
             ),
             child: IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _refresh,
+              onPressed: () => _refresh(force: true),
               tooltip: 'Обновить',
             ),
           ),
