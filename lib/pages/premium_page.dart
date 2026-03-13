@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,8 +7,6 @@ import '../models/me_response.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
-import '../theme/app_colors.dart';
-import '../widgets/purple_header.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 
@@ -18,35 +15,31 @@ import 'auth_bottom_sheet.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _DS {
-  // Accent palette
-  static const violet = Color(0xFF7C6FF7);
-  static const violetDim = Color(0xFF5A52C0);
-  static const emerald = Color(0xFF34D399);
-  static const amber = Color(0xFFFBBF24);
-  static const rose = Color(0xFFF87171);
+  static const violet     = Color(0xFF7C6FF7);
+  static const violetDim  = Color(0xFF4A44AA);
+  static const emerald    = Color(0xFF34D399);
+  static const amber      = Color(0xFFFBBF24);
+  static const rose       = Color(0xFFF87171);
+  static const sky        = Color(0xFF38BDF8);
 
-  // Surfaces
   static const surface0 = Color(0xFF0F0F14);
   static const surface1 = Color(0xFF17171F);
   static const surface2 = Color(0xFF1E1E2A);
   static const surface3 = Color(0xFF26263A);
 
-  // Text
-  static const textPrimary = Color(0xFFEEEEF8);
+  static const textPrimary   = Color(0xFFEEEEF8);
   static const textSecondary = Color(0xFF8888AA);
-  static const textMuted = Color(0xFF55556A);
+  static const textMuted     = Color(0xFF55556A);
 
-  // Borders
-  static const border = Color(0xFF2A2A3D);
-  static const borderAccent = Color(0xFF4A44AA);
+  static const border       = Color(0xFF2A2A3D);
 
-  static const radius = 20.0;
+  static const radius   = 20.0;
   static const radiusSm = 12.0;
   static const radiusXs = 8.0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PremiumPage – stateful shell (logic unchanged)
+// PremiumPage
 // ─────────────────────────────────────────────────────────────────────────────
 
 class PremiumPage extends StatefulWidget {
@@ -58,21 +51,21 @@ class PremiumPage extends StatefulWidget {
 
 class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   SubscriptionOptions? _options;
-  CalcResult? _calc;
+  CalcResult?          _calc;
   bool _loadingOptions = false;
-  bool _loadingCalc = false;
-  bool _purchasing = false;
+  bool _loadingCalc    = false;
+  bool _purchasing     = false;
 
   Timer? _pollTimer;
-  int _pollAttempt = 0;
-  bool _pollingForPayment = false;
+  int  _pollAttempt        = 0;
+  bool _pollingForPayment  = false;
   bool _pendingPaymentPoll = false;
-  static const int _maxPollAttempts = 30;
-  static const Duration _pollInterval = Duration(seconds: 4);
+  static const int      _maxPollAttempts = 30;
+  static const Duration _pollInterval    = Duration(seconds: 4);
 
   String? _selectedPeriodId;
-  int? _selectedTraffic;
-  int? _selectedDevices;
+  int?    _selectedTraffic;
+  int?    _selectedDevices;
 
   @override
   void initState() {
@@ -103,10 +96,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   void _startPaymentPolling() {
     if (!mounted) return;
     _pollTimer?.cancel();
-    setState(() {
-      _pollingForPayment = true;
-      _pollAttempt = 0;
-    });
+    setState(() { _pollingForPayment = true; _pollAttempt = 0; });
     _pollTimer = Timer.periodic(_pollInterval, _onPollTick);
   }
 
@@ -114,33 +104,26 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     _pollAttempt++;
     await MeService.refresh();
     if (!mounted) { timer.cancel(); return; }
-
-    final me = meNotifier.value;
-    final sub = me?.subscription;
+    final sub       = meNotifier.value?.subscription;
     final confirmed = sub != null && sub.isActive && !sub.isTrial;
-
     if (confirmed || _pollAttempt >= _maxPollAttempts) {
-      timer.cancel();
-      _pollTimer = null;
+      timer.cancel(); _pollTimer = null;
       if (!mounted) return;
       setState(() => _pollingForPayment = false);
       if (confirmed) {
         await _loadOptions();
-        if (mounted) _showSnackBar('✅ Подписка активирована!', isError: false);
+        if (mounted) _snack('Подписка активирована!', error: false);
       } else {
-        if (mounted) {
-          _showSnackBar('Платёж ещё не подтверждён. Проверьте статус позже.', isError: false);
-        }
+        if (mounted) _snack('Платёж ещё не подтверждён. Проверьте статус позже.', error: false);
       }
     }
   }
 
   void _onAuthChanged() { if (mounted) _loadOptions(); }
-  void _onMeChanged() { if (mounted) setState(() {}); }
+  void _onMeChanged()   { if (mounted) setState(() {}); }
 
   Future<void> _loadOptions() async {
-    final auth = authStateNotifier.value;
-    if (!auth.isLoggedIn) {
+    if (!authStateNotifier.value.isLoggedIn) {
       if (mounted) setState(() => _options = null);
       return;
     }
@@ -153,31 +136,21 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
           if (opts != null && opts.periods.isNotEmpty) {
             _selectedPeriodId ??= opts.periods.first.id;
             if (_selectedTraffic == null) {
-              final period = opts.periods.first;
-              final traffic = period.traffic;
-              if (traffic != null) {
-                _selectedTraffic = traffic.defaultValue ?? traffic.currentValue;
-                if (_selectedTraffic == null && traffic.options.isNotEmpty) {
-                  _selectedTraffic = traffic.options.first.value;
-                }
+              final t = opts.periods.first.traffic;
+              if (t != null) {
+                _selectedTraffic = t.defaultValue ?? t.currentValue ??
+                    (t.options.isNotEmpty ? t.options.first.value : null);
               }
             }
             if (_selectedDevices == null) {
-              final period = opts.periods.first;
-              final devices = period.devices;
-              if (devices != null) {
-                _selectedDevices = devices.defaultValue ?? devices.currentValue ?? devices.minimum;
-              } else {
-                _selectedDevices = 1;
-              }
+              final d = opts.periods.first.devices;
+              _selectedDevices = d?.defaultValue ?? d?.currentValue ?? d?.minimum ?? 1;
             }
           }
         });
         await _recalcPrice();
       }
-    } catch (e) {
-      debugPrint('PremiumPage._loadOptions error: $e');
-    }
+    } catch (e) { debugPrint('PremiumPage._loadOptions: $e'); }
     if (mounted) setState(() => _loadingOptions = false);
   }
 
@@ -186,101 +159,59 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     if (periodId == null) return;
     if (mounted) setState(() => _loadingCalc = true);
     try {
-      final result = await SubscriptionApiService.calcPrice(
-        periodId: periodId,
-        trafficValue: _selectedTraffic,
-        devices: _selectedDevices,
-      );
-      if (mounted) setState(() => _calc = result);
-    } catch (e) {
-      debugPrint('PremiumPage._recalcPrice error: $e');
-    }
+      final r = await SubscriptionApiService.calcPrice(
+          periodId: periodId, trafficValue: _selectedTraffic, devices: _selectedDevices);
+      if (mounted) setState(() => _calc = r);
+    } catch (e) { debugPrint('PremiumPage._recalcPrice: $e'); }
     if (mounted) setState(() => _loadingCalc = false);
   }
 
-  void _onPeriodSelected(String periodId) {
-    if (_selectedPeriodId == periodId) return;
-    final opts = _options;
-    if (opts == null) return;
+  void _onPeriodSelected(String id) {
+    if (_selectedPeriodId == id) return;
+    final opts = _options; if (opts == null) return;
     setState(() {
-      _selectedPeriodId = periodId;
-      final period = opts.periods.firstWhere((p) => p.id == periodId, orElse: () => opts.periods.first);
-      final traffic = period.traffic;
-      if (traffic != null && traffic.options.isNotEmpty) {
-        final defaultOpt = traffic.options.where((o) => o.isDefault).firstOrNull ?? traffic.options.first;
-        _selectedTraffic = defaultOpt.value;
+      _selectedPeriodId = id;
+      final period = opts.periods.firstWhere((p) => p.id == id, orElse: () => opts.periods.first);
+      final t = period.traffic;
+      if (t != null && t.options.isNotEmpty) {
+        final def = t.options.where((o) => o.isDefault).firstOrNull ?? t.options.first;
+        _selectedTraffic = def.value;
       }
-      final devices = period.devices;
-      if (devices != null) {
-        _selectedDevices = devices.defaultValue ?? devices.minimum;
-      }
+      final d = period.devices;
+      if (d != null) _selectedDevices = d.defaultValue ?? d.minimum;
     });
     _recalcPrice();
   }
 
-  void _onTrafficSelected(int value) {
-    if (_selectedTraffic == value) return;
-    setState(() => _selectedTraffic = value);
-    _recalcPrice();
-  }
-
-  void _onDevicesSelected(int value) {
-    if (_selectedDevices == value) return;
-    setState(() => _selectedDevices = value);
-    _recalcPrice();
-  }
+  void _onTrafficSelected(int v) { if (_selectedTraffic == v) return; setState(() => _selectedTraffic = v); _recalcPrice(); }
+  void _onDevicesSelected(int v) { if (_selectedDevices == v) return; setState(() => _selectedDevices = v); _recalcPrice(); }
 
   Future<void> _onBuyPressed() async {
-    final periodId = _selectedPeriodId;
-    if (periodId == null) return;
+    final periodId = _selectedPeriodId; if (periodId == null) return;
     setState(() => _purchasing = true);
     try {
-      final result = await SubscriptionApiService.buySubscription(
-        periodId: periodId,
-        trafficValue: _selectedTraffic,
-        devices: _selectedDevices,
-      );
+      final r = await SubscriptionApiService.buySubscription(
+          periodId: periodId, trafficValue: _selectedTraffic, devices: _selectedDevices);
       if (!mounted) return;
-      if (result == null) {
-        _showSnackBar('Ошибка соединения с сервером', isError: true);
-      } else if (result.isSuccess) {
-        _showSnackBar('✅ Подписка активирована!', isError: false);
-        await MeService.refresh();
-        await _loadOptions();
-      } else if (result.requiresPayment && result.paymentUrl != null) {
-        await _openPaymentUrl(result.paymentUrl!);
-      } else {
-        _showSnackBar(result.message ?? 'Ошибка при покупке', isError: true);
-      }
-    } catch (e) {
-      if (mounted) _showSnackBar('Ошибка: $e', isError: true);
-    }
+      if (r == null)                          { _snack('Ошибка соединения с сервером', error: true); }
+      else if (r.isSuccess)                   { _snack('Подписка активирована!', error: false); await MeService.refresh(); await _loadOptions(); }
+      else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
+      else                                    { _snack(r.message ?? 'Ошибка при покупке', error: true); }
+    } catch (e) { if (mounted) _snack('Ошибка: $e', error: true); }
     if (mounted) setState(() => _purchasing = false);
   }
 
   Future<void> _onUpgradePressed(String periodId, {int? trafficAdd, int? devicesAdd}) async {
     setState(() => _purchasing = true);
     try {
-      final result = await SubscriptionApiService.upgradeSubscription(
-        periodId: periodId,
-        trafficAdd: trafficAdd,
-        devicesAdd: devicesAdd,
-      );
+      final r = await SubscriptionApiService.upgradeSubscription(
+          periodId: periodId, trafficAdd: trafficAdd, devicesAdd: devicesAdd);
       if (!mounted) return;
-      if (result == null) {
-        _showSnackBar('Ошибка соединения с сервером', isError: true);
-      } else if (result.isSuccess) {
-        _showSnackBar('✅ Подписка улучшена!', isError: false);
-        await MeService.refresh();
-        await _loadOptions();
-      } else if (result.requiresPayment && result.paymentUrl != null) {
-        await _openPaymentUrl(result.paymentUrl!);
-      } else {
-        _showSnackBar(result.message ?? 'Ошибка при улучшении', isError: true);
-      }
-    } catch (e) {
-      if (mounted) _showSnackBar('Ошибка: $e', isError: true);
-    }
+      if (r == null)                          { _snack('Ошибка соединения с сервером', error: true); }
+      else if (r.isSuccess)                   { _snack('Подписка улучшена!', error: false); await MeService.refresh(); await _loadOptions(); }
+      else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
+      else                                    { _snack(r.message ?? 'Ошибка при улучшении', error: true); }
+    } catch (e) { if (mounted) _snack('Ошибка: $e', error: true); }
     if (mounted) setState(() => _purchasing = false);
   }
 
@@ -289,129 +220,101 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
       final uri = Uri.parse(url);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (mounted) {
-          _showSnackBar('Страница оплаты открыта. После оплаты вернитесь в приложение.', isError: false);
-          _pendingPaymentPoll = true;
-        }
-      } else {
-        if (mounted) _showSnackBar('Не удалось открыть страницу оплаты', isError: true);
-      }
-    } catch (e) {
-      if (mounted) _showSnackBar('Ошибка при открытии оплаты', isError: true);
-    }
+        if (mounted) { _snack('Страница оплаты открыта. После оплаты вернитесь в приложение.', error: false); _pendingPaymentPoll = true; }
+      } else { if (mounted) _snack('Не удалось открыть страницу оплаты', error: true); }
+    } catch (_) { if (mounted) _snack('Ошибка при открытии оплаты', error: true); }
   }
 
-  void _showSnackBar(String msg, {required bool isError}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
-        backgroundColor: isError ? _DS.rose : _DS.emerald,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_DS.radiusSm)),
-        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      ),
-    );
+  void _snack(String msg, {required bool error}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+      backgroundColor: error ? _DS.rose : _DS.emerald,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_DS.radiusSm)),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    ));
   }
-
-  // ─── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final auth = authStateNotifier.value;
-    final me = meNotifier.value;
-    final sub = me?.subscription;
+    final auth             = authStateNotifier.value;
+    final sub              = meNotifier.value?.subscription;
     final hasActivePaidSub = sub != null && sub.isActive && !sub.isTrial;
-    final isNewUser = !auth.isLoggedIn || (sub == null && !hasActivePaidSub);
 
     return Scaffold(
       backgroundColor: _DS.surface0,
       body: RefreshIndicator(
-        color: _DS.violet,
-        backgroundColor: _DS.surface2,
+        color: _DS.violet, backgroundColor: _DS.surface2,
         onRefresh: _loadOptions,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            // ── Header ──────────────────────────────────────────────────────
-            SliverToBoxAdapter(
-              child: _PremiumHeader(hasActiveSub: hasActivePaidSub),
-            ),
-
-            // ── Body ────────────────────────────────────────────────────────
+            SliverToBoxAdapter(child: _Header(hasActiveSub: hasActivePaidSub)),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 120),
-              sliver: SliverList(
-                delegate: SliverChildListDelegate([
-                  if (!auth.isLoggedIn) ...[
-                    _BenefitsSection(),
-                    const SizedBox(height: 16),
-                    _NotLoggedInCard(onLoginTap: () => showAuthBottomSheet(context)),
-                  ] else if (_pollingForPayment) ...[
-                    const SizedBox(height: 32),
-                    const _PaymentPollingCard(),
-                  ] else if (_loadingOptions && _options == null) ...[
-                    const SizedBox(height: 100),
-                    const Center(child: _LoadingIndicator()),
-                  ] else if (_options != null) ...[
-                    // Balance
-                    _BalanceCard(
-                      balanceRub: _options!.balanceRub,
-                      currency: _options!.currency,
+              sliver: SliverList(delegate: SliverChildListDelegate([
+
+                if (!auth.isLoggedIn) ...[
+                  _BenefitsGrid(),
+                  const SizedBox(height: 16),
+                  _NotLoggedInCard(onLoginTap: () => showAuthBottomSheet(context)),
+
+                ] else if (_pollingForPayment) ...[
+                  const SizedBox(height: 40),
+                  const _PaymentPollingCard(),
+
+                ] else if (_loadingOptions && _options == null) ...[
+                  const SizedBox(height: 120),
+                  const Center(child: CircularProgressIndicator(color: _DS.violet, strokeWidth: 2.5)),
+
+                ] else if (_options != null) ...[
+                  _BalanceCard(balanceRub: _options!.balanceRub, currency: _options!.currency),
+                  const SizedBox(height: 20),
+
+                  if (hasActivePaidSub) ...[
+                    _UpgradeSection(
+                      sub: sub,
+                      options: _options!,
+                      onUpgrade: _onUpgradePressed,
+                      loading: _purchasing,
+                    ),
+                  ] else ...[
+                    if (sub == null || sub.isTrial) ...[
+                      _BenefitsGrid(),
+                      const SizedBox(height: 20),
+                    ],
+                    _SectionLabel(sub?.isTrial == true ? 'Переход на платную подписку' : 'Настройте тариф'),
+                    const SizedBox(height: 12),
+                    _SubscriptionBuilderCard(
+                      options: _options!,
+                      selectedPeriodId: _selectedPeriodId,
+                      selectedTraffic: _selectedTraffic,
+                      selectedDevices: _selectedDevices,
+                      onPeriodSelected: _onPeriodSelected,
+                      onTrafficSelected: _onTrafficSelected,
+                      onDevicesSelected: _onDevicesSelected,
                     ),
                     const SizedBox(height: 12),
-
-                    if (hasActivePaidSub) ...[
-                      _SectionLabel('Продлить подписку'),
-                      const SizedBox(height: 8),
-                      _UpgradeDiffCard(
-                        sub: sub,
-                        options: _options!,
-                        onUpgrade: _onUpgradePressed,
-                        loading: _purchasing,
-                      ),
-                    ] else ...[
-                      if (isNewUser) ...[
-                        _BenefitsSection(),
-                        const SizedBox(height: 16),
-                      ],
-                      _SectionLabel(
-                        sub?.isTrial == true
-                            ? 'Перейти на платную подписку'
-                            : 'Настройте подписку',
-                      ),
-                      const SizedBox(height: 8),
-                      _SubscriptionBuilderCard(
-                        options: _options!,
-                        selectedPeriodId: _selectedPeriodId,
-                        selectedTraffic: _selectedTraffic,
-                        selectedDevices: _selectedDevices,
-                        onPeriodSelected: _onPeriodSelected,
-                        onTrafficSelected: _onTrafficSelected,
-                        onDevicesSelected: _onDevicesSelected,
-                      ),
-                      const SizedBox(height: 12),
-
-                      _PricePreviewCard(
-                        calc: _calc,
-                        loading: _loadingCalc,
-                        balanceKopeks: _options!.balanceKopeks,
-                      ),
-                      const SizedBox(height: 16),
-
-                      _BuyButton(
+                    _PricePreviewCard(
+                        calc: _calc, loading: _loadingCalc,
+                        balanceKopeks: _options!.balanceKopeks),
+                    const SizedBox(height: 14),
+                    _BuyButton(
                         loading: _purchasing || _loadingCalc,
                         onPressed: _onBuyPressed,
                         totalKopeks: _calc?.totalKopeks,
-                        hasEnoughBalance: _options!.balanceKopeks >= (_calc?.totalKopeks ?? 0),
-                      ),
-                      const SizedBox(height: 10),
-                      const _PaymentDisclaimer(),
-                    ],
-                  ] else ...[
-                    _ErrorCard(onRetry: _loadOptions),
+                        hasEnoughBalance: _options!.balanceKopeks >= (_calc?.totalKopeks ?? 0)),
+                    const SizedBox(height: 10),
+                    const _PaymentDisclaimer(),
                   ],
-                ]),
-              ),
+
+                ] else ...[
+                  const SizedBox(height: 60),
+                  _ErrorCard(onRetry: _loadOptions),
+                ],
+
+              ])),
             ),
           ],
         ),
@@ -424,71 +327,42 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
 // Header
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _PremiumHeader extends StatelessWidget {
+class _Header extends StatelessWidget {
   final bool hasActiveSub;
-  const _PremiumHeader({required this.hasActiveSub});
+  const _Header({required this.hasActiveSub});
 
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.of(context).padding.top;
     return Padding(
       padding: EdgeInsets.fromLTRB(20, top + 20, 20, 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Премиум',
-                  style: TextStyle(
-                    color: _DS.textPrimary,
-                    fontSize: 32,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                    height: 1,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  hasActiveSub ? 'Управление подпиской' : 'Выберите тариф',
-                  style: const TextStyle(color: _DS.textSecondary, fontSize: 15),
-                ),
-              ],
-            ),
-          ),
-          // Premium badge pill
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Премиум', style: TextStyle(
+              color: _DS.textPrimary, fontSize: 32,
+              fontWeight: FontWeight.w800, letterSpacing: -0.5, height: 1)),
+          const SizedBox(height: 6),
+          Text(hasActiveSub ? 'Управление подпиской' : 'Выберите тариф',
+              style: const TextStyle(color: _DS.textSecondary, fontSize: 15)),
+        ])),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [Color(0xFF7C6FF7), Color(0xFF4A44AA)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+                  colors: [_DS.violet, _DS.violetDim],
+                  begin: Alignment.topLeft, end: Alignment.bottomRight),
               borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
+              boxShadow: [BoxShadow(
                   color: _DS.violet.withValues(alpha: 0.3),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.workspace_premium_rounded, color: Colors.white, size: 14),
-                SizedBox(width: 5),
-                Text('PRO', style: TextStyle(
-                  color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1,
-                )),
-              ],
-            ),
-          ),
-        ],
-      ),
+                  blurRadius: 12, offset: const Offset(0, 4))]),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.workspace_premium_rounded, color: Colors.white, size: 14),
+            SizedBox(width: 5),
+            Text('PRO', style: TextStyle(color: Colors.white, fontSize: 12,
+                fontWeight: FontWeight.w800, letterSpacing: 1)),
+          ]),
+        ),
+      ]),
     );
   }
 }
@@ -502,83 +376,96 @@ class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.text);
 
   @override
-  Widget build(BuildContext context) => Text(
-    text.toUpperCase(),
-    style: const TextStyle(
-      color: _DS.textMuted,
-      fontSize: 11,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 1.2,
-    ),
-  );
+  Widget build(BuildContext context) => Text(text.toUpperCase(),
+      style: const TextStyle(color: _DS.textMuted, fontSize: 11,
+          fontWeight: FontWeight.w700, letterSpacing: 1.2));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Benefits
+// Benefits 2x2 grid
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _BenefitsSection extends StatelessWidget {
+class _BenefitsGrid extends StatelessWidget {
   static const _items = [
-    (Icons.bolt_rounded, 'Высокая скорость', 'Без ограничений пропускной способности'),
-    (Icons.shield_rounded, 'Шифрование', 'Военный уровень защиты трафика'),
-    (Icons.devices_rounded, 'Мультиустройство', 'Подключайте несколько гаджетов'),
-    (Icons.public_rounded, 'Без блокировок', 'Доступ к любым ресурсам'),
+    (_DS.violet,  Icons.bolt_rounded,    'Высокая скорость',    'Без ограничений пропускной способности'),
+    (_DS.emerald, Icons.shield_rounded,  'Шифрование',          'Военный уровень защиты трафика'),
+    (_DS.sky,     Icons.devices_rounded, 'Мультиустройство',    'Несколько гаджетов одновременно'),
+    (_DS.amber,   Icons.public_rounded,  'Без блокировок',      'Полный доступ к любым ресурсам'),
   ];
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const _SectionLabel('Возможности'),
-        const SizedBox(height: 10),
-        _GlassCard(
-          child: Column(
-            children: List.generate(_items.length, (i) {
-              final item = _items[i];
-              return Column(
-                children: [
-                  if (i > 0) const Divider(color: _DS.border, height: 1),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: _DS.violet.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Icon(item.$1, color: _DS.violet, size: 20),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(item.$2, style: const TextStyle(
-                                color: _DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w600,
-                              )),
-                              const SizedBox(height: 2),
-                              Text(item.$3, style: const TextStyle(
-                                color: _DS.textSecondary, fontSize: 12,
-                              )),
-                            ],
-                          ),
-                        ),
-                        const Icon(Icons.check_circle_rounded, color: _DS.emerald, size: 18),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            }),
-          ),
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => Column(children: [
+    IntrinsicHeight( // ← Заставляет все дочерние элементы в Row быть одинаковой высоты
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch, // ← Растягиваем по высоте
+        children: [
+          Expanded(child: _FeatureCard(
+            color: _items[0].$1,
+            icon: _items[0].$2,
+            title: _items[0].$3,
+            subtitle: _items[0].$4,
+          )),
+          const SizedBox(width: 10),
+          Expanded(child: _FeatureCard(
+            color: _items[1].$1,
+            icon: _items[1].$2,
+            title: _items[1].$3,
+            subtitle: _items[1].$4,
+          )),
+        ],
+      ),
+    ),
+    const SizedBox(height: 10),
+    IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: _FeatureCard(
+            color: _items[2].$1,
+            icon: _items[2].$2,
+            title: _items[2].$3,
+            subtitle: _items[2].$4,
+          )),
+          const SizedBox(width: 10),
+          Expanded(child: _FeatureCard(
+            color: _items[3].$1,
+            icon: _items[3].$2,
+            title: _items[3].$3,
+            subtitle: _items[3].$4,
+          )),
+        ],
+      ),
+    ),
+  ]);
+}
+
+class _FeatureCard extends StatelessWidget {
+  final Color color; final IconData icon;
+  final String title; final String subtitle;
+  const _FeatureCard({required this.color, required this.icon,
+    required this.title, required this.subtitle});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+        color: _DS.surface1,
+        borderRadius: BorderRadius.circular(_DS.radiusSm),
+        border: Border.all(color: _DS.border)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(width: 36, height: 36,
+          decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(9)),
+          child: Icon(icon, color: color, size: 18)),
+      const SizedBox(height: 10),
+      Text(title, style: const TextStyle(
+          color: _DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 3),
+      Text(subtitle, style: const TextStyle(
+          color: _DS.textSecondary, fontSize: 11, height: 1.4)),
+    ]),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -590,33 +477,21 @@ class _NotLoggedInCard extends StatelessWidget {
   const _NotLoggedInCard({required this.onLoginTap});
 
   @override
-  Widget build(BuildContext context) {
-    return _GlassCard(
-      child: Column(
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: _DS.violet.withValues(alpha: 0.12),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.lock_outline_rounded, color: _DS.violet, size: 30),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Войдите, чтобы\nувидеть тарифы',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w700, height: 1.3,
-            ),
-          ),
-          const SizedBox(height: 16),
-          TelegramLoginButton(onTap: onLoginTap),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => _Card(child: Column(children: [
+    Container(width: 64, height: 64,
+        decoration: BoxDecoration(
+            color: _DS.violet.withValues(alpha: 0.12), shape: BoxShape.circle),
+        child: const Icon(Icons.lock_outline_rounded, color: _DS.violet, size: 30)),
+    const SizedBox(height: 16),
+    const Text('Войдите, чтобы увидеть тарифы', textAlign: TextAlign.center,
+        style: TextStyle(color: _DS.textPrimary, fontSize: 18,
+            fontWeight: FontWeight.w700, height: 1.3)),
+    const SizedBox(height: 6),
+    const Text('Тарифы и цены доступны после авторизации', textAlign: TextAlign.center,
+        style: TextStyle(color: _DS.textSecondary, fontSize: 13)),
+    const SizedBox(height: 20),
+    TelegramLoginButton(onTap: onLoginTap),
+  ]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -624,56 +499,40 @@ class _NotLoggedInCard extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _BalanceCard extends StatelessWidget {
-  final double balanceRub;
-  final String currency;
+  final double balanceRub; final String currency;
   const _BalanceCard({required this.balanceRub, required this.currency});
 
   @override
-  Widget build(BuildContext context) {
-    return _GlassCard(
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+    decoration: BoxDecoration(
+        color: _DS.surface1,
+        borderRadius: BorderRadius.circular(_DS.radiusSm),
+        border: Border.all(color: _DS.border)),
+    child: Row(children: [
+      Container(width: 42, height: 42,
+          decoration: BoxDecoration(
               color: _DS.emerald.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.account_balance_wallet_rounded, color: _DS.emerald, size: 22),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Баланс счёта', style: TextStyle(color: _DS.textSecondary, fontSize: 12)),
-                const SizedBox(height: 2),
-                Text(
-                  '${balanceRub.toStringAsFixed(2)} $currency',
-                  style: const TextStyle(
-                    color: _DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(11)),
+          child: const Icon(Icons.account_balance_wallet_rounded, color: _DS.emerald, size: 20)),
+      const SizedBox(width: 14),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('БАЛАНС СЧЁТА', style: TextStyle(color: _DS.textMuted, fontSize: 10,
+            letterSpacing: 0.8, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 2),
+        Text('${balanceRub.toStringAsFixed(2)} $currency',
+            style: const TextStyle(color: _DS.textPrimary, fontSize: 22, fontWeight: FontWeight.w700)),
+      ])),
+      Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
               color: _DS.emerald.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: _DS.emerald.withValues(alpha: 0.25)),
-            ),
-            child: const Text(
-              'Активен',
-              style: TextStyle(color: _DS.emerald, fontSize: 12, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _DS.emerald.withValues(alpha: 0.3))),
+          child: const Text('Активен', style: TextStyle(
+              color: _DS.emerald, fontSize: 11, fontWeight: FontWeight.w600))),
+    ]),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -683,303 +542,299 @@ class _BalanceCard extends StatelessWidget {
 class _SubscriptionBuilderCard extends StatelessWidget {
   final SubscriptionOptions options;
   final String? selectedPeriodId;
-  final int? selectedTraffic;
-  final int? selectedDevices;
+  final int?    selectedTraffic;
+  final int?    selectedDevices;
   final ValueChanged<String> onPeriodSelected;
-  final ValueChanged<int> onTrafficSelected;
-  final ValueChanged<int> onDevicesSelected;
+  final ValueChanged<int>    onTrafficSelected;
+  final ValueChanged<int>    onDevicesSelected;
 
   const _SubscriptionBuilderCard({
-    required this.options,
-    required this.selectedPeriodId,
-    required this.selectedTraffic,
-    required this.selectedDevices,
-    required this.onPeriodSelected,
-    required this.onTrafficSelected,
+    required this.options, required this.selectedPeriodId,
+    required this.selectedTraffic, required this.selectedDevices,
+    required this.onPeriodSelected, required this.onTrafficSelected,
     required this.onDevicesSelected,
   });
 
   @override
   Widget build(BuildContext context) {
-    final selectedPeriod = options.periods.firstWhere(
-          (p) => p.id == selectedPeriodId,
-      orElse: () => options.periods.first,
-    );
-    final hasTraffic = selectedPeriod.traffic?.selectable == true &&
-        (selectedPeriod.traffic?.options.isNotEmpty ?? false);
-    final hasDevices =
-        selectedPeriod.devices != null && selectedPeriod.devices!.options.length > 1;
+    final period     = options.periods.firstWhere(
+            (p) => p.id == selectedPeriodId, orElse: () => options.periods.first);
+    final hasTraffic = period.traffic?.selectable == true &&
+        (period.traffic?.options.isNotEmpty ?? false);
+    final hasDevices = period.devices != null &&
+        (period.devices!.options.length > 1);
 
-    return _GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Duration
-          _BuilderRow(
-            icon: Icons.calendar_month_rounded,
-            label: 'Срок подписки',
-          ),
+    return _Card(padding: EdgeInsets.zero, child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+      // Period
+      Padding(padding: const EdgeInsets.fromLTRB(18, 18, 18, 16), child:
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _RowLabel(icon: Icons.calendar_month_rounded, label: 'Срок подписки'),
+        const SizedBox(height: 12),
+        _PeriodList(
+            options: options, selectedPeriodId: selectedPeriodId,
+            onSelected: onPeriodSelected),
+      ])),
+
+      // Traffic
+      if (hasTraffic) ...[
+        const Divider(height: 1, color: _DS.border),
+        Padding(padding: const EdgeInsets.fromLTRB(18, 14, 18, 14), child:
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _RowLabel(icon: Icons.data_usage_rounded, label: 'Трафик'),
           const SizedBox(height: 10),
-          _PeriodGrid(
-            options: options,
-            selectedPeriodId: selectedPeriodId,
-            onSelected: onPeriodSelected,
-          ),
-
-          // Traffic
-          if (hasTraffic) ...[
-            const SizedBox(height: 20),
-            const Divider(color: _DS.border, height: 1),
-            const SizedBox(height: 20),
-            _BuilderRow(icon: Icons.data_usage_rounded, label: 'Трафик'),
-            const SizedBox(height: 10),
-            _ChipRow<int>(
-              options: selectedPeriod.traffic!.options.map((t) => _Chip<int>(
+          _OptionChips<int>(
+              options: period.traffic!.options.map((t) => _OItem<int>(
                 value: t.value,
-                label: t.value == 0 ? '∞' : '${t.value} ГБ',
+                label: t.value == 0 ? '∞ ГБ' : '${t.value} ГБ',
+                hot: t.isDefault,
               )).toList(),
               selected: selectedTraffic,
               onSelected: onTrafficSelected,
-            ),
-          ],
+              accent: _DS.sky),
+        ])),
+      ],
 
-          // Devices
-          if (hasDevices) ...[
-            const SizedBox(height: 20),
-            const Divider(color: _DS.border, height: 1),
-            const SizedBox(height: 20),
-            _BuilderRow(icon: Icons.devices_rounded, label: 'Устройства'),
-            const SizedBox(height: 10),
-            _ChipRow<int>(
-              options: selectedPeriod.devices!.options
-                  .map((d) => _Chip<int>(value: d, label: '$d'))
-                  .toList(),
+      // Devices
+      if (hasDevices) ...[
+        const Divider(height: 1, color: _DS.border),
+        Padding(padding: const EdgeInsets.fromLTRB(18, 14, 18, 14), child:
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _RowLabel(icon: Icons.devices_rounded, label: 'Устройства'),
+          const SizedBox(height: 10),
+          _OptionChips<int>(
+              options: period.devices!.options.map((d) => _OItem<int>(
+                value: d, label: '$d',
+                hot: d == (period.devices!.defaultValue ?? period.devices!.minimum),
+              )).toList(),
               selected: selectedDevices,
               onSelected: onDevicesSelected,
-            ),
-          ],
-        ],
-      ),
-    );
+              accent: _DS.violet),
+        ])),
+      ],
+    ]));
   }
 }
 
-class _BuilderRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  const _BuilderRow({required this.icon, required this.label});
+class _RowLabel extends StatelessWidget {
+  final IconData icon; final String label;
+  const _RowLabel({required this.icon, required this.label});
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Icon(icon, size: 15, color: _DS.textSecondary),
-      const SizedBox(width: 6),
-      Text(label, style: const TextStyle(
-        color: _DS.textSecondary, fontSize: 13, fontWeight: FontWeight.w500,
-      )),
-    ],
-  );
+  Widget build(BuildContext context) => Row(children: [
+    Icon(icon, size: 14, color: _DS.textSecondary),
+    const SizedBox(width: 6),
+    Text(label, style: const TextStyle(
+        color: _DS.textSecondary, fontSize: 13, fontWeight: FontWeight.w600)),
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Period grid (plan cards)
+// Period list (radio rows)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _PeriodGrid extends StatelessWidget {
+class _PeriodList extends StatelessWidget {
   final SubscriptionOptions options;
   final String? selectedPeriodId;
   final ValueChanged<String> onSelected;
+  const _PeriodList({required this.options, required this.selectedPeriodId, required this.onSelected});
 
-  const _PeriodGrid({
-    required this.options,
-    required this.selectedPeriodId,
-    required this.onSelected,
-  });
-
-  String? _bestValueId() {
+  String? _bestId() {
     PeriodOption? best;
     for (final p in options.periods) {
-      if (p.discountPercent > 0 && (best == null || p.discountPercent > best.discountPercent)) {
-        best = p;
-      }
+      if (p.discountPercent > 0 &&
+          (best == null || p.discountPercent > best.discountPercent)) best = p;
     }
     return best?.id;
   }
 
   @override
   Widget build(BuildContext context) {
-    final periods = options.periods;
-    final bestId = _bestValueId();
-    const minW = 80.0;
-    final available = MediaQuery.of(context).size.width - 64;
-    final cardW = periods.isEmpty
-        ? minW
-        : ((available - (periods.length - 1) * 8) / periods.length).clamp(minW, 160.0);
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (int i = 0; i < periods.length; i++) ...[
-              if (i > 0) const SizedBox(width: 8),
-              SizedBox(
-                width: cardW,
-                child: _PlanCard(
-                  period: periods[i],
-                  isSelected: periods[i].id == selectedPeriodId,
-                  isBestValue: periods[i].id == bestId,
-                  onTap: () => onSelected(periods[i].id),
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
+    final bestId = _bestId();
+    return Column(children: [
+      for (int i = 0; i < options.periods.length; i++) ...[
+        if (i > 0) const SizedBox(height: 8),
+        _PeriodRow(
+            period: options.periods[i],
+            isSelected: options.periods[i].id == selectedPeriodId,
+            isBest: options.periods[i].id == bestId,
+            onTap: () => onSelected(options.periods[i].id)),
+      ],
+    ]);
   }
 }
 
-class _PlanCard extends StatelessWidget {
+class _PeriodRow extends StatelessWidget {
   final PeriodOption period;
-  final bool isSelected;
-  final bool isBestValue;
+  final bool isSelected; final bool isBest;
   final VoidCallback onTap;
-
-  const _PlanCard({
-    required this.period,
-    required this.isSelected,
-    required this.isBestValue,
-    required this.onTap,
-  });
+  const _PeriodRow({required this.period, required this.isSelected,
+    required this.isBest, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final priceRub = period.basePriceKopeks / 100;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
-          color: isSelected ? _DS.violet.withValues(alpha: 0.15) : _DS.surface2,
-          borderRadius: BorderRadius.circular(_DS.radiusSm),
-          border: Border.all(
-            color: isSelected ? _DS.violet : _DS.border,
-            width: isSelected ? 1.5 : 1,
-          ),
-          boxShadow: isSelected
-              ? [BoxShadow(color: _DS.violet.withValues(alpha: 0.3), blurRadius: 20, spreadRadius: -6)]
-              : null,
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Best badge placeholder
-            if (isBestValue)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: _DS.emerald.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: _DS.emerald.withValues(alpha: 0.35)),
-                ),
-                child: const Text('Выгодно', style: TextStyle(
-                  color: _DS.emerald, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.3,
-                )),
-              )
-            else
-              const SizedBox(height: 22),
-
-            Text(
-              period.label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: isSelected ? Colors.white : _DS.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${(period.basePriceKopeks / 100).toStringAsFixed(0)} ₽',
-              style: TextStyle(
-                color: isSelected ? _DS.violet : _DS.textSecondary,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            color: isSelected ? _DS.violet.withValues(alpha: 0.12) : _DS.surface2,
+            borderRadius: BorderRadius.circular(_DS.radiusSm),
+            border: Border.all(
+                color: isSelected ? _DS.violet : _DS.border,
+                width: isSelected ? 1.5 : 1),
+            boxShadow: isSelected
+                ? [BoxShadow(color: _DS.violet.withValues(alpha: 0.18),
+                blurRadius: 16, spreadRadius: -4)]
+                : null),
+        child: Row(children: [
+          // Radio dot
+          AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 20, height: 20,
+              decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: isSelected ? _DS.violet : _DS.border,
+                      width: isSelected ? 5.5 : 2),
+                  color: isSelected ? _DS.surface0 : Colors.transparent)),
+          const SizedBox(width: 14),
+          // Label + discount
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Text(period.label, style: TextStyle(
+                  color: isSelected ? _DS.textPrimary : _DS.textSecondary,
+                  fontSize: 15, fontWeight: FontWeight.w600)),
+              if (isBest) ...[
+                const SizedBox(width: 8),
+                Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                        color: _DS.emerald.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: _DS.emerald.withValues(alpha: 0.35))),
+                    child: const Text('Выгодно', style: TextStyle(
+                        color: _DS.emerald, fontSize: 9,
+                        fontWeight: FontWeight.w700, letterSpacing: 0.3))),
+              ],
+            ]),
             if (period.discountPercent > 0) ...[
-              const SizedBox(height: 5),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _DS.amber.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '−${period.discountPercent}%',
-                  style: const TextStyle(color: _DS.amber, fontSize: 10, fontWeight: FontWeight.w700),
-                ),
-              ),
+              const SizedBox(height: 2),
+              Text('Скидка ${period.discountPercent}%',
+                  style: const TextStyle(color: _DS.amber, fontSize: 11, fontWeight: FontWeight.w500)),
             ],
-          ],
-        ),
+          ])),
+          // Price
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('${priceRub.toStringAsFixed(0)} ₽', style: TextStyle(
+                color: isSelected ? _DS.violet : _DS.textPrimary,
+                fontSize: 17, fontWeight: FontWeight.w800)),
+            if (period.discountPercent > 0) ...[
+              const SizedBox(height: 1),
+              Text(
+                  '${(priceRub / (1 - period.discountPercent / 100)).toStringAsFixed(0)} ₽',
+                  style: const TextStyle(color: _DS.textMuted, fontSize: 11,
+                      decoration: TextDecoration.lineThrough)),
+            ],
+          ]),
+        ]),
       ),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Generic chip row
+// Option chips (traffic / devices)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _Chip<T> {
+class _OItem<T> {
   final T value;
   final String label;
-  const _Chip({required this.value, required this.label});
+  final bool hot;
+  const _OItem({required this.value, required this.label, this.hot = false});
 }
 
-class _ChipRow<T> extends StatelessWidget {
-  final List<_Chip<T>> options;
-  final T? selected;
+/// Horizontal scrolling pill-selector — single row, no wrapping, no height variance.
+/// The "hot" item gets a subtle accent dot above, but the pill height is identical.
+class _OptionChips<T> extends StatelessWidget {
+  final List<_OItem<T>> options;
+  final T?    selected;
   final ValueChanged<T> onSelected;
+  final Color accent;
 
-  const _ChipRow({required this.options, required this.selected, required this.onSelected});
+  const _OptionChips({
+    required this.options,
+    required this.selected,
+    required this.onSelected,
+    required this.accent,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: options.map((opt) {
-        final isSel = opt.value == selected;
-        return GestureDetector(
-          onTap: () => onSelected(opt.value),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: isSel ? _DS.violet.withValues(alpha: 0.18) : _DS.surface3,
-              borderRadius: BorderRadius.circular(_DS.radiusXs),
-              border: Border.all(
-                color: isSel ? _DS.violet : _DS.border,
-                width: isSel ? 1.5 : 1,
+    return SizedBox(
+      height: 42,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.zero,
+        itemCount: options.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final opt   = options[i];
+          final isSel = opt.value == selected;
+
+          return GestureDetector(
+            onTap: () => onSelected(opt.value),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              decoration: BoxDecoration(
+                color: isSel ? accent.withValues(alpha: 0.16) : _DS.surface2,
+                borderRadius: BorderRadius.circular(21),
+                border: Border.all(
+                  color: isSel ? accent : _DS.border,
+                  width: isSel ? 1.5 : 1,
+                ),
+                boxShadow: isSel
+                    ? [BoxShadow(
+                  color: accent.withValues(alpha: 0.22),
+                  blurRadius: 10,
+                  spreadRadius: -3,
+                )]
+                    : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (opt.hot && !isSel)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 5),
+                      child: Container(
+                        width: 5, height: 5,
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.7),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  Text(
+                    opt.label,
+                    style: TextStyle(
+                      color: isSel ? accent : _DS.textPrimary,
+                      fontSize: 13,
+                      fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                ],
               ),
             ),
-            child: Text(
-              opt.label,
-              style: TextStyle(
-                color: isSel ? _DS.violet : _DS.textPrimary,
-                fontSize: 14,
-                fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-          ),
-        );
-      }).toList(),
+          );
+        },
+      ),
     );
   }
 }
@@ -989,105 +844,71 @@ class _ChipRow<T> extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PricePreviewCard extends StatelessWidget {
-  final CalcResult? calc;
-  final bool loading;
-  final int balanceKopeks;
-
-  const _PricePreviewCard({
-    required this.calc,
-    required this.loading,
-    required this.balanceKopeks,
-  });
+  final CalcResult? calc; final bool loading; final int balanceKopeks;
+  const _PricePreviewCard({required this.calc, required this.loading, required this.balanceKopeks});
 
   @override
   Widget build(BuildContext context) {
-    final totalKopeks = calc?.totalKopeks ?? 0;
-    final totalRub = calc?.totalRub ?? 0.0;
-    final hasEnough = totalKopeks > 0 && balanceKopeks >= totalKopeks;
+    final total      = calc?.totalKopeks ?? 0;
+    final totalRub   = calc?.totalRub    ?? 0.0;
+    final fromBal    = total > 0 && balanceKopeks >= total;
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            _DS.violet.withValues(alpha: 0.12),
-            _DS.surface1,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(_DS.radius),
-        border: Border.all(color: _DS.violet.withValues(alpha: 0.3)),
-      ),
+          gradient: LinearGradient(
+              colors: [_DS.violet.withValues(alpha: 0.1), _DS.surface1],
+              begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(_DS.radius),
+          border: Border.all(color: _DS.violet.withValues(alpha: 0.28))),
       child: loading
-          ? const Center(child: SizedBox(
-        height: 28, width: 28,
-        child: CircularProgressIndicator(strokeWidth: 2, color: _DS.violet),
-      ))
-          : Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('К оплате', style: TextStyle(color: _DS.textSecondary, fontSize: 13)),
-                const SizedBox(height: 4),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  transitionBuilder: (child, anim) =>
-                      FadeTransition(opacity: anim, child: child),
-                  child: Text(
-                    '${totalRub.toStringAsFixed(2)} ₽',
-                    key: ValueKey(totalKopeks),
-                    style: const TextStyle(
-                      color: _DS.textPrimary,
-                      fontSize: 36,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -1,
-                      height: 1,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (totalKopeks > 0)
-            _StatusPill(
-              label: hasEnough ? 'С баланса' : 'Онлайн-оплата',
-              color: hasEnough ? _DS.emerald : _DS.amber,
-              icon: hasEnough ? Icons.check_circle_outline : Icons.credit_card_rounded,
-            ),
-        ],
-      ),
+          ? const Center(child: SizedBox(height: 32, width: 32,
+          child: CircularProgressIndicator(strokeWidth: 2, color: _DS.violet)))
+          : Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('К ОПЛАТЕ', style: TextStyle(color: _DS.textMuted, fontSize: 10,
+              fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+          const SizedBox(height: 4),
+          AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (c, a) => FadeTransition(opacity: a, child: c),
+              child: Text(key: ValueKey(total),
+                  '${totalRub.toStringAsFixed(2)} ₽',
+                  style: const TextStyle(color: _DS.textPrimary, fontSize: 38,
+                      fontWeight: FontWeight.w800, letterSpacing: -1.5, height: 1))),
+        ])),
+        if (total > 0)
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            _PayPill(
+                label: fromBal ? 'С баланса' : 'Онлайн-оплата',
+                color: fromBal ? _DS.emerald : _DS.amber,
+                icon: fromBal ? Icons.check_circle_outline : Icons.credit_card_rounded),
+            if (fromBal) ...[
+              const SizedBox(height: 5),
+              Text('Баланс: ${(balanceKopeks / 100).toStringAsFixed(2)} ₽',
+                  style: const TextStyle(color: _DS.textMuted, fontSize: 10)),
+            ],
+          ]),
+      ]),
     );
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  final String label;
-  final Color color;
-  final IconData icon;
-  const _StatusPill({required this.label, required this.color, required this.icon});
+class _PayPill extends StatelessWidget {
+  final String label; final Color color; final IconData icon;
+  const _PayPill({required this.label, required this.color, required this.icon});
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
     decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(30),
-      border: Border.all(color: color.withValues(alpha: 0.3)),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, color: color, size: 14),
-        const SizedBox(width: 5),
-        Text(label, style: TextStyle(
-          color: color, fontSize: 12, fontWeight: FontWeight.w600,
-        )),
-      ],
-    ),
+        color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: color.withValues(alpha: 0.3))),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, color: color, size: 13),
+      const SizedBox(width: 5),
+      Text(label, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600)),
+    ]),
   );
 }
 
@@ -1096,238 +917,402 @@ class _StatusPill extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _BuyButton extends StatelessWidget {
-  final bool loading;
-  final VoidCallback onPressed;
-  final int? totalKopeks;
-  final bool hasEnoughBalance;
-
-  const _BuyButton({
-    required this.loading,
-    required this.onPressed,
-    this.totalKopeks,
-    this.hasEnoughBalance = true,
-  });
+  final bool loading; final VoidCallback onPressed;
+  final int? totalKopeks; final bool hasEnoughBalance;
+  const _BuyButton({required this.loading, required this.onPressed,
+    this.totalKopeks, this.hasEnoughBalance = true});
 
   @override
   Widget build(BuildContext context) {
     final needsPayment = !hasEnoughBalance && (totalKopeks ?? 0) > 0;
     final color = needsPayment ? _DS.emerald : _DS.violet;
-    final label = loading
-        ? ''
+    final label = loading ? ''
         : needsPayment
         ? 'Оплатить ${(totalKopeks! / 100).toStringAsFixed(2)} ₽'
         : (totalKopeks != null && totalKopeks! > 0)
-        ? 'Купить за ${(totalKopeks! / 100).toStringAsFixed(2)} ₽'
+        ? 'Оформить за ${(totalKopeks! / 100).toStringAsFixed(2)} ₽'
         : 'Оформить подписку';
 
     return Container(
-      height: 58,
-      width: double.infinity,
+      height: 58, width: double.infinity,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [color, Color.lerp(color, Colors.black, 0.2)!],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(_DS.radius),
-        boxShadow: [
-          BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 20, offset: const Offset(0, 6)),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: loading ? null : onPressed,
+          gradient: LinearGradient(
+              colors: [color, Color.lerp(color, Colors.black, 0.22)!],
+              begin: Alignment.topLeft, end: Alignment.bottomRight),
           borderRadius: BorderRadius.circular(_DS.radius),
-          child: Center(
-            child: loading
-                ? const SizedBox(
-              height: 22, width: 22,
-              child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
-            )
-                : Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  needsPayment ? Icons.payment_rounded : Icons.lock_open_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(label, style: const TextStyle(
-                  color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: 0.2,
-                )),
-              ],
-            ),
-          ),
-        ),
-      ),
+          boxShadow: [BoxShadow(color: color.withValues(alpha: 0.35),
+              blurRadius: 20, offset: const Offset(0, 6))]),
+      child: Material(color: Colors.transparent, child: InkWell(
+        onTap: loading ? null : onPressed,
+        borderRadius: BorderRadius.circular(_DS.radius),
+        child: Center(child: loading
+            ? const SizedBox(height: 22, width: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+            : Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(needsPayment ? Icons.payment_rounded : Icons.lock_open_rounded,
+              color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(color: Colors.white, fontSize: 16,
+              fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+        ])),
+      )),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Upgrade card (existing subscribers)
+// Upgrade section (existing paid subscribers)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _UpgradeDiffCard extends StatefulWidget {
+class _UpgradeSection extends StatefulWidget {
   final MeSubscription sub;
   final SubscriptionOptions options;
   final Future<void> Function(String, {int? trafficAdd, int? devicesAdd}) onUpgrade;
   final bool loading;
-
-  const _UpgradeDiffCard({
-    required this.sub,
-    required this.options,
-    required this.onUpgrade,
-    required this.loading,
-  });
+  const _UpgradeSection({required this.sub, required this.options,
+    required this.onUpgrade, required this.loading});
 
   @override
-  State<_UpgradeDiffCard> createState() => _UpgradeDiffCardState();
+  State<_UpgradeSection> createState() => _UpgradeSectionState();
 }
 
-class _UpgradeDiffCardState extends State<_UpgradeDiffCard> {
-  String? _selectedPeriodId;
+class _UpgradeSectionState extends State<_UpgradeSection>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabCtrl;
+  int _tab = 0;
+
+  String? _renewPeriodId;
+  int?    _addTrafficGb;
+  int?    _addDevices;
+
+  static const _trafficOpts = [10, 50, 100, 200, 500];
+  static const _devicesOpts = [1, 2, 3, 5, 10];
 
   @override
   void initState() {
     super.initState();
-    if (widget.options.periods.isNotEmpty) {
-      _selectedPeriodId = widget.options.periods.first.id;
-    }
+    _tabCtrl = TabController(length: 3, vsync: this)
+      ..addListener(() { if (mounted) setState(() => _tab = _tabCtrl.index); });
+    if (widget.options.periods.isNotEmpty) _renewPeriodId = widget.options.periods.first.id;
+    _addTrafficGb = _trafficOpts.first;
+    _addDevices   = _devicesOpts.first;
   }
 
   @override
+  void dispose() { _tabCtrl.dispose(); super.dispose(); }
+
+  @override
   Widget build(BuildContext context) {
-    final selectedPeriod = _selectedPeriodId != null
-        ? widget.options.periods.firstWhere(
-            (p) => p.id == _selectedPeriodId,
-        orElse: () => widget.options.periods.first)
-        : null;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Status strip
+      _StatusStrip(sub: widget.sub),
+      const SizedBox(height: 20),
 
-    return _GlassCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Current status strip
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: _DS.emerald.withValues(alpha: 0.07),
-              borderRadius: BorderRadius.circular(_DS.radiusSm),
-              border: Border.all(color: _DS.emerald.withValues(alpha: 0.2)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.verified_rounded, color: _DS.emerald, size: 16),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Активна до ${widget.sub.formattedExpiry}',
-                    style: const TextStyle(color: _DS.emerald, fontSize: 13, fontWeight: FontWeight.w500),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
+      _SectionLabel('Улучшить подписку'),
+      const SizedBox(height: 12),
 
-          const _BuilderRow(icon: Icons.add_circle_outline_rounded, label: 'Продлить на'),
-          const SizedBox(height: 10),
+      // Tab bar
+      _UpgradeTabBar(controller: _tabCtrl),
+      const SizedBox(height: 14),
 
-          _ChipRow<String>(
-            options: widget.options.periods
-                .map((p) => _Chip<String>(value: p.id, label: p.label))
-                .toList(),
-            selected: _selectedPeriodId,
-            onSelected: (id) => setState(() => _selectedPeriodId = id),
-          ),
-          const SizedBox(height: 20),
-          const Divider(color: _DS.border, height: 1),
-          const SizedBox(height: 20),
-
-          // Diff summary
-          _DiffItem(label: 'Трафик', value: widget.sub.trafficLimitGb == 0 ? '∞ ГБ' : '${widget.sub.trafficLimitGb} ГБ', changed: false),
-          const SizedBox(height: 10),
-          _DiffItem(label: 'Устройства', value: '${widget.sub.deviceLimit}', changed: false),
-          const SizedBox(height: 10),
-          _DiffItem(
-            label: 'Срок',
-            value: selectedPeriod != null ? '+ ${selectedPeriod.label}' : '—',
-            changed: true,
-          ),
-          const SizedBox(height: 20),
-
-          _BuyButton(
-            loading: widget.loading,
-            onPressed: _selectedPeriodId != null ? () => widget.onUpgrade(_selectedPeriodId!) : () {},
-            totalKopeks: null,
-            hasEnoughBalance: true,
-          ),
-        ],
+      // Tab content
+      AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        transitionBuilder: (c, a) => FadeTransition(opacity: a, child: c),
+        child: KeyedSubtree(
+          key: ValueKey(_tab),
+          child: [
+            _RenewTab(
+                options: widget.options, selectedPeriodId: _renewPeriodId,
+                onPeriodSelected: (id) => setState(() => _renewPeriodId = id),
+                loading: widget.loading,
+                onConfirm: () => widget.onUpgrade(_renewPeriodId!)),
+            _AddTrafficTab(
+                currentGb: widget.sub.trafficLimitGb,
+                selectedAdd: _addTrafficGb, options: _trafficOpts,
+                onSelected: (v) => setState(() => _addTrafficGb = v),
+                loading: widget.loading,
+                onConfirm: () => widget.onUpgrade(
+                    widget.options.periods.first.id, trafficAdd: _addTrafficGb)),
+            _AddDevicesTab(
+                currentDevices: widget.sub.deviceLimit,
+                selectedAdd: _addDevices, options: _devicesOpts,
+                onSelected: (v) => setState(() => _addDevices = v),
+                loading: widget.loading,
+                onConfirm: () => widget.onUpgrade(
+                    widget.options.periods.first.id, devicesAdd: _addDevices)),
+          ][_tab],
+        ),
       ),
+    ]);
+  }
+}
+
+// ── Status strip ─────────────────────────────────────────────────────────────
+
+class _StatusStrip extends StatelessWidget {
+  final MeSubscription sub;
+  const _StatusStrip({required this.sub});
+
+  @override
+  Widget build(BuildContext context) {
+    final traffic = sub.trafficLimitGb == 0 ? '∞ ГБ' : '${sub.trafficLimitGb} ГБ';
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+          color: _DS.surface1,
+          borderRadius: BorderRadius.circular(_DS.radiusSm),
+          border: Border.all(color: _DS.emerald.withValues(alpha: 0.25))),
+      child: Column(children: [
+        Row(children: [
+          const Icon(Icons.verified_rounded, color: _DS.emerald, size: 16),
+          const SizedBox(width: 8),
+          Expanded(child: Text('Активна до ${sub.formattedExpiry}',
+              style: const TextStyle(color: _DS.emerald, fontSize: 14, fontWeight: FontWeight.w600))),
+        ]),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(child: _StatChip(icon: Icons.data_usage_rounded,
+              label: 'Трафик', value: traffic, color: _DS.sky)),
+          const SizedBox(width: 8),
+          Expanded(child: _StatChip(icon: Icons.devices_rounded,
+              label: 'Устройства', value: '${sub.deviceLimit} устр.', color: _DS.violet)),
+        ]),
+      ]),
     );
   }
 }
 
-class _DiffItem extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool changed;
-  const _DiffItem({required this.label, required this.value, required this.changed});
+class _StatChip extends StatelessWidget {
+  final IconData icon; final String label; final String value; final Color color;
+  const _StatChip({required this.icon, required this.label, required this.value, required this.color});
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Expanded(flex: 2, child: Text(label, style: const TextStyle(color: _DS.textSecondary, fontSize: 13))),
-      Expanded(
-        flex: 3,
-        child: changed
-            ? Row(children: [
-          const Icon(Icons.arrow_forward_rounded, size: 13, color: _DS.textMuted),
-          const SizedBox(width: 4),
-          Text(value, style: const TextStyle(
-            color: _DS.emerald, fontSize: 13, fontWeight: FontWeight.w600,
-          )),
-        ])
-            : Text(value, style: const TextStyle(color: _DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w500)),
-      ),
-    ],
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.2))),
+    child: Row(children: [
+      Icon(icon, color: color, size: 15),
+      const SizedBox(width: 8),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(color: _DS.textMuted, fontSize: 10,
+            fontWeight: FontWeight.w600, letterSpacing: 0.3)),
+        Text(value, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700)),
+      ])),
+    ]),
+  );
+}
+
+// ── Tab bar ───────────────────────────────────────────────────────────────────
+
+class _UpgradeTabBar extends StatelessWidget {
+  final TabController controller;
+  const _UpgradeTabBar({required this.controller});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 46,
+    decoration: BoxDecoration(
+        color: _DS.surface2, borderRadius: BorderRadius.circular(_DS.radiusSm),
+        border: Border.all(color: _DS.border)),
+    child: TabBar(
+      controller: controller,
+      indicator: BoxDecoration(
+          color: _DS.violet.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: _DS.violet.withValues(alpha: 0.4))),
+      indicatorSize: TabBarIndicatorSize.tab,
+      dividerColor: Colors.transparent,
+      labelPadding: EdgeInsets.zero,
+      labelColor: _DS.violet,
+      unselectedLabelColor: _DS.textSecondary,
+      tabs: const [
+        Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(Icons.refresh_rounded, size: 14), SizedBox(width: 5),
+          Text('Продлить', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))])),
+        Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(Icons.data_usage_rounded, size: 14), SizedBox(width: 5),
+          Text('Трафик', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))])),
+        Tab(child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(Icons.devices_rounded, size: 14), SizedBox(width: 5),
+          Text('Устройства', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))])),
+      ],
+    ),
+  );
+}
+
+// ── Renew tab ─────────────────────────────────────────────────────────────────
+
+class _RenewTab extends StatelessWidget {
+  final SubscriptionOptions options;
+  final String? selectedPeriodId;
+  final ValueChanged<String> onPeriodSelected;
+  final bool loading;
+  final VoidCallback onConfirm;
+  const _RenewTab({required this.options, required this.selectedPeriodId,
+    required this.onPeriodSelected, required this.loading, required this.onConfirm});
+
+  @override
+  Widget build(BuildContext context) {
+    final sel = selectedPeriodId != null
+        ? options.periods.firstWhere((p) => p.id == selectedPeriodId,
+        orElse: () => options.periods.first)
+        : null;
+    return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _RowLabel(icon: Icons.calendar_month_rounded, label: 'Выберите период продления'),
+      const SizedBox(height: 12),
+      _PeriodList(options: options, selectedPeriodId: selectedPeriodId,
+          onSelected: onPeriodSelected),
+      if (sel != null) ...[
+        const SizedBox(height: 14),
+        _InfoNote(text: 'Срок подписки будет продлён на ${sel.label}'),
+        const SizedBox(height: 14),
+      ] else const SizedBox(height: 14),
+      _BuyButton(
+          loading: loading,
+          onPressed: selectedPeriodId != null ? onConfirm : () {},
+          totalKopeks: sel?.basePriceKopeks,
+          hasEnoughBalance: true),
+    ]));
+  }
+}
+
+// ── Add traffic tab ───────────────────────────────────────────────────────────
+
+class _AddTrafficTab extends StatelessWidget {
+  final int currentGb; final int? selectedAdd;
+  final List<int> options;
+  final ValueChanged<int> onSelected;
+  final bool loading; final VoidCallback onConfirm;
+  const _AddTrafficTab({required this.currentGb, required this.selectedAdd,
+    required this.options, required this.onSelected,
+    required this.loading, required this.onConfirm});
+
+  @override
+  Widget build(BuildContext context) {
+    final current = currentGb == 0 ? '∞ ГБ' : '$currentGb ГБ';
+    final after   = selectedAdd != null
+        ? (currentGb == 0 ? '∞ ГБ' : '${currentGb + selectedAdd!} ГБ') : '—';
+    return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _RowLabel(icon: Icons.data_usage_rounded, label: 'Добавить трафик'),
+      const SizedBox(height: 12),
+      _OptionChips<int>(
+          options: options.map((gb) => _OItem<int>(value: gb, label: '+$gb ГБ')).toList(),
+          selected: selectedAdd, onSelected: onSelected, accent: _DS.sky),
+      const SizedBox(height: 12),
+      _BeforeAfter(icon: Icons.data_usage_rounded, label: 'Трафик',
+          before: current, after: after, color: _DS.sky),
+      const SizedBox(height: 14),
+      _BuyButton(loading: loading, onPressed: onConfirm,
+          totalKopeks: null, hasEnoughBalance: true),
+    ]));
+  }
+}
+
+// ── Add devices tab ───────────────────────────────────────────────────────────
+
+class _AddDevicesTab extends StatelessWidget {
+  final int currentDevices; final int? selectedAdd;
+  final List<int> options;
+  final ValueChanged<int> onSelected;
+  final bool loading; final VoidCallback onConfirm;
+  const _AddDevicesTab({required this.currentDevices, required this.selectedAdd,
+    required this.options, required this.onSelected,
+    required this.loading, required this.onConfirm});
+
+  @override
+  Widget build(BuildContext context) {
+    final after = selectedAdd != null ? '${currentDevices + selectedAdd!}' : '—';
+    return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _RowLabel(icon: Icons.devices_rounded, label: 'Добавить устройства'),
+      const SizedBox(height: 12),
+      _OptionChips<int>(
+          options: options.map((d) => _OItem<int>(value: d, label: '+$d')).toList(),
+          selected: selectedAdd, onSelected: onSelected, accent: _DS.violet),
+      const SizedBox(height: 12),
+      _BeforeAfter(icon: Icons.devices_rounded, label: 'Устройства',
+          before: '$currentDevices', after: after, color: _DS.violet),
+      const SizedBox(height: 14),
+      _BuyButton(loading: loading, onPressed: onConfirm,
+          totalKopeks: null, hasEnoughBalance: true),
+    ]));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared small widgets
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BeforeAfter extends StatelessWidget {
+  final IconData icon; final String label;
+  final String before; final String after; final Color color;
+  const _BeforeAfter({required this.icon, required this.label,
+    required this.before, required this.after, required this.color});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+    decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(_DS.radiusXs),
+        border: Border.all(color: color.withValues(alpha: 0.18))),
+    child: Row(children: [
+      Icon(icon, size: 14, color: color),
+      const SizedBox(width: 9),
+      Text(label, style: const TextStyle(color: _DS.textSecondary, fontSize: 13)),
+      const Spacer(),
+      Text(before, style: const TextStyle(color: _DS.textSecondary, fontSize: 13)),
+      const Padding(padding: EdgeInsets.symmetric(horizontal: 8),
+          child: Icon(Icons.arrow_forward_rounded, size: 13, color: _DS.textMuted)),
+      Text(after, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700)),
+    ]),
+  );
+}
+
+class _InfoNote extends StatelessWidget {
+  final String text;
+  const _InfoNote({required this.text});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+    decoration: BoxDecoration(
+        color: _DS.surface2,
+        borderRadius: BorderRadius.circular(_DS.radiusXs),
+        border: Border.all(color: _DS.border)),
+    child: Row(children: [
+      const Icon(Icons.info_outline_rounded, color: _DS.textMuted, size: 15),
+      const SizedBox(width: 10),
+      Expanded(child: Text(text,
+          style: const TextStyle(color: _DS.textSecondary, fontSize: 13))),
+    ]),
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Payment polling card
+// Payment polling
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PaymentPollingCard extends StatelessWidget {
   const _PaymentPollingCard();
 
   @override
-  Widget build(BuildContext context) {
-    return _GlassCard(
-      accentColor: _DS.violet,
-      child: Column(
-        children: [
-          const SizedBox(
-            width: 52, height: 52,
-            child: CircularProgressIndicator(strokeWidth: 3, color: _DS.violet),
-          ),
-          const SizedBox(height: 20),
-          const Text('Обрабатываем платёж…', style: TextStyle(
-            color: _DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w700,
-          ), textAlign: TextAlign.center),
-          const SizedBox(height: 8),
-          const Text(
-            'Ожидаем подтверждение от платёжного сервиса.\nЭто может занять до 2 минут.',
-            style: TextStyle(color: _DS.textSecondary, fontSize: 13, height: 1.6),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => _Card(accentColor: _DS.violet, child: Column(children: [
+    const SizedBox(height: 8),
+    const SizedBox(width: 48, height: 48,
+        child: CircularProgressIndicator(strokeWidth: 3, color: _DS.violet)),
+    const SizedBox(height: 20),
+    const Text('Обрабатываем платёж…', textAlign: TextAlign.center,
+        style: TextStyle(color: _DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w700)),
+    const SizedBox(height: 8),
+    const Text('Ожидаем подтверждение от платёжного сервиса.\nЭто может занять до 2 минут.',
+        textAlign: TextAlign.center,
+        style: TextStyle(color: _DS.textSecondary, fontSize: 13, height: 1.6)),
+    const SizedBox(height: 8),
+  ]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1339,31 +1324,17 @@ class _ErrorCard extends StatelessWidget {
   const _ErrorCard({required this.onRetry});
 
   @override
-  Widget build(BuildContext context) {
-    return _GlassCard(
-      child: Column(
-        children: [
-          Container(
-            width: 56, height: 56,
-            decoration: BoxDecoration(
-              color: _DS.rose.withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.wifi_off_rounded, color: _DS.rose, size: 28),
-          ),
-          const SizedBox(height: 16),
-          const Text('Не удалось загрузить тарифы', style: TextStyle(
-            color: _DS.textPrimary, fontSize: 16, fontWeight: FontWeight.w600,
-          ), textAlign: TextAlign.center),
-          const SizedBox(height: 14),
-          TextButton(
-            onPressed: onRetry,
-            child: const Text('Повторить', style: TextStyle(color: _DS.violet, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => _Card(child: Column(children: [
+    Container(width: 56, height: 56,
+        decoration: BoxDecoration(color: _DS.rose.withValues(alpha: 0.1), shape: BoxShape.circle),
+        child: const Icon(Icons.wifi_off_rounded, color: _DS.rose, size: 28)),
+    const SizedBox(height: 16),
+    const Text('Не удалось загрузить тарифы', textAlign: TextAlign.center,
+        style: TextStyle(color: _DS.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
+    const SizedBox(height: 14),
+    TextButton(onPressed: onRetry, child: const Text('Повторить',
+        style: TextStyle(color: _DS.violet, fontWeight: FontWeight.w600))),
+  ]));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1375,53 +1346,34 @@ class _PaymentDisclaimer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Text(
-    'Оплата через YooKassa · Подписка активируется автоматически',
-    textAlign: TextAlign.center,
-    style: TextStyle(color: _DS.textMuted, fontSize: 11, height: 1.5),
-  );
+      'Оплата через YooKassa · Подписка активируется автоматически',
+      textAlign: TextAlign.center,
+      style: TextStyle(color: _DS.textMuted, fontSize: 11, height: 1.5));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared primitives
+// Base card
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _GlassCard extends StatelessWidget {
+class _Card extends StatelessWidget {
   final Widget child;
   final Color? accentColor;
-
-  const _GlassCard({required this.child, this.accentColor});
+  final EdgeInsetsGeometry? padding;
+  const _Card({required this.child, this.accentColor, this.padding});
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: padding ?? const EdgeInsets.all(18),
+    decoration: BoxDecoration(
         color: _DS.surface1,
         borderRadius: BorderRadius.circular(_DS.radius),
         border: Border.all(
-          color: accentColor != null
-              ? accentColor!.withValues(alpha: 0.35)
-              : _DS.border,
-        ),
+            color: accentColor != null ? accentColor!.withValues(alpha: 0.35) : _DS.border),
         boxShadow: accentColor != null
-            ? [BoxShadow(
-          color: accentColor!.withValues(alpha: 0.1),
-          blurRadius: 24,
-          spreadRadius: -4,
-        )]
-            : null,
-      ),
-      child: child,
-    );
-  }
-}
-
-class _LoadingIndicator extends StatelessWidget {
-  const _LoadingIndicator();
-
-  @override
-  Widget build(BuildContext context) => const CircularProgressIndicator(
-    color: _DS.violet, strokeWidth: 2.5,
+            ? [BoxShadow(color: accentColor!.withValues(alpha: 0.08),
+            blurRadius: 24, spreadRadius: -4)]
+            : null),
+    child: child,
   );
 }
