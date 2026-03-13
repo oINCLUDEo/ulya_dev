@@ -3,48 +3,38 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../main.dart' show DS;
 
-/// Shows a modal bottom sheet that explains why auth is needed and triggers
-/// the Telegram deep-link login flow.
-///
-/// Completes with `true` when the user successfully logged in,
-/// `false` / null when dismissed without logging in.
+/// Shows a modal bottom sheet for Telegram authentication.
+/// Returns `true` on success, `false`/`null` if dismissed.
 Future<bool> showAuthBottomSheet(BuildContext context) async {
   final result = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     isDismissible: true,
-    builder: (ctx) => const _AuthBottomSheet(),
+    builder: (ctx) => const _AuthSheet(),
   );
   return result ?? false;
 }
 
-// ── Bottom sheet ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
-class _AuthBottomSheet extends StatefulWidget {
-  const _AuthBottomSheet();
+enum _Step { idle, opening, waiting, success, error }
+
+class _AuthSheet extends StatefulWidget {
+  const _AuthSheet();
 
   @override
-  State<_AuthBottomSheet> createState() => _AuthBottomSheetState();
+  State<_AuthSheet> createState() => _AuthSheetState();
 }
 
-enum _AuthStep {
-  idle,     // initial — "Login" button visible
-  opening,  // waiting for deep-link launch
-  waiting,  // Telegram opened, polling…
-  success,  // authenticated — show success animation
-  error,    // something failed
-}
-
-class _AuthBottomSheetState extends State<_AuthBottomSheet>
+class _AuthSheetState extends State<_AuthSheet>
     with SingleTickerProviderStateMixin {
-  _AuthStep _step = _AuthStep.idle;
+  _Step _step = _Step.idle;
   String? _errorMessage;
-  String? _token;
   StreamSubscription<AuthResult>? _pollSub;
 
-  // ── Success animation ──────────────────────────────────────────────────────
   late final AnimationController _successCtrl;
   late final Animation<double> _scaleAnim;
   late final Animation<double> _fadeAnim;
@@ -53,18 +43,12 @@ class _AuthBottomSheetState extends State<_AuthBottomSheet>
   void initState() {
     super.initState();
     _successCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
+        vsync: this, duration: const Duration(milliseconds: 550));
     _scaleAnim = Tween<double>(begin: 0.5, end: 1.0).animate(
-      CurvedAnimation(parent: _successCtrl, curve: Curves.elasticOut),
-    );
+        CurvedAnimation(parent: _successCtrl, curve: Curves.elasticOut));
     _fadeAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _successCtrl,
-        curve: const Interval(0.0, 0.5, curve: Curves.easeIn),
-      ),
-    );
+        CurvedAnimation(parent: _successCtrl,
+            curve: const Interval(0.0, 0.45, curve: Curves.easeIn)));
   }
 
   @override
@@ -74,31 +58,17 @@ class _AuthBottomSheetState extends State<_AuthBottomSheet>
     super.dispose();
   }
 
-  // ── Login button handler ──────────────────────────────────────────────────
-
+  // ── Actions ────────────────────────────────────────────────────────────────
   Future<void> _onLoginTap() async {
-    if (_step != _AuthStep.idle && _step != _AuthStep.error) return;
+    if (_step != _Step.idle && _step != _Step.error) return;
+    setState(() { _step = _Step.opening; _errorMessage = null; });
 
-    setState(() {
-      _step = _AuthStep.opening;
-      _errorMessage = null;
+    final token = await AuthService.startLogin(onError: (msg) {
+      if (mounted) setState(() { _step = _Step.error; _errorMessage = msg; });
     });
 
-    final token = await AuthService.startLogin(
-      onError: (msg) {
-        if (mounted) {
-          setState(() {
-            _step = _AuthStep.error;
-            _errorMessage = msg;
-          });
-        }
-      },
-    );
-
     if (token == null || !mounted) return;
-
-    _token = token;
-    setState(() => _step = _AuthStep.waiting);
+    setState(() => _step = _Step.waiting);
     _startPolling(token);
   }
 
@@ -106,308 +76,235 @@ class _AuthBottomSheetState extends State<_AuthBottomSheet>
     _pollSub?.cancel();
     _pollSub = AuthService.pollStatus(token).listen(
           (result) {
-        if (!mounted) {
-          _pollSub?.cancel();
-          return;
-        }
+        if (!mounted) { _pollSub?.cancel(); return; }
         if (result.success) {
           _pollSub?.cancel();
-          _showSuccessAndClose();
+          _showSuccess();
         } else if (result.error != null) {
           _pollSub?.cancel();
-          setState(() {
-            _step = _AuthStep.error;
-            _errorMessage = result.error;
-          });
+          setState(() { _step = _Step.error; _errorMessage = result.error; });
         }
-        // AuthResult.pending — keep polling, no UI change needed
       },
-      onError: (Object e) {
-        if (mounted) {
-          setState(() {
-            _step = _AuthStep.error;
-            _errorMessage = 'Ошибка соединения. Попробуйте снова.';
-          });
-        }
+      onError: (_) {
+        if (mounted) setState(() {
+          _step = _Step.error;
+          _errorMessage = 'Ошибка соединения. Попробуйте снова.';
+        });
       },
     );
   }
 
-  /// Play success animation then close the sheet with true.
-  Future<void> _showSuccessAndClose() async {
+  Future<void> _showSuccess() async {
     if (!mounted) return;
-    setState(() => _step = _AuthStep.success);
+    setState(() => _step = _Step.success);
     await _successCtrl.forward();
-    await Future<void>.delayed(const Duration(milliseconds: 1000));
-    if (mounted) {
-      Navigator.pop(context, true);
-    }
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    if (mounted) Navigator.pop(context, true);
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  void _cancel() {
+    _pollSub?.cancel();
+    setState(() { _step = _Step.idle; _errorMessage = null; });
+  }
 
+  // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // Full-screen success overlay
-    if (_step == _AuthStep.success) {
-      return Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF171A21),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: SafeArea(
-          top: false,
-          child: SizedBox(
-            height: 260,
-            child: Center(
-              child: FadeTransition(
-                opacity: _fadeAnim,
-                child: ScaleTransition(
-                  scale: _scaleAnim,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2ED573).withValues(alpha: 0.15),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.check_circle,
-                          color: Color(0xFF2ED573),
-                          size: 44,
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      const Text(
-                        'Авторизация успешна!',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Добро пожаловать',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
     return Container(
       decoration: const BoxDecoration(
-        color: Color(0xFF171A21),
+        color: DS.surface1,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[700],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // ── Icon ──────────────────────────────────────────────────────
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: const Color(0xFF6C5CE7).withValues(alpha: 0.15),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                _step == _AuthStep.waiting
-                    ? Icons.telegram
-                    : Icons.lock_person_outlined,
-                size: 36,
-                color: _step == _AuthStep.waiting
-                    ? const Color(0xFF229ED9)
-                    : const Color(0xFF6C5CE7),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // ── Title ────────────────────────────────────────────────────
-            Text(
-              _step == _AuthStep.waiting
-                  ? 'Ожидаем подтверждения…'
-                  : 'Нужна авторизация',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            const SizedBox(height: 10),
-
-            // ── Body text ────────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                _buildBodyText(),
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 14,
-                  height: 1.5,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-
-            const SizedBox(height: 28),
-
-            // ── Action area ──────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: _buildActionArea(),
-            ),
-
-            const SizedBox(height: 24),
-          ],
-        ),
+        child: _step == _Step.success ? _buildSuccess() : _buildMain(),
       ),
     );
   }
 
-  // ── Body text ─────────────────────────────────────────────────────────────
-
-  String _buildBodyText() {
-    switch (_step) {
-      case _AuthStep.idle:
-        return 'Для подключения к VPN-серверам необходима активная подписка. '
-            'Войдите через Telegram одним касанием.';
-      case _AuthStep.opening:
-        return 'Открываем Telegram…';
-      case _AuthStep.waiting:
-        return 'Telegram открыт. Нажмите «Старт» в боте — '
-            'авторизация завершится автоматически.';
-      case _AuthStep.success:
-        return '';
-      case _AuthStep.error:
-        return _errorMessage ?? 'Произошла ошибка. Попробуйте снова.';
-    }
-  }
-
-  // ── Action area ───────────────────────────────────────────────────────────
-
-  Widget _buildActionArea() {
-    switch (_step) {
-      case _AuthStep.idle:
-        return _LoginButton(onTap: _onLoginTap);
-      case _AuthStep.opening:
-        return const _LoadingRow(label: 'Открываем Telegram…');
-      case _AuthStep.waiting:
-        return Column(
-          children: [
-            const _LoadingRow(label: 'Ожидаем подтверждения…'),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: () {
-                _pollSub?.cancel();
-                setState(() {
-                  _step = _AuthStep.idle;
-                  _errorMessage = null;
-                  _token = null;
-                });
-              },
-              child: const Text(
-                'Отмена',
-                style: TextStyle(color: Colors.grey),
-              ),
-            ),
-          ],
-        );
-      case _AuthStep.success:
-        return const SizedBox.shrink();
-      case _AuthStep.error:
-        return _LoginButton(onTap: _onLoginTap, label: 'Попробовать снова');
-    }
-  }
-
-}
-
-// ── Shared widgets ────────────────────────────────────────────────────────────
-
-class _LoginButton extends StatelessWidget {
-  final VoidCallback onTap;
-  final String label;
-
-  const _LoginButton({
-    required this.onTap,
-    this.label = 'Войти через Telegram',
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildSuccess() {
     return SizedBox(
-      width: double.infinity,
-      child: FilledButton.icon(
-        onPressed: onTap,
-        icon: const Icon(Icons.telegram, size: 20),
-        label: Text(
-          label,
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-        ),
-        style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFF229ED9), // Telegram blue
-          foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+      height: 260,
+      child: Center(
+        child: FadeTransition(
+          opacity: _fadeAnim,
+          child: ScaleTransition(
+            scale: _scaleAnim,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                  width: 76, height: 76,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: DS.emerald.withValues(alpha: 0.12),
+                    border: Border.all(color: DS.emerald.withValues(alpha: 0.3), width: 1.5),
+                  ),
+                  child: const Icon(Icons.check_rounded, color: DS.emerald, size: 38)),
+              const SizedBox(height: 20),
+              const Text('Авторизация успешна!', style: TextStyle(
+                  color: DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 6),
+              const Text('Добро пожаловать',
+                  style: TextStyle(color: DS.textSecondary, fontSize: 14)),
+            ]),
           ),
         ),
       ),
     );
   }
+
+  Widget _buildMain() {
+    final waiting = _step == _Step.waiting;
+    final isError = _step == _Step.error;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        // Handle
+        const SizedBox(height: 12),
+        Container(width: 40, height: 4,
+            decoration: BoxDecoration(color: DS.border, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(height: 28),
+
+        // Icon
+        Container(
+          width: 68, height: 68,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: (waiting ? DS.telegramBlue : DS.violet).withValues(alpha: 0.1),
+            border: Border.all(
+                color: (waiting ? DS.telegramBlue : DS.violet).withValues(alpha: 0.25)),
+          ),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            child: Icon(
+              key: ValueKey(waiting),
+              waiting ? Icons.telegram : Icons.lock_outline_rounded,
+              size: 32,
+              color: waiting ? DS.telegramBlue : DS.violet,
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 20),
+
+        // Title
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          child: Text(
+            key: ValueKey(waiting),
+            waiting ? 'Ожидаем подтверждения…' : 'Нужна авторизация',
+            style: const TextStyle(
+                color: DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w700),
+            textAlign: TextAlign.center,
+          ),
+        ),
+
+        const SizedBox(height: 10),
+
+        // Body text
+        Text(
+          _bodyText(),
+          style: TextStyle(
+              color: isError ? DS.rose.withValues(alpha: 0.9) : DS.textSecondary,
+              fontSize: 14, height: 1.5),
+          textAlign: TextAlign.center,
+        ),
+
+        const SizedBox(height: 28),
+
+        // Action
+        _buildAction(),
+
+        if (waiting) ...[
+          const SizedBox(height: 12),
+          TextButton(
+              onPressed: _cancel,
+              child: const Text('Отмена',
+                  style: TextStyle(color: DS.textMuted, fontSize: 13))),
+        ],
+      ]),
+    );
+  }
+
+  String _bodyText() {
+    switch (_step) {
+      case _Step.idle:
+        return 'Для подключения к VPN-серверам необходима активная подписка. '
+            'Войдите через Telegram одним касанием.';
+      case _Step.opening:  return 'Открываем Telegram…';
+      case _Step.waiting:
+        return 'Telegram открыт. Нажмите «Старт» в боте — '
+            'авторизация завершится автоматически.';
+      case _Step.success:  return '';
+      case _Step.error:    return _errorMessage ?? 'Произошла ошибка. Попробуйте снова.';
+    }
+  }
+
+  Widget _buildAction() {
+    switch (_step) {
+      case _Step.idle:
+      case _Step.error:
+        return _TelegramButton(
+          label: _step == _Step.error ? 'Попробовать снова' : 'Войти через Telegram',
+          onTap: _onLoginTap,
+        );
+      case _Step.opening:
+      case _Step.waiting:
+        return _LoadingRow(
+            label: _step == _Step.opening ? 'Открываем Telegram…' : 'Ожидаем подтверждения…');
+      case _Step.success:
+        return const SizedBox.shrink();
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-widgets
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TelegramButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _TelegramButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: double.infinity,
+    child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        decoration: BoxDecoration(
+          color: DS.telegramBlue,
+          borderRadius: BorderRadius.circular(DS.radiusSm),
+          boxShadow: [BoxShadow(
+              color: DS.telegramBlue.withValues(alpha: 0.35),
+              blurRadius: 18, offset: const Offset(0, 5))],
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(Icons.telegram, color: Colors.white, size: 20),
+          const SizedBox(width: 10),
+          Text(label, style: const TextStyle(
+              color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    ),
+  );
 }
 
 class _LoadingRow extends StatelessWidget {
   final String label;
-
   const _LoadingRow({required this.label});
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        const SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: Color(0xFF6C5CE7),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      const SizedBox(width: 20, height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2, color: DS.violet)),
+      const SizedBox(width: 12),
+      Text(label, style: const TextStyle(color: DS.textSecondary, fontSize: 14)),
+    ],
+  );
 }

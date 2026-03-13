@@ -10,9 +10,9 @@ import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
-import '../theme/app_colors.dart';
-import '../widgets/purple_header.dart';
 import 'auth_bottom_sheet.dart';
+import 'home_page.dart' show VpnIconBtn, VpnInfoBanner;
+import '../main.dart' show DS;
 
 class ServersPage extends StatefulWidget {
   final VoidCallback onGoToHome;
@@ -33,23 +33,14 @@ class ServersPage extends StatefulWidget {
 class _ServersPageState extends State<ServersPage> {
   List<ServerNode> _nodes = [];
   bool _loading = true;
-
-  /// true when servers are loaded from the public catalog (no subscription URL).
   bool _isPublicCatalog = false;
 
-  bool _bypassExpanded = true;
+  bool _bypassExpanded   = true;
   bool _unlimitedExpanded = true;
-  bool _otherExpanded = true;
+  bool _otherExpanded    = true;
 
-  /// ping ms per node uuid:
-  /// null = не тестировался
-  /// -2 = идёт
-  /// -1 = ошибка
-  /// >=0 = мс
   final Map<String, int> _pings = {};
   bool _pingAllInProgress = false;
-
-  /// Tracks the last subscription URL seen from [meNotifier] to detect changes.
   String _lastKnownSubUrl = '';
 
   @override
@@ -69,123 +60,101 @@ class _ServersPageState extends State<ServersPage> {
     super.dispose();
   }
 
-  void _onSelectionChanged() {
-    if (mounted) setState(() {});
-  }
-
-  /// Reload nodes when the user logs in so that subscription servers replace
-  /// the public catalog automatically.
-  void _onAuthChanged() {
-    _loadNodes();
-  }
-
-  /// Reload servers when the subscription URL changes (e.g. after a successful
-  /// subscription purchase that updated [meNotifier]).
+  void _onSelectionChanged() { if (mounted) setState(() {}); }
+  void _onAuthChanged() => _loadNodes();
   void _onMeChanged() {
-    final newUrl = meNotifier.value?.subscription?.subscriptionUrl ?? '';
-    if (newUrl != _lastKnownSubUrl) {
-      _lastKnownSubUrl = newUrl;
-      _loadNodes();
-    }
+    final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
+    if (url != _lastKnownSubUrl) { _lastKnownSubUrl = url; _loadNodes(); }
   }
 
-  // ──────────────────────────────────────────────────────────────
-  // LOAD NODES
-  // ──────────────────────────────────────────────────────────────
-
+  // ── Data ───────────────────────────────────────────────────────────────────
   Future<void> _loadNodes() async {
-    setState(() {
-      _loading = true;
-      _isPublicCatalog = false;
-    });
-
+    setState(() { _loading = true; _isPublicCatalog = false; });
     final subUrl = await RemnawaveService.getSubscriptionUrl();
-    debugPrint('ServersPage: subUrl - ${subUrl}');
     if (subUrl.isEmpty) {
-      // No personal subscription — load the public server catalog.
       final nodes = await RemnawaveService.fetchPublicServers();
       if (!mounted) return;
+      final uuids = nodes.map((e) => e.uuid).toSet();
       setState(() {
-        _loading = false;
-        _isPublicCatalog = true;
-        _nodes = nodes;
-        final uuids = nodes.map((e) => e.uuid).toSet();
+        _loading = false; _isPublicCatalog = true; _nodes = nodes;
         _pings.removeWhere((k, _) => !uuids.contains(k));
       });
       return;
     }
-
     final nodes = await RemnawaveService.fetchNodes();
-
     if (!mounted) return;
-
+    final uuids = nodes.map((e) => e.uuid).toSet();
     setState(() {
-      _nodes = nodes;
-      _loading = false;
-      _isPublicCatalog = false;
-
-      final uuids = nodes.map((e) => e.uuid).toSet();
+      _nodes = nodes; _loading = false;
       _pings.removeWhere((k, _) => !uuids.contains(k));
     });
   }
 
-  // ──────────────────────────────────────────────────────────────
-  // GROUPING
-  // ──────────────────────────────────────────────────────────────
-
-  Map<String, List<ServerNode>> _groupedNodes() {
-    final map = {
-      'bypass': <ServerNode>[],
-      'unlimited': <ServerNode>[],
-      'other': <ServerNode>[],
-    };
-
-    for (final node in _nodes) {
-      final desc = (node.description ?? '').toLowerCase();
-
-      if (desc.contains('белые')) {
-        map['bypass']!.add(node);
-      } else if (desc.contains('безлимит')) {
-        map['unlimited']!.add(node);
-      } else {
-        map['other']!.add(node);
-      }
+  // ── Grouping ───────────────────────────────────────────────────────────────
+  Map<String, List<ServerNode>> _grouped() {
+    final map = {'bypass': <ServerNode>[], 'unlimited': <ServerNode>[], 'other': <ServerNode>[]};
+    for (final n in _nodes) {
+      final d = (n.description ?? '').toLowerCase();
+      if (d.contains('белые')) map['bypass']!.add(n);
+      else if (d.contains('безлимит')) map['unlimited']!.add(n);
+      else map['other']!.add(n);
     }
-
-    // сортировка: сначала по ping (если есть), потом по имени
-    for (final key in map.keys) {
-      map[key]!.sort((a, b) {
-        final pa = _pings[a.uuid];
-        final pb = _pings[b.uuid];
-
-        if (pa != null && pa >= 0 && pb != null && pb >= 0) {
-          return pa.compareTo(pb);
-        }
+    for (final k in map.keys) {
+      map[k]!.sort((a, b) {
+        final pa = _pings[a.uuid], pb = _pings[b.uuid];
+        if (pa != null && pa >= 0 && pb != null && pb >= 0) return pa.compareTo(pb);
         return a.name.compareTo(b.name);
       });
     }
-
     return map;
   }
 
-  // ──────────────────────────────────────────────────────────────
-  // SECTIONS
-  // ──────────────────────────────────────────────────────────────
+  // ── Ping ───────────────────────────────────────────────────────────────────
+  Future<int?> _tcpPingRaw(String host, int port) async {
+    final sw = Stopwatch()..start();
+    try {
+      final s = await Socket.connect(host, port, timeout: const Duration(seconds: 2));
+      sw.stop(); s.destroy(); return sw.elapsedMilliseconds;
+    } catch (_) { return null; }
+  }
 
+  Future<void> _tcpPingNode(ServerNode node) async {
+    if (node.link == null) return;
+    setState(() => _pings[node.uuid] = -2);
+    try {
+      final uri = Uri.parse(node.link!);
+      final ms = await _tcpPingRaw(uri.host, uri.hasPort ? uri.port : 443);
+      if (mounted) setState(() => _pings[node.uuid] = ms ?? -1);
+    } catch (_) {
+      if (mounted) setState(() => _pings[node.uuid] = -1);
+    }
+  }
+
+  Future<void> _tcpPingAll() async {
+    if (_nodes.isEmpty || _pingAllInProgress) return;
+    setState(() {
+      _pingAllInProgress = true;
+      for (final n in _nodes) if (n.link != null) _pings[n.uuid] = -2;
+    });
+    final queue = _nodes.where((n) => n.link != null).toList();
+    Future<void> worker() async {
+      while (queue.isNotEmpty) await _tcpPingNode(queue.removeLast());
+    }
+    await Future.wait(List.generate(5, (_) => worker()));
+    if (mounted) setState(() => _pingAllInProgress = false);
+  }
+
+  // ── Sections ───────────────────────────────────────────────────────────────
   List<Widget> _buildSections() {
-    final groups = _groupedNodes();
-    final List<Widget> slivers = [];
+    final groups = _grouped();
     final selectedUuid = selectedServerNotifier.value?.uuid;
+    final slivers = <Widget>[];
 
     Future<void> onSelect(ServerNode node) async {
       if (_isPublicCatalog) {
-        // If already authenticated but no subscription, redirect to Premium.
-        if (authStateNotifier.value.isLoggedIn) {
-          widget.onGoToPremium?.call();
-        } else {
-          // Not logged in — show auth sheet.
-          await showAuthBottomSheet(context);
-        }
+        authStateNotifier.value.isLoggedIn
+            ? widget.onGoToPremium?.call()
+            : await showAuthBottomSheet(context);
         return;
       }
       selectedServerNotifier.value = node;
@@ -195,416 +164,135 @@ class _ServersPageState extends State<ServersPage> {
     }
 
     void addSection({
-      required String title,
-      required String subtitle,
-      required List<ServerNode> nodes,
-      required Color color,
-      required IconData icon,
-      required bool expanded,
-      required VoidCallback onToggle,
+      required String title, required String subtitle,
+      required List<ServerNode> nodes, required Color color,
+      required IconData icon, required bool expanded, required VoidCallback onToggle,
     }) {
       if (nodes.isEmpty) return;
-
-      slivers.add(
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-          sliver: SliverToBoxAdapter(
-            child: _SectionHeader(
-              title: title,
-              subtitle: subtitle,
-              color: color,
-              icon: icon,
-              expanded: expanded,
-              nodeCount: nodes.length,
-              onTap: onToggle,
-            ),
-          ),
-        ),
-      );
-
-      slivers.add(
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-          sliver: SliverToBoxAdapter(
-            child: _AnimatedServerGroup(
-              expanded: expanded,
-              nodes: nodes,
-              pings: _pings,
-              onPing: _tcpPingNode,
-              color: color,
-              selectedUuid: selectedUuid,
-              onSelect: onSelect,
-              isPublicCatalog: _isPublicCatalog,
-            ),
-          ),
-        ),
-      );
+      slivers.add(SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
+        sliver: SliverToBoxAdapter(child: _SectionHeader(
+          title: title, subtitle: subtitle, color: color, icon: icon,
+          expanded: expanded, nodeCount: nodes.length, onTap: onToggle,
+        )),
+      ));
+      slivers.add(SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+        sliver: SliverToBoxAdapter(child: _ServerGroup(
+          expanded: expanded, nodes: nodes, pings: _pings,
+          onPing: _tcpPingNode, color: color,
+          selectedUuid: selectedUuid, onSelect: onSelect,
+          isPublicCatalog: _isPublicCatalog,
+        )),
+      ));
     }
 
-    addSection(
-      title: 'Обход ограничений',
-      subtitle: 'Для доступа везде',
-      nodes: groups['bypass']!,
-      color: const Color(0xFF6C5CE7),
-      // Более яркий синий
-      icon: Icons.shield_outlined,
-      expanded: _bypassExpanded,
-      onToggle: () => setState(() => _bypassExpanded = !_bypassExpanded),
-    );
+    addSection(title: 'Обход ограничений', subtitle: 'Для доступа к заблокированным сайтам',
+        nodes: groups['bypass']!, color: DS.violet,
+        icon: Icons.shield_rounded, expanded: _bypassExpanded,
+        onToggle: () => setState(() => _bypassExpanded = !_bypassExpanded));
 
-    addSection(
-      title: 'Безлимитный трафик',
-      subtitle: 'Без ограничений по объёму',
-      nodes: groups['unlimited']!,
-      color: const Color(0xFF00D9FF),
-      // Яркий голубой
-      icon: Icons.all_inclusive,
-      expanded: _unlimitedExpanded,
-      onToggle: () => setState(() => _unlimitedExpanded = !_unlimitedExpanded),
-    );
+    addSection(title: 'Безлимитный трафик', subtitle: 'Без ограничений по объёму',
+        nodes: groups['unlimited']!, color: const Color(0xFF22D3EE),
+        icon: Icons.all_inclusive_rounded, expanded: _unlimitedExpanded,
+        onToggle: () => setState(() => _unlimitedExpanded = !_unlimitedExpanded));
 
-    addSection(
-      title: 'Все серверы',
-      subtitle: 'Остальные доступные узлы',
-      nodes: groups['other']!,
-      color: const Color(0xFF2ED573),
-      // Светлый зелёный
-      icon: Icons.public,
-      expanded: _otherExpanded,
-      onToggle: () => setState(() => _otherExpanded = !_otherExpanded),
-    );
+    addSection(title: 'Все серверы', subtitle: 'Остальные доступные узлы',
+        nodes: groups['other']!, color: DS.emerald,
+        icon: Icons.public_rounded, expanded: _otherExpanded,
+        onToggle: () => setState(() => _otherExpanded = !_otherExpanded));
 
     return slivers;
   }
 
-  // ──────────────────────────────────────────────────────────────
-  // PING SINGLE
-  // ──────────────────────────────────────────────────────────────
-
-  Future<void> _pingNode(ServerNode node) async {
-    if (node.link == null) return;
-
-    setState(() => _pings[node.uuid] = -2);
-
-    try {
-      // flutter_v2ray_plus: getServerDelay принимает полный JSON конфиг
-      final parser = FlutterV2ray.parseFromURL(node.link!);
-      final config = parser.getFullConfiguration();
-      final v2ray = FlutterV2ray();
-      final ms = await v2ray.getServerDelay(config: config);
-
-      if (mounted) setState(() => _pings[node.uuid] = ms);
-    } catch (_) {
-      if (mounted) setState(() => _pings[node.uuid] = -1);
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────────
-  // PING ALL
-  // ──────────────────────────────────────────────────────────────
-
-  Future<void> _pingAll() async {
-    if (_nodes.isEmpty || _pingAllInProgress) return;
-
-    setState(() {
-      _pingAllInProgress = true;
-      for (final n in _nodes) {
-        if (n.link != null) _pings[n.uuid] = -2;
-      }
-    });
-
-    final v2ray = FlutterV2ray();
-
-    await Future.wait(
-      _nodes.where((n) => n.link != null).map((n) async {
-        try {
-          final parser = FlutterV2ray.parseFromURL(n.link!);
-          final ms = await v2ray.getServerDelay(
-            config: parser.getFullConfiguration(),
-          );
-
-          if (mounted) {
-            setState(() => _pings[n.uuid] = ms);
-          }
-        } catch (_) {
-          if (mounted) {
-            setState(() => _pings[n.uuid] = -1);
-          }
-        }
-      }),
-    );
-
-    if (mounted) setState(() => _pingAllInProgress = false);
-  }
-
-  Future<int?> tcpPing(String host, int port,
-      {Duration timeout = const Duration(seconds: 2)}) async {
-    final stopwatch = Stopwatch()..start();
-
-    try {
-      final socket = await Socket.connect(
-        host,
-        port,
-        timeout: timeout,
-      );
-
-      stopwatch.stop();
-      socket.destroy();
-
-      return stopwatch.elapsedMilliseconds;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> _tcpPingNode(ServerNode node) async {
-    if (node.link == null) return;
-
-    setState(() => _pings[node.uuid] = -2);
-
-    try {
-      final uri = Uri.parse(node.link!);
-      final host = uri.host;
-      final port = uri.hasPort ? uri.port : 443;
-
-      final ms = await tcpPing(host, port);
-
-      if (mounted) {
-        setState(() => _pings[node.uuid] = ms ?? -1);
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _pings[node.uuid] = -1);
-      }
-    }
-  }
-
-  Future<void> tcpPingAll() async {
-    const maxConcurrent = 5;
-
-    final queue = _nodes.where((n) => n.link != null).toList();
-
-    Future<void> worker() async {
-      while (queue.isNotEmpty) {
-        final node = queue.removeLast();
-        await _tcpPingNode(node);
-      }
-    }
-
-    await Future.wait(List.generate(maxConcurrent, (_) => worker()));
-  }
-
+  // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: RefreshIndicator(
+    final top = MediaQuery.of(context).padding.top;
+    return Scaffold(
+      backgroundColor: DS.surface0,
+      body: RefreshIndicator(
+        color: DS.violet,
+        backgroundColor: DS.surface2,
         onRefresh: _loadNodes,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              sliver: SliverToBoxAdapter(
-                child: PurpleHeader(
-                  title: 'Серверы',
-                  subtitle: !_loading && _nodes.isNotEmpty
-                      ? _isPublicCatalog
-                      ? '${_nodes.length} ${_pluralServers(_nodes.length)} (каталог)'
-                      : '${_nodes.length} ${_pluralServers(_nodes.length)} в подписке'
-                      : null,
-                  showBeta: false, // здесь BETA не нужен
-                  trailing: Row(
-                    children: [
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.surfaceSoft.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: IconButton(
-                          icon: _pingAllInProgress
-                              ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                              : const Icon(Icons.speed_outlined),
-                          onPressed: (_loading || _pingAllInProgress || _isPublicCatalog)
-                              ? null
-                              : tcpPingAll,
-                          tooltip: 'Пинг всех',
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: AppColors.surfaceSoft.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: IconButton(
-                          icon: const Icon(Icons.refresh),
-                          onPressed: _loading ? null : _loadNodes,
-                          tooltip: 'Обновить',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, top + 20, 20, 0),
+                child: _buildHeader(),
               ),
             ),
-            // Banner shown when displaying the public catalog.
             if (!_loading && _isPublicCatalog && _nodes.isNotEmpty)
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-                sliver: SliverToBoxAdapter(child: _buildPublicCatalogBanner()),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                sliver: SliverToBoxAdapter(child: VpnInfoBanner(
+                  color: DS.amber,
+                  text: 'Публичный каталог — только предпросмотр. Для подключения оформите подписку.',
+                )),
               ),
             if (_loading)
               const SliverFillRemaining(
-                child: Center(child: CircularProgressIndicator()),
-              )
+                  child: Center(child: CircularProgressIndicator(color: DS.violet)))
             else if (_nodes.isEmpty)
-              SliverFillRemaining(
-                child: _isPublicCatalog
-                    ? _buildPublicCatalogEmptyState()
-                    : _buildEmptyState(),
-              )
-            else ...[
-                ..._buildSections(),
-              ],
-            const SliverPadding(padding: EdgeInsets.only(bottom: 100)),
+              SliverFillRemaining(child: _EmptyState(
+                onRetry: _loadNodes,
+                onSettings: widget.onGoToSettings,
+                isPublic: _isPublicCatalog,
+              ))
+            else
+              ..._buildSections(),
+            const SliverPadding(padding: EdgeInsets.only(bottom: 110)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildPublicCatalogBanner() {
-    return Container(
-      margin: const EdgeInsets.only(top: 8, bottom: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.orange.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.orange.withValues(alpha: 0.25)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.info_outline, size: 16, color: Colors.orange[300]),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Публичный каталог — только предпросмотр. '
-                  'Для подключения оформите подписку.',
-              style: TextStyle(color: Colors.orange[300], fontSize: 12),
-            ),
-          ),
+  Widget _buildHeader() {
+    final count = _nodes.length;
+    final subtitle = !_loading && count > 0
+        ? _isPublicCatalog
+        ? '$count ${_pluralServers(count)} (каталог)'
+        : '$count ${_pluralServers(count)} в подписке'
+        : null;
+
+    return Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Серверы', style: TextStyle(
+            color: DS.textPrimary, fontSize: 32,
+            fontWeight: FontWeight.w800, letterSpacing: -0.5, height: 1)),
+        if (subtitle != null) ...[
+          const SizedBox(height: 6),
+          Text(subtitle, style: const TextStyle(color: DS.textSecondary, fontSize: 15)),
         ],
-      ),
-    );
+      ])),
+      if (!_isPublicCatalog) ...[
+        VpnIconBtn(
+          loading: _pingAllInProgress,
+          icon: Icons.speed_rounded,
+          onTap: (_loading || _pingAllInProgress) ? null : _tcpPingAll,
+        ),
+        const SizedBox(width: 8),
+      ],
+      VpnIconBtn(loading: _loading, icon: Icons.refresh_rounded,
+          onTap: _loading ? null : _loadNodes),
+    ]);
   }
 
   String _pluralServers(int n) {
-    final mod10 = n % 10;
-    final mod100 = n % 100;
-    if (mod100 >= 11 && mod100 <= 19) return 'серверов';
-    if (mod10 == 1) return 'сервер';
-    if (mod10 >= 2 && mod10 <= 4) return 'сервера';
+    final m10 = n % 10, m100 = n % 100;
+    if (m100 >= 11 && m100 <= 19) return 'серверов';
+    if (m10 == 1) return 'сервер';
+    if (m10 >= 2 && m10 <= 4) return 'сервера';
     return 'серверов';
   }
-
-  Widget _buildPublicCatalogEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Каталог недоступен',
-              style: TextStyle(color: Colors.grey[400], fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Не удалось загрузить серверы.\nПроверьте интернет-соединение или '
-                  'добавьте URL подписки в Настройках.',
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                FilledButton.icon(
-                  onPressed: _loadNodes,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Повторить'),
-                ),
-                const SizedBox(width: 12),
-                OutlinedButton.icon(
-                  onPressed: widget.onGoToSettings,
-                  icon: const Icon(Icons.settings_outlined),
-                  label: const Text('Настройки'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF6C5CE7),
-                    side: const BorderSide(color: Color(0xFF6C5CE7)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.grey.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Серверы не получены',
-              style: TextStyle(color: Colors.grey[400], fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Проверьте URL подписки или интернет-соединение',
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _loadNodes,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Повторить'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section header
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _SectionHeader extends StatelessWidget {
   final String title;
@@ -616,95 +304,60 @@ class _SectionHeader extends StatelessWidget {
   final VoidCallback onTap;
 
   const _SectionHeader({
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-    required this.color,
-    required this.expanded,
-    required this.nodeCount,
-    required this.onTap,
+    required this.title, required this.subtitle, required this.icon,
+    required this.color, required this.expanded,
+    required this.nodeCount, required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
+    return GestureDetector(
       onTap: onTap,
-      splashColor: color.withValues(alpha: 0.12),
-      highlightColor: Colors.white.withValues(alpha: 0.02),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: color, size: 22),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: AppColors.textNeutralMain,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      color: AppColors.textNeutralSecondary,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(children: [
+          Container(width: 42, height: 42,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(11),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '$nodeCount',
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      height: 1.0,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  AnimatedRotation(
-                    turns: expanded ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeInOut,
-                    child: Icon(Icons.expand_more, color: color, size: 18),
-                  ),
-                ],
-              ),
+              child: Icon(icon, color: color, size: 20)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(
+                color: DS.textPrimary, fontSize: 16, fontWeight: FontWeight.w700)),
+            Text(subtitle, style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
+          ])),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: color.withValues(alpha: 0.22)),
             ),
-          ],
-        ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text('$nodeCount', style: TextStyle(
+                  color: color, fontSize: 12, fontWeight: FontWeight.w700)),
+              const SizedBox(width: 4),
+              AnimatedRotation(
+                turns: expanded ? 0.5 : 0,
+                duration: const Duration(milliseconds: 240),
+                child: Icon(Icons.keyboard_arrow_down_rounded, color: color, size: 16),
+              ),
+            ]),
+          ),
+        ]),
       ),
     );
   }
 }
 
-class _AnimatedServerGroup extends StatefulWidget {
+// ─────────────────────────────────────────────────────────────────────────────
+// Animated server group card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ServerGroup extends StatefulWidget {
   final bool expanded;
   final List<ServerNode> nodes;
   final Map<String, int?> pings;
@@ -714,126 +367,82 @@ class _AnimatedServerGroup extends StatefulWidget {
   final Future<void> Function(ServerNode)? onSelect;
   final bool isPublicCatalog;
 
-  const _AnimatedServerGroup({
-    required this.expanded,
-    required this.nodes,
-    required this.pings,
-    required this.onPing,
-    required this.color,
-    this.selectedUuid,
-    this.onSelect,
-    this.isPublicCatalog = false,
+  const _ServerGroup({
+    required this.expanded, required this.nodes, required this.pings,
+    required this.onPing, required this.color, this.selectedUuid,
+    this.onSelect, this.isPublicCatalog = false,
   });
 
   @override
-  State<_AnimatedServerGroup> createState() => _AnimatedServerGroupState();
+  State<_ServerGroup> createState() => _ServerGroupState();
 }
 
-class _AnimatedServerGroupState extends State<_AnimatedServerGroup>
+class _ServerGroupState extends State<_ServerGroup>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _sizeAnim;
+  late AnimationController _ctrl;
+  late Animation<double> _anim;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    );
-
-    _sizeAnim = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
-
-    if (widget.expanded) {
-      _controller.value = 1;
-    }
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 280));
+    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+    if (widget.expanded) _ctrl.value = 1;
   }
 
   @override
-  void didUpdateWidget(covariant _AnimatedServerGroup oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.expanded) {
-      _controller.forward();
-    } else {
-      _controller.reverse();
-    }
+  void didUpdateWidget(covariant _ServerGroup old) {
+    super.didUpdateWidget(old);
+    widget.expanded ? _ctrl.forward() : _ctrl.reverse();
   }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
-    const double groupRadius = 18;
     return ClipRect(
       child: SizeTransition(
-        sizeFactor: _sizeAnim,
-        axisAlignment: -1,
+        sizeFactor: _anim,
         child: Padding(
           padding: const EdgeInsets.only(top: 4),
-          child: IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Separate colored accent bar to the left of the card
-                Container(
-                  width: 4,
-                  decoration: BoxDecoration(
-                    color: widget.color.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(2),
+          child: Container(
+            decoration: BoxDecoration(
+              color: DS.surface1,
+              borderRadius: BorderRadius.circular(DS.radius),
+              border: Border.all(color: DS.border),
+            ),
+            child: Column(
+              children: List.generate(widget.nodes.length, (i) {
+                final node = widget.nodes[i];
+                return Column(children: [
+                  _NodeTile(
+                    node: node,
+                    ping: widget.pings[node.uuid],
+                    onPing: () => widget.onPing(node),
+                    isSelected: node.uuid == widget.selectedUuid,
+                    onSelect: widget.onSelect != null
+                        ? () => widget.onSelect!(node) : null,
+                    isPublicCatalog: widget.isPublicCatalog,
+                    accentColor: widget.color,
                   ),
-                ),
-                const SizedBox(width: 8),
-                // Main card
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.graphiteSurface,
-                      borderRadius: BorderRadius.circular(groupRadius),
-                      border: Border.all(color: AppColors.graphiteElevated),
-                    ),
-                    child: Column(
-                      children: List.generate(widget.nodes.length, (i) {
-                        final node = widget.nodes[i];
-                        final isSelected = node.uuid == widget.selectedUuid;
-
-                        return Column(
-                          children: [
-                            _NodeTile(
-                              node: node,
-                              ping: widget.pings[node.uuid],
-                              onPing: () => widget.onPing(node),
-                              isSelected: isSelected,
-                              onSelect: widget.onSelect != null
-                                  ? () => widget.onSelect!(node)
-                                  : null,
-                              isPublicCatalog: widget.isPublicCatalog,
-                            ),
-                            if (i != widget.nodes.length - 1)
-                              Divider(
-                                height: 1,
-                                thickness: 0.6,
-                                color: AppColors.graphiteElevated,
-                              ),
-                          ],
-                        );
-                      }),
-                    ),
-                  ),
-                ),
-              ],
+                  if (i != widget.nodes.length - 1)
+                    const Divider(height: 1, indent: 16, endIndent: 16,
+                        color: DS.border),
+                ]);
+              }),
             ),
           ),
         ),
       ),
     );
   }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
 }
 
-// ── Тайл сервера ──────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Node tile
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _NodeTile extends StatelessWidget {
   final ServerNode node;
@@ -842,220 +451,190 @@ class _NodeTile extends StatelessWidget {
   final bool isSelected;
   final VoidCallback? onSelect;
   final bool isPublicCatalog;
+  final Color accentColor;
 
   const _NodeTile({
-    required this.node,
-    this.ping,
-    this.onPing,
-    this.isSelected = false,
-    this.onSelect,
-    this.isPublicCatalog = false,
+    required this.node, this.ping, this.onPing,
+    this.isSelected = false, this.onSelect,
+    this.isPublicCatalog = false, required this.accentColor,
   });
 
   @override
   Widget build(BuildContext context) {
-    final protocol = node.protocol ?? '';
-    final isPinging = ping == -2;
-    const purple = Color(0xFF6C5CE7);
-
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
-        color: isSelected
-            ? purple.withValues(alpha: 0.12)
-            : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isSelected ? purple : Colors.white.withValues(alpha: 0.06),
-          width: isSelected ? 1.5 : 1,
-        ),
-        boxShadow: isSelected
-            ? [
-          BoxShadow(
-            color: purple.withValues(alpha: 0.18),
-            blurRadius: 12,
-            spreadRadius: -2,
-          ),
-        ]
-            : null,
+        color: isSelected ? accentColor.withValues(alpha: 0.09) : Colors.transparent,
+        borderRadius: BorderRadius.circular(DS.radius),
       ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
+      child: Material(color: Colors.transparent,
         child: InkWell(
           onTap: onSelect,
-          borderRadius: BorderRadius.circular(14),
-          splashColor: purple.withValues(alpha: 0.1),
-          highlightColor: Colors.transparent,
+          borderRadius: BorderRadius.circular(DS.radius),
+          splashColor: accentColor.withValues(alpha: 0.08),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-            child: Row(
-              children: [
-                CountryFlag.fromCountryCode(
-                  node.countryCode,
-                  theme: ImageTheme(
-                    width: 40,
-                    height: 32,
-                    shape: RoundedRectangle(12),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        node.name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                          color: isSelected
-                              ? const Color(0xFF6C5CE7)
-                              : AppColors.textNeutralMain,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          if (protocol.isNotEmpty) ...[
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _protocolColor(
-                                  protocol,
-                                ).withValues(alpha: 0.18),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                protocol.toUpperCase(),
-                                style: TextStyle(
-                                  color: _protocolColor(protocol),
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                          ],
-                          Flexible(
-                            child: Text(
-                              node.address,
-                              style: const TextStyle(
-                                color: AppColors.textNeutralSecondary,
-                                fontSize: 12,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Trailing: checkmark when selected, lock for public catalog,
-                // or ping button for subscription servers.
-                if (isSelected)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 4),
-                    child: Icon(
-                      Icons.check_circle,
-                      color: Color(0xFF6C5CE7),
-                      size: 20,
-                    ),
-                  )
-                else if (isPublicCatalog)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            child: Row(children: [
+              // Flag
+              CountryFlag.fromCountryCode(
+                node.countryCode,
+                theme: ImageTheme(width: 36, height: 28, shape: RoundedRectangle(8)),
+              ),
+              const SizedBox(width: 12),
+              // Info
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(node.name, style: TextStyle(
+                    fontWeight: FontWeight.w600, fontSize: 14,
+                    color: isSelected ? accentColor : DS.textPrimary),
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 3),
+                Row(children: [
+                  if ((node.protocol ?? '').isNotEmpty) ...[
+                    _ProtoBadge(protocol: node.protocol!),
+                    const SizedBox(width: 6),
+                  ],
+                  Flexible(child: Text(node.address,
+                      style: const TextStyle(color: DS.textSecondary, fontSize: 12),
+                      overflow: TextOverflow.ellipsis)),
+                ]),
+              ])),
+              const SizedBox(width: 8),
+              // Trailing
+              if (isSelected)
+                Icon(Icons.check_circle_rounded, color: accentColor, size: 20)
+              else if (isPublicCatalog)
+                Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(color: DS.surface2, borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: DS.border)),
+                    child: const Icon(Icons.lock_outline_rounded, size: 14, color: DS.textMuted))
+              else
+                GestureDetector(
+                  onTap: (ping == -2 || node.link == null) ? null : onPing,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                      color: Colors.grey.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
+                      color: _pingColor(ping).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _pingColor(ping).withValues(alpha: 0.25)),
                     ),
-                    child: const Icon(
-                      Icons.lock_outline,
-                      size: 14,
-                      color: Colors.grey,
-                    ),
-                  )
-                else
-                  InkWell(
-                    onTap: (isPinging || node.link == null) ? null : onPing,
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _pingColor(ping).withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: isPinging
-                          ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: _pingColor(ping),
-                        ),
-                      )
-                          : Text(
-                        _pingLabel(ping),
-                        style: TextStyle(
-                          color: _pingColor(ping),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
+                    child: ping == -2
+                        ? SizedBox(width: 14, height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: _pingColor(ping)))
+                        : Text(_pingLabel(ping), style: TextStyle(
+                        color: _pingColor(ping), fontSize: 11, fontWeight: FontWeight.w700)),
                   ),
-              ],
-            ),
+                ),
+            ]),
           ),
         ),
       ),
     );
   }
 
-  Color _protocolColor(String p) {
-    switch (p.toLowerCase()) {
-      case 'vmess':
-        return const Color(0xFF6C5CE7);
-      case 'vless':
-        return const Color(0xFF00D9FF);
-      case 'trojan':
-        return const Color(0xFFFFA502);
-      case 'ss':
-        return const Color(0xFF2ED573);
-      case 'hysteria2':
-      case 'hy2':
-      case 'hysteria':
-        return const Color(0xFFE84393);
-      case 'tuic':
-        return const Color(0xFFFD79A8);
-      default:
-        return Colors.grey;
+  Color _pingColor(int? p) {
+    if (p == null) return DS.textMuted;
+    if (p == -2) return DS.amber;
+    if (p < 0) return DS.textMuted;
+    if (p < 100) return DS.emerald;
+    if (p < 300) return DS.amber;
+    return DS.rose;
+  }
+
+  String _pingLabel(int? p) => (p == null || p < 0) ? '—' : '${p}ms';
+}
+
+class _ProtoBadge extends StatelessWidget {
+  final String protocol;
+  const _ProtoBadge({required this.protocol});
+
+  Color _color() {
+    switch (protocol.toLowerCase()) {
+      case 'vmess': return DS.violet;
+      case 'vless': return const Color(0xFF22D3EE);
+      case 'trojan': return DS.amber;
+      case 'ss': return DS.emerald;
+      case 'hysteria2': case 'hy2': case 'hysteria': return DS.rose;
+      case 'tuic': return const Color(0xFFF0ABFC);
+      default: return DS.textMuted;
     }
   }
 
-  Color _pingColor(int? p) {
-    if (p == null) return Colors.grey;
-    if (p == -2) return const Color(0xFFFFA502);
-    if (p < 0) return Colors.grey;
-    if (p < 100) return const Color(0xFF2ED573);
-    if (p < 300) return const Color(0xFFFFA502);
-    return const Color(0xFFE74C3C);
+  @override
+  Widget build(BuildContext context) {
+    final c = _color();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+          color: c.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(5)),
+      child: Text(protocol.toUpperCase(), style: TextStyle(
+          color: c, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
+    );
   }
+}
 
-  String _pingLabel(int? p) {
-    if (p == null || p < 0) return '—';
-    return '${p}ms';
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// Empty state
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _EmptyState extends StatelessWidget {
+  final VoidCallback onRetry;
+  final VoidCallback? onSettings;
+  final bool isPublic;
+  const _EmptyState({required this.onRetry, this.onSettings, required this.isPublic});
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(width: 72, height: 72,
+            decoration: BoxDecoration(
+                color: DS.surface2, shape: BoxShape.circle,
+                border: Border.all(color: DS.border)),
+            child: const Icon(Icons.cloud_off_rounded, size: 32, color: DS.textMuted)),
+        const SizedBox(height: 18),
+        Text(isPublic ? 'Каталог недоступен' : 'Серверы не получены',
+            style: const TextStyle(color: DS.textPrimary, fontSize: 17, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Text(isPublic
+            ? 'Не удалось загрузить серверы. Проверьте соединение.'
+            : 'Проверьте URL подписки или интернет-соединение.',
+            style: const TextStyle(color: DS.textSecondary, fontSize: 13),
+            textAlign: TextAlign.center),
+        const SizedBox(height: 22),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          _OutlinedBtn(label: 'Повторить', icon: Icons.refresh_rounded, onTap: onRetry),
+          if (onSettings != null) ...[
+            const SizedBox(width: 10),
+            _OutlinedBtn(label: 'Настройки', icon: Icons.settings_rounded, onTap: onSettings!),
+          ],
+        ]),
+      ]),
+    ),
+  );
+}
+
+class _OutlinedBtn extends StatelessWidget {
+  final String label; final IconData icon; final VoidCallback onTap;
+  const _OutlinedBtn({required this.label, required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: DS.surface2,
+        borderRadius: BorderRadius.circular(DS.radiusSm),
+        border: Border.all(color: DS.border),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 16, color: DS.violet),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(
+            color: DS.violet, fontSize: 13, fontWeight: FontWeight.w600)),
+      ]),
+    ),
+  );
 }

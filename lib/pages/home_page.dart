@@ -13,12 +13,11 @@ import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
-import '../theme/app_colors.dart';
 import '../utils/speed_calculator.dart';
-import '../widgets/purple_header.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 import 'config_editor_page.dart';
+import '../main.dart' show DS;
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -29,33 +28,26 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  // ── flutter_v2ray_plus ───────────────────────────────────────────────────
+  // ── V2ray ──────────────────────────────────────────────────────────────────
   late final FlutterV2ray _v2ray;
   VlessStatus _status = VlessStatus();
   StreamSubscription<VlessStatus>? _statusSub;
 
-  // ── Серверы ──────────────────────────────────────────────────────────────
+  // ── Nodes ──────────────────────────────────────────────────────────────────
   List<ServerNode> _nodes = [];
   ServerNode? _selectedNode;
   bool _isLoadingNodes = false;
-
-  /// true when [_nodes] was loaded from the public catalog (no subscription URL).
   bool _isPublicCatalog = false;
   SubscriptionInfo? _subscriptionInfo;
-
-  /// Tracks the last subscription URL seen from [meNotifier] to detect changes.
   String _lastKnownSubUrl = '';
 
-  // ── Анимация ─────────────────────────────────────────────────────────────
-  late AnimationController _pulseCtrl;
-  late Animation<double> _pulseAnim;
-
+  // ── State ──────────────────────────────────────────────────────────────────
+  late final SpeedCalculator _speedCalc;
   bool _initialized = false;
   bool _isConnecting = false;
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Computed ───────────────────────────────────────────────────────────────
   bool get _isConnected => _status.state.toUpperCase() == 'CONNECTED';
-
   bool get _isTransitioning =>
       _status.state.toUpperCase() == 'CONNECTING' ||
           _status.state.toUpperCase() == 'DISCONNECTING' ||
@@ -69,14 +61,7 @@ class _HomePageState extends State<HomePage>
     return 'Отключено';
   }
 
-  double _normalizeSpeed(int bytesPerSecond) {
-    return bytesPerSecond / (1024 * 1024); // → MB/s стабильно
-  }
-
-  late final SpeedCalculator _speedCalc;
-
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
-
+  // ── Lifecycle ──────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
@@ -84,66 +69,14 @@ class _HomePageState extends State<HomePage>
     selectedServerNotifier.addListener(_onSelectedServerChanged);
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
-
-    _pulseCtrl = AnimationController(
-      duration: const Duration(seconds: 2),
-      vsync: this,
-    )..repeat(reverse: true);
-    _pulseAnim = Tween<double>(
-      begin: 0.85,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
-
     _speedCalc = SpeedCalculator(smoothing: 0.25);
-
     _v2ray = FlutterV2ray();
     _init();
   }
 
-  /// Called when [ServersPage] updates the selection.
-  void _onSelectedServerChanged() {
-    if (!mounted) return;
-    final node = selectedServerNotifier.value;
-    if (node?.uuid != _selectedNode?.uuid) {
-      setState(() => _selectedNode = node);
-    }
-  }
-
-  Future<void> _init() async {
-    await _v2ray.initializeVless(
-      notificationIconResourceType: 'mipmap',
-      notificationIconResourceName: 'ic_launcher',
-    );
-
-    _statusSub = _v2ray.onStatusChanged.listen((s) {
-      if (!mounted) return;
-
-      // обновляем калькулятор ДО setState
-      _speedCalc.update(
-        totalUploadBytes: s.upload,
-        totalDownloadBytes: s.download,
-      );
-
-      setState(() {
-        _status = s;
-      });
-
-      // если отключились — сбрасываем скорость
-      if (s.state.toUpperCase() != 'CONNECTED') {
-        _speedCalc.reset();
-      }
-    });
-
-    if (mounted) setState(() => _initialized = true);
-
-    _loadNodes();
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _refreshAll();
-    }
+    if (state == AppLifecycleState.resumed) _refreshAll();
   }
 
   @override
@@ -153,42 +86,50 @@ class _HomePageState extends State<HomePage>
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
     _statusSub?.cancel();
-    _pulseCtrl.dispose();
     super.dispose();
   }
 
-  void _onAuthChanged() {
+  void _onSelectedServerChanged() {
+    if (!mounted) return;
+    final node = selectedServerNotifier.value;
+    if (node?.uuid != _selectedNode?.uuid) setState(() => _selectedNode = node);
+  }
+
+  void _onAuthChanged() => _loadNodes();
+
+  void _onMeChanged() {
+    final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
+    if (url != _lastKnownSubUrl) { _lastKnownSubUrl = url; _loadNodes(); }
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  Future<void> _init() async {
+    await _v2ray.initializeVless(
+      notificationIconResourceType: 'mipmap',
+      notificationIconResourceName: 'ic_launcher',
+    );
+    _statusSub = _v2ray.onStatusChanged.listen((s) {
+      if (!mounted) return;
+      _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
+      setState(() => _status = s);
+      if (s.state.toUpperCase() != 'CONNECTED') _speedCalc.reset();
+    });
+    if (mounted) setState(() => _initialized = true);
     _loadNodes();
   }
 
-  /// Reload servers when the subscription URL changes (e.g. after a successful
-  /// subscription purchase that updated [meNotifier]).
-  void _onMeChanged() {
-    final newUrl = meNotifier.value?.subscription?.subscriptionUrl ?? '';
-    if (newUrl != _lastKnownSubUrl) {
-      _lastKnownSubUrl = newUrl;
-      _loadNodes();
-    }
-  }
-
-  /// Full refresh: fetch latest user data (including subscription URL) then
-  /// reload the server list.  Used by pull-to-refresh, the header refresh
-  /// button, and app resume.
+  // ── Data ───────────────────────────────────────────────────────────────────
   Future<void> _refreshAll() async {
     await MeService.refresh();
     await _loadNodes();
   }
 
-  // ── Загрузка серверов ─────────────────────────────────────────────────────
-
   Future<void> _loadNodes() async {
     if (!mounted) return;
     setState(() => _isLoadingNodes = true);
-
     final subUrl = await RemnawaveService.getSubscriptionUrl();
     final List<ServerNode> nodes;
     final bool isPublic;
-    debugPrint('HomePage: loading nodes - ${subUrl}');
     if (subUrl.isEmpty) {
       nodes = await RemnawaveService.fetchPublicServers();
       isPublic = true;
@@ -196,32 +137,22 @@ class _HomePageState extends State<HomePage>
       nodes = await RemnawaveService.fetchNodes();
       isPublic = false;
     }
-
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
     final savedUuid = prefs.getString('selected_node_uuid');
-    debugPrint('HomePage: selected_node from cache - ${savedUuid}');
     setState(() {
       _nodes = nodes;
       _isPublicCatalog = isPublic;
-      _subscriptionInfo = isPublic
-          ? null
-          : RemnawaveService.lastSubscriptionInfo;
+      _subscriptionInfo = isPublic ? null : RemnawaveService.lastSubscriptionInfo;
       _isLoadingNodes = false;
       if (_selectedNode != null) {
-        _selectedNode = nodes.cast<ServerNode?>().firstWhere(
-              (n) => n?.uuid == _selectedNode!.uuid,
-          orElse: () => null,
-        );
+        _selectedNode = nodes.cast<ServerNode?>()
+            .firstWhere((n) => n?.uuid == _selectedNode!.uuid, orElse: () => null);
       }
       if (_selectedNode == null && savedUuid != null) {
-        _selectedNode = nodes.cast<ServerNode?>().firstWhere(
-              (n) => n?.uuid == savedUuid,
-          orElse: () => null,
-        );
+        _selectedNode = nodes.cast<ServerNode?>()
+            .firstWhere((n) => n?.uuid == savedUuid, orElse: () => null);
       }
-      // Sync restored selection with the shared notifier so ServersPage
-      // reflects the same selected server.
       if (_selectedNode != null &&
           selectedServerNotifier.value?.uuid != _selectedNode!.uuid) {
         selectedServerNotifier.value = _selectedNode;
@@ -229,39 +160,18 @@ class _HomePageState extends State<HomePage>
     });
   }
 
-  // ── Подключение ───────────────────────────────────────────────────────────
-
-  /// Clear Telegram auth session and reload in public-catalog mode.
-  Future<void> _performLogout() async {
-    await AuthService.logout();
-    // _onAuthChanged listener will call _loadNodes automatically.
-  }
+  // ── Connection ─────────────────────────────────────────────────────────────
+  Future<void> _performLogout() async => AuthService.logout();
 
   Future<void> _toggleConnection() async {
     if (_isTransitioning) return;
-
-    if (_isConnected) {
-      await _v2ray.stopVless();
-      return;
-    }
-
+    if (_isConnected) { await _v2ray.stopVless(); return; }
     final node = _selectedNode;
-    if (node == null) {
-      _snack('Сначала выберите сервер');
-      return;
-    }
-
-    // Public catalog servers have no link — connection is not possible.
+    if (node == null) { _snack('Сначала выберите сервер'); return; }
     if (node.isDisabled || node.link == null) {
-      await showAuthBottomSheet(context);
-      return;
+      await showAuthBottomSheet(context); return;
     }
-
-    if (!await _v2ray.requestPermission()) {
-      _snack('Нет разрешения VPN');
-      return;
-    }
-
+    if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
     setState(() => _isConnecting = true);
     try {
       final parser = FlutterV2ray.parseFromURL(node.link!);
@@ -278,383 +188,183 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  // ── Конфиг выбранного сервера ─────────────────────────────────────────────
-
   void _openConfigEditor(ServerNode node) {
-    if (node.link == null) {
-      _snack('Нет ссылки для этого сервера');
-      return;
-    }
+    if (node.link == null) { _snack('Нет ссылки'); return; }
     try {
       final parser = FlutterV2ray.parseFromURL(node.link!);
-      final json = const JsonEncoder.withIndent(
-        '  ',
-      ).convert(jsonDecode(parser.getFullConfiguration()));
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              ConfigEditorPage(configJson: json, configName: node.name),
-        ),
-      );
-    } catch (e) {
-      _snack('Не удалось разобрать конфиг: $e');
-    }
+      final json = const JsonEncoder.withIndent('  ')
+          .convert(jsonDecode(parser.getFullConfiguration()));
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => ConfigEditorPage(configJson: json, configName: node.name),
+      ));
+    } catch (e) { _snack('Не удалось разобрать конфиг: $e'); }
   }
 
-  // ── Пикер серверов ────────────────────────────────────────────────────────
-
+  // ── Server picker sheet ────────────────────────────────────────────────────
   void _showServerPicker() {
-    // Category selected inside the bottom sheet (null = all servers).
     String? selectedCat;
-
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1A1A2E),
+      backgroundColor: DS.surface1,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) {
-          // Determine which category groups have servers (to decide whether
-          // to show the category chips at all).
-          bool hasBypass = false;
-          bool hasUnlimited = false;
-          for (final n in _nodes) {
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
+        bool hasBypass = false, hasUnlimited = false;
+        for (final n in _nodes) {
+          final d = (n.description ?? '').toLowerCase();
+          if (d.contains('белые')) hasBypass = true;
+          if (d.contains('безлимит')) hasUnlimited = true;
+        }
+        final showCats = !_isPublicCatalog && (hasBypass || hasUnlimited);
+
+        List<ServerNode> visible() {
+          if (selectedCat == null) return _nodes;
+          return _nodes.where((n) {
             final d = (n.description ?? '').toLowerCase();
-            if (d.contains('белые')) hasBypass = true;
-            if (d.contains('безлимит')) hasUnlimited = true;
-          }
-          final showCategoryBar =
-              !_isPublicCatalog && (hasBypass || hasUnlimited);
+            if (selectedCat == 'bypass') return d.contains('белые');
+            if (selectedCat == 'unlimited') return d.contains('безлимит');
+            return !d.contains('белые') && !d.contains('безлимит');
+          }).toList();
+        }
 
-          // Filter nodes based on selected category.
-          List<ServerNode> visibleNodes() {
-            if (selectedCat == null) return _nodes;
-            return _nodes.where((n) {
-              final d = (n.description ?? '').toLowerCase();
-              if (selectedCat == 'bypass') return d.contains('белые');
-              if (selectedCat == 'unlimited') return d.contains('безлимит');
-              // 'other': everything that is not bypass and not unlimited.
-              return !d.contains('белые') && !d.contains('безлимит');
-            }).toList();
-          }
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.6,
+          maxChildSize: 0.92,
+          minChildSize: 0.3,
+          builder: (_, scrollCtrl) => Column(children: [
+            const SizedBox(height: 12),
+            Container(width: 40, height: 4,
+                decoration: BoxDecoration(color: DS.border, borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 16),
 
-          return DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.6,
-            maxChildSize: 0.92,
-            minChildSize: 0.3,
-            builder: (_, scrollCtrl) => Column(
-              children: [
-                const SizedBox(height: 12),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[600],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+            // Sheet header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(children: [
+                const Expanded(child: Text('Выбрать сервер', style: TextStyle(
+                    color: DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w700))),
+                VpnIconBtn(
+                  loading: _isLoadingNodes,
+                  icon: Icons.refresh_rounded,
+                  onTap: () async { setSheet(() {}); await _loadNodes(); setSheet(() {}); },
                 ),
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Выбрать сервер',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      _isLoadingNodes
-                          ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                          : IconButton(
-                        icon: const Icon(Icons.refresh, size: 20),
-                        onPressed: () async {
-                          setSheet(() {});
-                          await _loadNodes();
-                          setSheet(() {});
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                // Banner for public catalog mode.
-                if (_isPublicCatalog)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: Colors.orange.withValues(alpha: 0.25),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.info_outline,
-                            size: 14,
-                            color: Colors.orange[300],
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Публичный каталог. Для подключения нужна подписка.',
-                              style: TextStyle(
-                                color: Colors.orange[300],
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                // Compact category chip bar (only for private subscription servers).
-                if (showCategoryBar)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          for (final entry in <(String?, String)>[
-                            (null, 'Все'),
-                            ('bypass', 'Обход'),
-                            ('unlimited', 'Безлимит'),
-                            ('other', 'Прочее'),
-                          ])
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: GestureDetector(
-                                onTap: () =>
-                                    setSheet(() => selectedCat = entry.$1),
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 150),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 14,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: selectedCat == entry.$1
-                                        ? const Color(
-                                      0xFF6C5CE7,
-                                    ).withValues(alpha: 0.85)
-                                        : const Color(0xFF2D2D44),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: selectedCat == entry.$1
-                                          ? const Color(0xFF6C5CE7)
-                                          : Colors.white12,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    entry.$2,
-                                    style: TextStyle(
-                                      color: selectedCat == entry.$1
-                                          ? Colors.white
-                                          : Colors.white70,
-                                      fontSize: 12,
-                                      fontWeight: selectedCat == entry.$1
-                                          ? FontWeight.w600
-                                          : FontWeight.w400,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                const Divider(height: 1),
-                Expanded(
-                  child: _nodes.isEmpty
-                      ? Center(
-                    child: _isLoadingNodes
-                        ? const CircularProgressIndicator()
-                        : Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.cloud_off,
-                            size: 48,
-                            color: Colors.grey[600],
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Серверы не получены.\nПроверьте URL подписки в Настройках.',
-                            style: TextStyle(
-                              color: Colors.grey[400],
-                              fontSize: 14,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                      : Builder(
-                    builder: (_) {
-                      final nodes = visibleNodes();
-                      if (nodes.isEmpty) {
-                        return Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(32),
-                            child: Text(
-                              'В этой категории нет серверов.',
-                              style: TextStyle(
-                                color: Colors.grey[400],
-                                fontSize: 14,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        );
-                      }
-                      return ListView.builder(
-                        controller: scrollCtrl,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        itemCount: nodes.length,
-                        itemBuilder: (_, i) {
-                          final node = nodes[i];
-                          final isSel = _selectedNode?.uuid == node.uuid;
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 6),
-                            color: isSel
-                                ? const Color(
-                              0xFF6C5CE7,
-                            ).withValues(alpha: 0.15)
-                                : null,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              side: isSel
-                                  ? const BorderSide(
-                                color: Color(0xFF6C5CE7),
-                                width: 1.5,
-                              )
-                                  : BorderSide.none,
-                            ),
-                            child: ListTile(
-                              onTap: () async {
-                                if (_isPublicCatalog) {
-                                  // Catalog server → show auth prompt.
-                                  Navigator.pop(ctx);
-                                  if (context.mounted) {
-                                    await showAuthBottomSheet(context);
-                                  }
-                                  return;
-                                }
-                                setState(() => _selectedNode = node);
-                                // Sync selection with ServersPage.
-                                selectedServerNotifier.value = node;
-                                final prefs =
-                                await SharedPreferences.getInstance();
-                                await prefs.setString(
-                                  'selected_node_uuid',
-                                  node.uuid,
-                                );
-                                if (ctx.mounted) Navigator.pop(ctx);
-                              },
-                              leading: Text(
-                                _countryEmoji(node.countryCode),
-                                style: const TextStyle(fontSize: 24),
-                              ),
-                              title: Text(
-                                node.name,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Text(
-                                node.address,
-                                style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontSize: 12,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (isSel)
-                                    const Icon(
-                                      Icons.check_circle,
-                                      color: Color(0xFF6C5CE7),
-                                    )
-                                  else if (_isPublicCatalog)
-                                    const Icon(
-                                      Icons.lock_outline,
-                                      size: 16,
-                                      color: Colors.grey,
-                                    )
-                                  else
-                                    _protocolBadge(node.protocol ?? ''),
-                                  if (!_isPublicCatalog)
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.code_outlined,
-                                        size: 18,
-                                        color: Colors.white38,
-                                      ),
-                                      tooltip: 'Конфиг',
-                                      visualDensity: VisualDensity.compact,
-                                      onPressed: () {
-                                        Navigator.pop(ctx);
-                                        _openConfigEditor(node);
-                                      },
-                                    ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
+              ]),
             ),
-          );
-        },
-      ),
+
+            // Public catalog warning
+            if (_isPublicCatalog)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                child: VpnInfoBanner(
+                  color: DS.amber,
+                  text: 'Публичный каталог. Для подключения нужна подписка.',
+                ),
+              ),
+
+            // Category chips
+            if (showCats)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    for (final e in <(String?, String)>[
+                      (null, 'Все'), ('bypass', 'Обход'),
+                      ('unlimited', 'Безлимит'), ('other', 'Прочее'),
+                    ])
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _Chip(
+                          label: e.$2,
+                          selected: selectedCat == e.$1,
+                          onTap: () => setSheet(() => selectedCat = e.$1),
+                        ),
+                      ),
+                  ]),
+                ),
+              ),
+
+            const SizedBox(height: 10),
+            Divider(height: 1, color: DS.border),
+
+            // Server list
+            Expanded(
+              child: _nodes.isEmpty
+                  ? Center(child: _isLoadingNodes
+                  ? const CircularProgressIndicator(color: DS.violet)
+                  : const _EmptyNodes())
+                  : Builder(builder: (_) {
+                final nodes = visible();
+                if (nodes.isEmpty) {
+                  return const Center(child: Text('Нет серверов в этой категории',
+                      style: TextStyle(color: DS.textSecondary)));
+                }
+                return ListView.separated(
+                  controller: scrollCtrl,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  itemCount: nodes.length,
+                  separatorBuilder: (_, __) => Divider(height: 1, indent: 16, endIndent: 16, color: DS.border),
+                  itemBuilder: (_, i) {
+                    final node = nodes[i];
+                    final isSel = _selectedNode?.uuid == node.uuid;
+                    return Material(
+                      color: isSel ? DS.violet.withValues(alpha: 0.08) : Colors.transparent,
+                      child: InkWell(
+                        onTap: () async {
+                          if (_isPublicCatalog) {
+                            Navigator.pop(ctx);
+                            if (context.mounted) await showAuthBottomSheet(context);
+                            return;
+                          }
+                          setState(() => _selectedNode = node);
+                          selectedServerNotifier.value = node;
+                          final p = await SharedPreferences.getInstance();
+                          await p.setString('selected_node_uuid', node.uuid);
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+                          child: Row(children: [
+                            Text(_countryEmoji(node.countryCode),
+                                style: const TextStyle(fontSize: 22)),
+                            const SizedBox(width: 14),
+                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(node.name, style: TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 14,
+                                  color: isSel ? DS.violet : DS.textPrimary),
+                                  overflow: TextOverflow.ellipsis),
+                              Text(node.address, style: const TextStyle(
+                                  color: DS.textSecondary, fontSize: 12),
+                                  overflow: TextOverflow.ellipsis),
+                            ])),
+                            if (isSel)
+                              const Icon(Icons.check_circle_rounded, color: DS.violet, size: 20)
+                            else if (_isPublicCatalog)
+                              const Icon(Icons.lock_outline_rounded, size: 16, color: DS.textMuted),
+                          ]),
+                        ),
+                      ),
+                    );
+                  },
+                );
+              }),
+            ),
+          ]),
+        );
+      }),
     );
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
+  // ── Helpers ────────────────────────────────────────────────────────────────
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF2D2D44),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    ));
   }
 
   String _countryEmoji(String code) {
@@ -666,99 +376,62 @@ class _HomePageState extends State<HomePage>
     return String.fromCharCode(base + f) + String.fromCharCode(base + s);
   }
 
-  Widget _protocolBadge(String protocol) {
-    if (protocol.isEmpty) return const SizedBox.shrink();
-    Color color;
-    switch (protocol.toLowerCase()) {
-      case 'vless':
-        color = const Color(0xFF00D9FF);
-        break;
-      case 'vmess':
-        color = const Color(0xFF6C5CE7);
-        break;
-      case 'trojan':
-        color = const Color(0xFFFFA502);
-        break;
-      case 'ss':
-        color = const Color(0xFF2ED573);
-        break;
-      default:
-        color = Colors.grey;
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        protocol.toUpperCase(),
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  String _fmtBytes(int bytes) {
-    if (bytes < 1024) return '${bytes}B';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)}KB';
-    }
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)}GB';
+  String _fmtBytes(int b) {
+    if (b < 1024) return '${b}B';
+    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)}KB';
+    if (b < 1024 * 1024 * 1024) return '${(b / (1024 * 1024)).toStringAsFixed(1)}MB';
+    return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)}GB';
   }
 
   String _fmtDuration(int sec) {
-    final h = sec ~/ 3600;
-    final m = (sec % 3600) ~/ 60;
-    final s = sec % 60;
-    if (h > 0) {
-      return '$hч ${m.toString().padLeft(2, '0')}м';
-    }
+    final h = sec ~/ 3600, m = (sec % 3600) ~/ 60, s = sec % 60;
+    if (h > 0) return '${h}ч ${m.toString().padLeft(2, '0')}м';
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  Color _progressColor(double f) {
+    if (f < 0.6) return DS.emerald;
+    if (f < 0.85) return DS.amber;
+    return DS.rose;
+  }
 
+  String _remaining(SubscriptionInfo info) {
+    if (info.totalBytes <= 0) return '∞';
+    final rem = info.totalBytes - info.usedBytes;
+    if (rem <= 0) return '0 ГБ';
+    return SubscriptionInfo(uploadBytes: 0, downloadBytes: rem, totalBytes: info.totalBytes).formattedUsed;
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     if (!_initialized) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        backgroundColor: DS.surface0,
+        body: Center(child: CircularProgressIndicator(color: DS.violet)),
       );
     }
-
     return Scaffold(
+      backgroundColor: DS.surface0,
       body: RefreshIndicator(
+        color: DS.violet,
+        backgroundColor: DS.surface2,
         onRefresh: _refreshAll,
-        color: AppColors.primary,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
-                16,
-                MediaQuery.of(context).padding.top + 16,
-                16,
-                100,
-              ),
-              sliver: SliverList(
-                delegate: SliverChildListDelegate([
-                  _buildHeader(),
-                  const SizedBox(height: 16),
-                  _buildConnectionCard(),
-                  const SizedBox(height: 12),
-                  _buildTrafficCard(),
-                  const SizedBox(height: 12),
-                  _buildSubscriptionCard(),
-                  const SizedBox(height: 12),
-                ]),
-              ),
+                  16, MediaQuery.of(context).padding.top + 20, 16, 120),
+              sliver: SliverList(delegate: SliverChildListDelegate([
+                _buildHeader(),
+                const SizedBox(height: 20),
+                _buildConnectionCard(),
+                const SizedBox(height: 12),
+                _buildSpeedCard(),
+                const SizedBox(height: 12),
+                _buildSubscriptionCard(),
+              ])),
             ),
           ],
         ),
@@ -766,846 +439,514 @@ class _HomePageState extends State<HomePage>
     );
   }
 
-// ── Заголовок ─────────────────────────────────────────────────────────────
-
+  // ── Header ─────────────────────────────────────────────────────────────────
   Widget _buildHeader() {
-    final subtitle = _isConnected
-        ? 'Соединение защищено'
-        : 'Свобода начинается с приватности';
-
-    return PurpleHeader(
-      title: 'Ulya VPN',
-      subtitle: subtitle,
-      showBeta: true,
-      trailing: Container(
-        decoration: BoxDecoration(
-          color: AppColors.surfaceSoft.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white10),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Ulya VPN', style: TextStyle(
+              color: DS.textPrimary, fontSize: 32,
+              fontWeight: FontWeight.w800, letterSpacing: -0.5, height: 1,
+            )),
+            const SizedBox(height: 6),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: Text(
+                key: ValueKey(_isConnected),
+                _isConnected ? 'Соединение защищено' : 'Свобода начинается с приватности',
+                style: const TextStyle(color: DS.textSecondary, fontSize: 15),
+              ),
+            ),
+          ]),
         ),
-        child: IconButton(
-          icon: _isLoadingNodes
-              ? const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )
-              : const Icon(Icons.refresh_rounded),
-          onPressed: _isLoadingNodes ? null : _refreshAll,
-          tooltip: 'Обновить серверы',
+        VpnIconBtn(
+          loading: _isLoadingNodes,
+          icon: Icons.refresh_rounded,
+          onTap: _isLoadingNodes ? null : _refreshAll,
         ),
-      ),
+      ],
     );
   }
 
-  // ── Карточка подключения ──────────────────────────────────────────────────
-
+  // ── Connection card ────────────────────────────────────────────────────────
   Widget _buildConnectionCard() {
-    final bool connected = _isConnected;
-
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
-        color: const Color(0xFF171A21),
-        border: Border.all(
-          color: connected ? const Color(0xFF7C5CFF) : const Color(0xFF2A2F3A),
-          width: 1.2,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
-            blurRadius: 40,
-            offset: const Offset(0, 20),
-          ),
-          if (connected)
-            BoxShadow(
-              color: const Color(0xFF7C5CFF).withValues(alpha: 0.25),
-              blurRadius: 50,
-              spreadRadius: -10,
-            ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(22, 24, 22, 22),
-        child: Column(
-          children: [
-            /// STATUS
-            Column(
-              children: [
-                Text(
-                  _statusLabel,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
-                    color: connected
-                        ? const Color(0xFFE2E8F0)
-                        : const Color(0xFFC9D1D9),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  connected
-                      ? 'Сессия: ${_fmtDuration(_status.duration)}'
-                      : 'Выберите сервер и подключитесь',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF8A94A6),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            /// BUTTON
-            Center(
-              child: PremiumConnectButton(
-                isConnected: _isConnected,
-                isLoading: _isTransitioning,
-                onTap: _toggleConnection,
-              ),
-            ),
-
-            const SizedBox(height: 24),
-
-            Container(
-              height: 1,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    Color(0xFF2A2F3A),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            /// SERVER PICKER
-            InkWell(
-              onTap: _showServerPicker,
-              borderRadius: BorderRadius.circular(18),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 16,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F2430),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF2E3442)),
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      _selectedNode != null
-                          ? _countryEmoji(_selectedNode!.countryCode)
-                          : '🌐',
-                      style: const TextStyle(fontSize: 22),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _selectedNode?.name ?? 'Выберите сервер',
-                            style: TextStyle(
-                              color: _selectedNode != null
-                                  ? const Color(0xFFE2E8F0)
-                                  : const Color(0xFF7C5CFF),
-                              fontWeight: FontWeight.w600,
-                              fontSize: 15,
-                            ),
-                          ),
-                          if (_selectedNode != null)
-                            Text(
-                              _selectedNode!.address,
-                              style: const TextStyle(
-                                color: Color(0xFF8A94A6),
-                                fontSize: 12,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    const Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      size: 16,
-                      color: Color(0xFF7C5CFF),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── Карточка текущего трафика (скорость) ──────────────────────────────────
-
-  Widget _buildTrafficCard() {
-    final uploadMB = _normalizeSpeed(_status.uploadSpeed);
-    final downloadMB = _normalizeSpeed(_status.downloadSpeed);
-
-    final uploadActive = uploadMB > 0.01;
-    final downloadActive = downloadMB > 0.01;
-
+    final connected = _isConnected;
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 350),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        color: const Color(0xFF171A21),
-        border: Border.all(color: const Color(0xFF2A2F3A)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
-            blurRadius: 40,
-            offset: const Offset(0, 20),
-          ),
-          if (uploadActive || downloadActive)
-            BoxShadow(
-              color: const Color(0xFF7C5CFF).withValues(alpha: 0.08),
-              blurRadius: 50,
-              spreadRadius: -10,
-            ),
-        ],
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(DS.radius),
+        border: Border.all(
+          color: connected ? DS.violet.withValues(alpha: 0.45) : DS.border,
+          width: connected ? 1.5 : 1,
+        ),
+        boxShadow: connected
+            ? [BoxShadow(color: DS.violet.withValues(alpha: 0.18),
+            blurRadius: 36, spreadRadius: -8)]
+            : [BoxShadow(color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 20, offset: const Offset(0, 6))],
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        child: Row(
-          children: [
-            Expanded(
-              child: _StatTile(
-                icon: Icons.arrow_upward,
-                label: 'Загрузка',
-                value: _speedCalc.uploadSpeed,
-                sub: _fmtBytes(_status.uploadSpeed),
-                color: uploadActive
-                    ? const Color(0xFF7C5CFF)
-                    : const Color(0xFF5E6C8A),
-              ),
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+        child: Column(children: [
+          // Status text
+          Column(children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: Text(key: ValueKey(_statusLabel), _statusLabel,
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700,
+                      color: DS.textPrimary, letterSpacing: 0.1)),
             ),
-            Container(
-              width: 1,
-              height: 60,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    Color(0xFF2E3442),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
+            const SizedBox(height: 5),
+            Text(
+              connected
+                  ? 'Сессия: ${_fmtDuration(_status.duration)}'
+                  : 'Выберите сервер и нажмите подключить',
+              style: const TextStyle(fontSize: 13, color: DS.textSecondary),
             ),
-            Expanded(
-              child: _StatTile(
-                icon: Icons.arrow_downward,
-                label: 'Скачивание',
-                value: _speedCalc.downloadSpeed,
-                sub: _fmtBytes(_status.download),
-                color: downloadActive
-                    ? const Color(0xFF00E0FF)
-                    : const Color(0xFF5E6C8A),
+          ]),
+
+          const SizedBox(height: 24),
+          _ConnectButton(
+            isConnected: connected,
+            isLoading: _isTransitioning,
+            onTap: _toggleConnection,
+          ),
+          const SizedBox(height: 22),
+
+          // Separator
+          Container(height: 1, decoration: const BoxDecoration(
+              gradient: LinearGradient(colors: [Colors.transparent, DS.border, Colors.transparent]))),
+          const SizedBox(height: 14),
+
+          // Server selector
+          GestureDetector(
+            onTap: _showServerPicker,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: DS.surface2,
+                borderRadius: BorderRadius.circular(DS.radiusSm),
+                border: Border.all(color: DS.border),
               ),
+              child: Row(children: [
+                Text(_selectedNode != null
+                    ? _countryEmoji(_selectedNode!.countryCode) : '🌐',
+                    style: const TextStyle(fontSize: 22)),
+                const SizedBox(width: 14),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(
+                    _selectedNode?.name ?? 'Выберите сервер',
+                    style: TextStyle(
+                        color: _selectedNode != null ? DS.textPrimary : DS.violet,
+                        fontWeight: FontWeight.w600, fontSize: 15),
+                  ),
+                  if (_selectedNode != null)
+                    Text(_selectedNode!.address,
+                        style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
+                ])),
+                const Icon(Icons.chevron_right_rounded, color: DS.violet, size: 20),
+              ]),
             ),
-          ],
-        ),
+          ),
+        ]),
       ),
     );
   }
 
-  // ── Карточка подписки (трафик + дата) ─────────────────────────────────────
+  // ── Speed card ─────────────────────────────────────────────────────────────
+  Widget _buildSpeedCard() {
+    final upActive = _speedCalc.uploadSpeed > 1024;
+    final downActive = _speedCalc.downloadSpeed > 1024;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: BoxDecoration(
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(DS.radius),
+        border: Border.all(color: DS.border),
+      ),
+      child: Row(children: [
+        Expanded(child: _SpeedTile(
+          icon: Icons.arrow_upward_rounded,
+          label: 'Отдача',
+          speed: _speedCalc.uploadSpeed,
+          total: _fmtBytes(_status.uploadSpeed),
+          color: upActive ? DS.violet : DS.textMuted,
+        )),
+        Container(width: 1, height: 52, decoration: const BoxDecoration(
+            gradient: LinearGradient(
+                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                colors: [Colors.transparent, DS.border, Colors.transparent]))),
+        Expanded(child: _SpeedTile(
+          icon: Icons.arrow_downward_rounded,
+          label: 'Загрузка',
+          speed: _speedCalc.downloadSpeed,
+          total: _fmtBytes(_status.download),
+          color: downActive ? DS.emerald : DS.textMuted,
+        )),
+      ]),
+    );
+  }
 
+  // ── Subscription card ──────────────────────────────────────────────────────
   Widget _buildSubscriptionCard() {
     final info = _subscriptionInfo;
     final authState = authStateNotifier.value;
-    final me = meNotifier.value;
-    final sub = me?.subscription;
+    final sub = meNotifier.value?.subscription;
 
     return Container(
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: AppColors.graphiteSurface,
-        border: Border.all(color: AppColors.graphiteElevated),
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(DS.radius),
+        border: Border.all(color: DS.border),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.account_circle_outlined,
-                      color: AppColors.accentSmoky,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text(
-                      'Подписка',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                      ),
-                    ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header row
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('ПОДПИСКА', style: TextStyle(
+              color: DS.textMuted, fontSize: 11,
+              fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+          if (sub != null) _SubBadge(sub: sub)
+          else if (info?.expireDate != null) _ExpiryBadge(expireDate: info!.expireDate!),
+        ]),
+
+        // Auth user strip
+        if (authState.isLoggedIn) ...[
+          const SizedBox(height: 12),
+          _TelegramStrip(
+            name: authState.displayName,
+            onLogout: () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Выйти из аккаунта?'),
+                  content: const Text(
+                      'Данные подписки будут удалены с устройства.',
+                      style: TextStyle(color: DS.textSecondary)),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Отмена')),
+                    TextButton(onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Выйти',
+                            style: TextStyle(color: DS.rose))),
                   ],
                 ),
-                // Show subscription status badge from MeService
-                if (sub != null)
-                  _SubStatusBadge(sub: sub)
-                else if (info?.expireDate != null)
-                  _ExpiryBadge(expireDate: info!.expireDate!),
-              ],
-            ),
-
-            // ── Telegram auth user row ─────────────────────────────────
-            if (authState.isLoggedIn) ...[
-              const SizedBox(height: 12),
-              _TelegramUserRow(
-                authState: authState,
-                onLogout: () async {
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      backgroundColor: const Color(0xFF1A1A2E),
-                      title: const Text('Выйти из аккаунта?'),
-                      content: const Text(
-                        'Данные подписки будут удалены с устройства. '
-                            'Вы сможете войти снова в любое время.',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('Отмена'),
-                        ),
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.redAccent,
-                          ),
-                          child: const Text('Выйти'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirmed == true && mounted) {
-                    await _performLogout();
-                  }
-                },
-              ),
-            ],
-
-            const SizedBox(height: 16),
-
-            if (info == null && !_isPublicCatalog)
-              const Center(
-                child: Text(
-                  'Загрузка данных подписки…',
-                  style: TextStyle(
-                    color: AppColors.textNeutralSecondary,
-                    fontSize: 13,
-                  ),
-                ),
-              )
-            else if (_isPublicCatalog && !authState.isLoggedIn)
-              _buildLoginPromptInCard()
-            else if (info == null)
-                const SizedBox.shrink()
-              else ...[
-                  // ── Трафик ─────────────────────────────────────────────
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Использовано',
-                            style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            info.formattedUsed,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            'Всего',
-                            style: TextStyle(color: Colors.grey[500], fontSize: 11),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            info.formattedTotal,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  // Прогресс-бар
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: info.usedFraction,
-                      minHeight: 8,
-                      backgroundColor: Colors.white12,
-                      valueColor: AlwaysStoppedAnimation(
-                        _progressColor(info.usedFraction),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  // Оставшийся трафик
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Осталось: ${_remainingTraffic(info)}',
-                        style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                      ),
-                      Text(
-                        '${(info.usedFraction * 100).toStringAsFixed(1)}%',
-                        style: TextStyle(
-                          color: _progressColor(info.usedFraction),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Color _progressColor(double fraction) {
-    if (fraction < 0.6) return const Color(0xFF2ED573);
-    if (fraction < 0.85) return const Color(0xFFFFA502);
-    return const Color(0xFFE74C3C);
-  }
-
-  String _remainingTraffic(SubscriptionInfo info) {
-    if (info.totalBytes <= 0) return '∞';
-    final rem = info.totalBytes - info.usedBytes;
-    if (rem <= 0) return '0 ГБ';
-    return SubscriptionInfo(
-      uploadBytes: 0,
-      downloadBytes: rem,
-      totalBytes: info.totalBytes,
-    ).formattedUsed; // re-use formatter
-  }
-  /// Card content shown when the app is in public-catalog mode and the user
-  /// is NOT logged in — invites them to authenticate.
-  Widget _buildLoginPromptInCard() {
-    return Column(
-      children: [
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            Icon(Icons.telegram, color: Colors.grey[400], size: 16),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Войдите через Telegram, чтобы активировать подписку.',
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontSize: 13,
-                  height: 1.4,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        TelegramLoginButton(onTap: () => showAuthBottomSheet(context)),
-      ],
-    );
-  }
-}
-
-// ── Вспомогательные виджеты ───────────────────────────────────────────────────
-
-/// Row shown in the subscription card when the user is authenticated via Telegram.
-class _TelegramUserRow extends StatelessWidget {
-  final AuthState authState;
-  final VoidCallback onLogout;
-
-  const _TelegramUserRow({
-    required this.authState,
-    required this.onLogout,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF229ED9).withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: const Color(0xFF229ED9).withValues(alpha: 0.2),
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.telegram, color: Color(0xFF229ED9), size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              authState.displayName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          GestureDetector(
-            onTap: onLogout,
-            child: Icon(
-              Icons.logout,
-              size: 16,
-              color: Colors.grey[500],
-            ),
+              );
+              if (ok == true && mounted) await _performLogout();
+            },
           ),
         ],
+
+        const SizedBox(height: 16),
+
+        // Content
+        if (info == null && !_isPublicCatalog)
+          const Center(child: Text('Загрузка данных…',
+              style: TextStyle(color: DS.textSecondary, fontSize: 13)))
+        else if (_isPublicCatalog && !authState.isLoggedIn)
+          _LoginPrompt()
+        else if (info != null) ...[
+            // Big traffic numbers
+            Row(crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic, children: [
+                  Text(info.formattedUsed, style: const TextStyle(
+                      color: DS.textPrimary, fontSize: 28, fontWeight: FontWeight.w800, height: 1)),
+                  const SizedBox(width: 6),
+                  Text('/ ${info.formattedTotal}',
+                      style: const TextStyle(color: DS.textMuted, fontSize: 15)),
+                ]),
+            const SizedBox(height: 12),
+
+            // Progress bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: Stack(children: [
+                Container(height: 6, color: DS.surface3),
+                FractionallySizedBox(
+                  widthFactor: info.usedFraction.clamp(0.0, 1.0),
+                  child: Container(height: 6,
+                      decoration: BoxDecoration(
+                        color: _progressColor(info.usedFraction),
+                        boxShadow: [BoxShadow(
+                            color: _progressColor(info.usedFraction).withValues(alpha: 0.5),
+                            blurRadius: 8)],
+                      )),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 10),
+
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Text('Осталось: ${_remaining(info)}',
+                  style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
+              Text('${(info.usedFraction * 100).toStringAsFixed(1)}%', style: TextStyle(
+                  color: _progressColor(info.usedFraction),
+                  fontSize: 12, fontWeight: FontWeight.w600)),
+            ]),
+          ],
+      ]),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local widgets
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ConnectButton extends StatelessWidget {
+  final bool isConnected;
+  final bool isLoading;
+  final VoidCallback onTap;
+  const _ConnectButton({required this.isConnected, required this.isLoading, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isConnected ? DS.rose : DS.violet;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 280),
+      width: 220, height: 56,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color, Color.lerp(color, Colors.black, 0.3)!],
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(DS.radius),
+        boxShadow: [BoxShadow(
+            color: color.withValues(alpha: 0.35),
+            blurRadius: 20, offset: const Offset(0, 6))],
+      ),
+      child: Material(color: Colors.transparent,
+        child: InkWell(
+          onTap: isLoading ? null : onTap,
+          borderRadius: BorderRadius.circular(DS.radius),
+          child: Center(
+            child: isLoading
+                ? const SizedBox(width: 22, height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                : Text(isConnected ? 'Отключить' : 'Подключить',
+                style: const TextStyle(color: Colors.white, fontSize: 16,
+                    fontWeight: FontWeight.w700, letterSpacing: 0.3)),
+          ),
+        ),
       ),
     );
   }
 }
 
-class _StatTile extends StatefulWidget {
+class _SpeedTile extends StatelessWidget {
   final IconData icon;
   final String label;
-  final double value;
-  final String sub;
+  final double speed;
+  final String total;
   final Color color;
+  const _SpeedTile({required this.icon, required this.label, required this.speed,
+    required this.total, required this.color});
 
-  const _StatTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.sub,
-    required this.color,
-  });
+  String _fmt(double bps) {
+    if (bps < 1024) return '${bps.toStringAsFixed(0)} B/s';
+    if (bps < 1024 * 1024) return '${(bps / 1024).toStringAsFixed(1)} KB/s';
+    return '${(bps / (1024 * 1024)).toStringAsFixed(2)} MB/s';
+  }
 
   @override
-  State<_StatTile> createState() => _StatTileState();
+  Widget build(BuildContext context) => Column(children: [
+    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(icon, color: color, size: 13),
+      const SizedBox(width: 5),
+      Text(label, style: const TextStyle(color: DS.textSecondary, fontSize: 11)),
+    ]),
+    const SizedBox(height: 6),
+    TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: speed),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      builder: (_, v, __) => Text(_fmt(v), style: TextStyle(
+          color: color, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+    ),
+    const SizedBox(height: 3),
+    Text(total, style: const TextStyle(color: DS.textMuted, fontSize: 11)),
+  ]);
 }
 
-class _StatTileState extends State<_StatTile> {
-  late double _displayValue;
+class _TelegramStrip extends StatelessWidget {
+  final String name;
+  final VoidCallback onLogout;
+  const _TelegramStrip({required this.name, required this.onLogout});
 
   @override
-  void initState() {
-    super.initState();
-    _displayValue = widget.value;
-  }
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+    decoration: BoxDecoration(
+      color: DS.telegramBlue.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(DS.radiusXs),
+      border: Border.all(color: DS.telegramBlue.withValues(alpha: 0.2)),
+    ),
+    child: Row(children: [
+      const Icon(Icons.telegram, color: DS.telegramBlue, size: 15),
+      const SizedBox(width: 8),
+      Expanded(child: Text(name, style: const TextStyle(
+          color: DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+          overflow: TextOverflow.ellipsis)),
+      GestureDetector(
+          onTap: onLogout,
+          child: const Icon(Icons.logout_rounded, size: 16, color: DS.textMuted)),
+    ]),
+  );
+}
 
+class _LoginPrompt extends StatelessWidget {
   @override
-  void didUpdateWidget(covariant _StatTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.value != widget.value) {
-      _displayValue = oldWidget.value;
-    }
-  }
+  Widget build(BuildContext context) => Column(children: [
+    const Text('Войдите через Telegram, чтобы активировать подписку.',
+        style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
+    const SizedBox(height: 12),
+    TelegramLoginButton(onTap: () => showAuthBottomSheet(context)),
+  ]);
+}
 
-  String _format(double bytesPerSecond) {
-    if (bytesPerSecond < 1024) {
-      return "${bytesPerSecond.toStringAsFixed(0)} B/s";
-    } else if (bytesPerSecond < 1024 * 1024) {
-      return "${(bytesPerSecond / 1024).toStringAsFixed(1)} KB/s";
-    } else {
-      return "${(bytesPerSecond / (1024 * 1024)).toStringAsFixed(2)} MB/s";
-    }
-  }
+class _SubBadge extends StatelessWidget {
+  final MeSubscription sub;
+  const _SubBadge({required this.sub});
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(widget.icon, color: widget.color, size: 15),
-            const SizedBox(width: 6),
-            Text(
-              widget.label,
-              style: const TextStyle(color: Color(0xFF8A94A6), fontSize: 11),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-
-        TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: _displayValue, end: widget.value),
-          duration: const Duration(milliseconds: 350),
-          curve: Curves.easeOutCubic,
-          builder: (context, animatedValue, child) {
-            return Text(
-              _format(animatedValue),
-              style: TextStyle(
-                color: widget.color,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.4,
-              ),
-            );
-          },
-        ),
-
-        const SizedBox(height: 3),
-
-        Text(
-          widget.sub,
-          style: const TextStyle(color: Color(0xFF5F6B7A), fontSize: 11),
-        ),
-      ],
-    );
+    Color color; String label; IconData icon;
+    if (sub.isActive) {
+      if (sub.isTrial) {
+        color = DS.amber; label = 'Пробный'; icon = Icons.hourglass_top_rounded;
+      } else {
+        final diff = sub.expireDate?.difference(DateTime.now());
+        if (diff != null && diff.inDays < 7 && !diff.isNegative) {
+          color = DS.amber; label = '${diff.inDays}д'; icon = Icons.timer_outlined;
+        } else {
+          color = DS.emerald; label = 'Активна'; icon = Icons.verified_rounded;
+        }
+      }
+    } else if (sub.isExpired) {
+      color = DS.rose; label = 'Истекла'; icon = Icons.timer_off_rounded;
+    } else {
+      color = DS.textMuted; label = sub.status; icon = Icons.info_outline_rounded;
+    }
+    return _StatusPill(color: color, label: label, icon: icon);
   }
 }
 
 class _ExpiryBadge extends StatelessWidget {
   final DateTime expireDate;
-
   const _ExpiryBadge({required this.expireDate});
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final diff = expireDate.difference(now);
+    final diff = expireDate.difference(DateTime.now());
     final expired = diff.isNegative;
     final soon = !expired && diff.inDays < 7;
-
-    final color = expired
-        ? const Color(0xFFE74C3C)
-        : soon
-        ? const Color(0xFFFFA502)
-        : const Color(0xFF2ED573);
-
-    final label = expired
-        ? 'Истекла'
-        : diff.inDays > 0
-        ? '${diff.inDays}д осталось'
-        : '< 1д';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            expired ? Icons.timer_off : Icons.timer_outlined,
-            color: color,
-            size: 12,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
+    final color = expired ? DS.rose : soon ? DS.amber : DS.emerald;
+    final label = expired ? 'Истекла' : diff.inDays > 0 ? '${diff.inDays}д' : '< 1д';
+    return _StatusPill(
+        color: color, label: label,
+        icon: expired ? Icons.timer_off_rounded : Icons.timer_outlined);
   }
 }
 
-/// Status badge built from MeService subscription data — richer than expiry only.
-class _SubStatusBadge extends StatelessWidget {
-  final MeSubscription sub;
-
-  const _SubStatusBadge({required this.sub});
+class _StatusPill extends StatelessWidget {
+  final Color color; final String label; final IconData icon;
+  const _StatusPill({required this.color, required this.label, required this.icon});
 
   @override
-  Widget build(BuildContext context) {
-    final Color color;
-    final String label;
-    final IconData icon;
-
-    if (sub.isActive) {
-      if (sub.isTrial) {
-        color = const Color(0xFFFFA502);
-        label = 'Пробный';
-        icon = Icons.hourglass_top_rounded;
-      } else {
-        final now = DateTime.now();
-        final expiry = sub.expireDate;
-        if (expiry != null) {
-          final diff = expiry.difference(now);
-          final soon = diff.inDays < 7 && !diff.isNegative;
-          if (soon) {
-            color = const Color(0xFFFFA502);
-            label = '${diff.inDays}д осталось';
-            icon = Icons.timer_outlined;
-          } else {
-            color = const Color(0xFF2ED573);
-            label = 'Активна';
-            icon = Icons.verified_outlined;
-          }
-        } else {
-          color = const Color(0xFF2ED573);
-          label = 'Активна';
-          icon = Icons.verified_outlined;
-        }
-      }
-    } else if (sub.isExpired) {
-      color = const Color(0xFFE74C3C);
-      label = 'Истекла';
-      icon = Icons.timer_off;
-    } else {
-      color = const Color(0xFF5E6C8A);
-      label = sub.status;
-      icon = Icons.info_outline;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 12),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.1),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, color: color, size: 12),
+      const SizedBox(width: 4),
+      Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
+    ]),
+  );
 }
 
-class PremiumConnectButton extends StatelessWidget {
-  final bool isConnected;
-  final bool isLoading;
-  final VoidCallback onTap;
+// ── Shared micro-widgets ──────────────────────────────────────────────────────
 
-  const PremiumConnectButton({
-    super.key,
-    required this.isConnected,
-    required this.isLoading,
-    required this.onTap,
-  });
+class VpnIconBtn extends StatelessWidget {
+  final bool loading;
+  final IconData icon;
+  final VoidCallback? onTap;
+  const VpnIconBtn({required this.loading, required this.icon, this.onTap});
 
   @override
-  Widget build(BuildContext context) {
-    final bool isOff = !isConnected && !isLoading;
-
-    final backgroundColor = isOff
-        ? const Color(0xFF5E6C8A) // акцент
-        : isConnected
-        ? const Color(0xFFC9D1D9) // platinum
-        : AppColors.graphiteElevated;
-
-    final foreground = isConnected
-        ? AppColors.graphiteBackground
-        : AppColors.textNeutralMain;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOutCubic,
-      height: 60,
-      width: 240,
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      width: 42, height: 42,
       decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          if (isOff)
-            BoxShadow(
-              color: const Color(0xFF5E6C8A).withValues(alpha: 0.35),
-              blurRadius: 40,
-              offset: const Offset(0, 18),
-            )
-          else if (isConnected)
-            BoxShadow(
-              color: const Color(0xFFC9D1D9).withValues(alpha: 0.35),
-              blurRadius: 45,
-              spreadRadius: -6,
-            )
-          else
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.45),
-              blurRadius: 28,
-              offset: const Offset(0, 14),
-            ),
-        ],
+        color: DS.surface2,
+        borderRadius: BorderRadius.circular(DS.radiusSm),
+        border: Border.all(color: DS.border),
       ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(22),
-          onTap: isLoading ? null : onTap,
-          child: Center(
-            child: isLoading
-                ? SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: foreground,
-              ),
-            )
-                : Text(
-              isConnected ? 'Отключить' : 'Подключить',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-                letterSpacing: 0.4,
-                color: foreground,
-              ),
-            ),
-          ),
-        ),
+      child: loading
+          ? const Center(child: SizedBox(width: 18, height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: DS.violet)))
+          : Icon(icon, color: DS.textSecondary, size: 20),
+    ),
+  );
+}
+
+class _Chip extends StatelessWidget {
+  final String label; final bool selected; final VoidCallback onTap;
+  const _Chip({required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      decoration: BoxDecoration(
+        color: selected ? DS.violet.withValues(alpha: 0.15) : DS.surface2,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: selected ? DS.violet : DS.border),
       ),
-    );
-  }
+      child: Text(label, style: TextStyle(
+          color: selected ? DS.violet : DS.textSecondary,
+          fontSize: 12, fontWeight: FontWeight.w600)),
+    ),
+  );
+}
+
+class VpnInfoBanner extends StatelessWidget {
+  final Color color; final String text;
+  const VpnInfoBanner({required this.color, required this.text});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.07),
+      borderRadius: BorderRadius.circular(DS.radiusSm),
+      border: Border.all(color: color.withValues(alpha: 0.25)),
+    ),
+    child: Row(children: [
+      Icon(Icons.info_outline_rounded, size: 15, color: color.withValues(alpha: 0.85)),
+      const SizedBox(width: 10),
+      Expanded(child: Text(text, style: TextStyle(color: color.withValues(alpha: 0.9), fontSize: 12))),
+    ]),
+  );
+}
+
+class _EmptyNodes extends StatelessWidget {
+  const _EmptyNodes();
+
+  @override
+  Widget build(BuildContext context) => Column(mainAxisSize: MainAxisSize.min, children: [
+    const Icon(Icons.cloud_off_rounded, size: 40, color: DS.textMuted),
+    const SizedBox(height: 10),
+    const Text('Серверы не найдены',
+        style: TextStyle(color: DS.textSecondary, fontSize: 14)),
+  ]);
 }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,6 +12,42 @@ import '../theme/app_colors.dart';
 import '../widgets/purple_header.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Design tokens
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DS {
+  // Accent palette
+  static const violet = Color(0xFF7C6FF7);
+  static const violetDim = Color(0xFF5A52C0);
+  static const emerald = Color(0xFF34D399);
+  static const amber = Color(0xFFFBBF24);
+  static const rose = Color(0xFFF87171);
+
+  // Surfaces
+  static const surface0 = Color(0xFF0F0F14);
+  static const surface1 = Color(0xFF17171F);
+  static const surface2 = Color(0xFF1E1E2A);
+  static const surface3 = Color(0xFF26263A);
+
+  // Text
+  static const textPrimary = Color(0xFFEEEEF8);
+  static const textSecondary = Color(0xFF8888AA);
+  static const textMuted = Color(0xFF55556A);
+
+  // Borders
+  static const border = Color(0xFF2A2A3D);
+  static const borderAccent = Color(0xFF4A44AA);
+
+  static const radius = 20.0;
+  static const radiusSm = 12.0;
+  static const radiusXs = 8.0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PremiumPage – stateful shell (logic unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class PremiumPage extends StatefulWidget {
   const PremiumPage({super.key});
@@ -26,7 +63,6 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   bool _loadingCalc = false;
   bool _purchasing = false;
 
-  // Payment polling state
   Timer? _pollTimer;
   int _pollAttempt = 0;
   bool _pollingForPayment = false;
@@ -34,7 +70,6 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   static const int _maxPollAttempts = 30;
   static const Duration _pollInterval = Duration(seconds: 4);
 
-  // Builder state
   String? _selectedPeriodId;
   int? _selectedTraffic;
   int? _selectedDevices;
@@ -59,15 +94,12 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // When the user returns from the payment browser, start polling.
     if (state == AppLifecycleState.resumed && _pendingPaymentPoll) {
       _pendingPaymentPoll = false;
       _startPaymentPolling();
     }
   }
 
-  /// Starts polling the backend for payment confirmation.
-  /// Polls every [_pollInterval] up to [_maxPollAttempts] times.
   void _startPaymentPolling() {
     if (!mounted) return;
     _pollTimer?.cancel();
@@ -81,11 +113,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   Future<void> _onPollTick(Timer timer) async {
     _pollAttempt++;
     await MeService.refresh();
-
-    if (!mounted) {
-      timer.cancel();
-      return;
-    }
+    if (!mounted) { timer.cancel(); return; }
 
     final me = meNotifier.value;
     final sub = me?.subscription;
@@ -101,22 +129,14 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
         if (mounted) _showSnackBar('✅ Подписка активирована!', isError: false);
       } else {
         if (mounted) {
-          _showSnackBar(
-            'Платёж ещё не подтверждён. Проверьте статус позже.',
-            isError: false,
-          );
+          _showSnackBar('Платёж ещё не подтверждён. Проверьте статус позже.', isError: false);
         }
       }
     }
   }
 
-  void _onAuthChanged() {
-    if (mounted) _loadOptions();
-  }
-
-  void _onMeChanged() {
-    if (mounted) setState(() {});
-  }
+  void _onAuthChanged() { if (mounted) _loadOptions(); }
+  void _onMeChanged() { if (mounted) setState(() {}); }
 
   Future<void> _loadOptions() async {
     final auth = authStateNotifier.value;
@@ -124,9 +144,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
       if (mounted) setState(() => _options = null);
       return;
     }
-
     if (mounted) setState(() => _loadingOptions = true);
-
     try {
       final opts = await SubscriptionApiService.getOptions();
       if (mounted) {
@@ -160,16 +178,13 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     } catch (e) {
       debugPrint('PremiumPage._loadOptions error: $e');
     }
-
     if (mounted) setState(() => _loadingOptions = false);
   }
 
   Future<void> _recalcPrice() async {
     final periodId = _selectedPeriodId;
     if (periodId == null) return;
-
     if (mounted) setState(() => _loadingCalc = true);
-
     try {
       final result = await SubscriptionApiService.calcPrice(
         periodId: periodId,
@@ -180,7 +195,6 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     } catch (e) {
       debugPrint('PremiumPage._recalcPrice error: $e');
     }
-
     if (mounted) setState(() => _loadingCalc = false);
   }
 
@@ -188,13 +202,9 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     if (_selectedPeriodId == periodId) return;
     final opts = _options;
     if (opts == null) return;
-
     setState(() {
       _selectedPeriodId = periodId;
-      final period = opts.periods.firstWhere(
-            (p) => p.id == periodId,
-        orElse: () => opts.periods.first,
-      );
+      final period = opts.periods.firstWhere((p) => p.id == periodId, orElse: () => opts.periods.first);
       final traffic = period.traffic;
       if (traffic != null && traffic.options.isNotEmpty) {
         final defaultOpt = traffic.options.where((o) => o.isDefault).firstOrNull ?? traffic.options.first;
@@ -223,18 +233,14 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   Future<void> _onBuyPressed() async {
     final periodId = _selectedPeriodId;
     if (periodId == null) return;
-
     setState(() => _purchasing = true);
-
     try {
       final result = await SubscriptionApiService.buySubscription(
         periodId: periodId,
         trafficValue: _selectedTraffic,
         devices: _selectedDevices,
       );
-
       if (!mounted) return;
-
       if (result == null) {
         _showSnackBar('Ошибка соединения с сервером', isError: true);
       } else if (result.isSuccess) {
@@ -249,22 +255,18 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted) _showSnackBar('Ошибка: $e', isError: true);
     }
-
     if (mounted) setState(() => _purchasing = false);
   }
 
   Future<void> _onUpgradePressed(String periodId, {int? trafficAdd, int? devicesAdd}) async {
     setState(() => _purchasing = true);
-
     try {
       final result = await SubscriptionApiService.upgradeSubscription(
         periodId: periodId,
         trafficAdd: trafficAdd,
         devicesAdd: devicesAdd,
       );
-
       if (!mounted) return;
-
       if (result == null) {
         _showSnackBar('Ошибка соединения с сервером', isError: true);
       } else if (result.isSuccess) {
@@ -279,7 +281,6 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     } catch (e) {
       if (mounted) _showSnackBar('Ошибка: $e', isError: true);
     }
-
     if (mounted) setState(() => _purchasing = false);
   }
 
@@ -289,12 +290,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
         if (mounted) {
-          _showSnackBar(
-            'Страница оплаты открыта. После оплаты вернитесь в приложение.',
-            isError: false,
-          );
-          // Polling starts when the user returns (lifecycle resumed).
-          // We register a one-shot observer via a flag.
+          _showSnackBar('Страница оплаты открыта. После оплаты вернитесь в приложение.', isError: false);
           _pendingPaymentPoll = true;
         }
       } else {
@@ -308,12 +304,16 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   void _showSnackBar(String msg, {required bool isError}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? AppColors.danger : AppColors.success,
+        content: Text(msg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+        backgroundColor: isError ? _DS.rose : _DS.emerald,
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_DS.radiusSm)),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       ),
     );
   }
+
+  // ─── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -324,52 +324,36 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     final isNewUser = !auth.isLoggedIn || (sub == null && !hasActivePaidSub);
 
     return Scaffold(
+      backgroundColor: _DS.surface0,
       body: RefreshIndicator(
-        color: AppColors.primary,
+        color: _DS.violet,
+        backgroundColor: _DS.surface2,
         onRefresh: _loadOptions,
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            SliverPadding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                MediaQuery.of(context).padding.top + 16,
-                16,
-                8,
-              ),
-              sliver: SliverToBoxAdapter(
-                child: PurpleHeader(
-                  title: 'Премиум',
-                  subtitle: hasActivePaidSub
-                      ? 'Управление подпиской'
-                      : 'Настройте и купите подписку',
-                ),
-              ),
+            // ── Header ──────────────────────────────────────────────────────
+            SliverToBoxAdapter(
+              child: _PremiumHeader(hasActiveSub: hasActivePaidSub),
             ),
+
+            // ── Body ────────────────────────────────────────────────────────
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 120),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-                  const SizedBox(height: 8),
-
                   if (!auth.isLoggedIn) ...[
-                    // Show benefits to motivate login
-                    const _BenefitsList(),
+                    _BenefitsSection(),
                     const SizedBox(height: 16),
-                    _NotLoggedInCard(
-                      onLoginTap: () => showAuthBottomSheet(context),
-                    ),
+                    _NotLoggedInCard(onLoginTap: () => showAuthBottomSheet(context)),
                   ] else if (_pollingForPayment) ...[
-                    // Payment processing overlay
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 32),
                     const _PaymentPollingCard(),
                   ] else if (_loadingOptions && _options == null) ...[
-                    const SizedBox(height: 60),
-                    const Center(
-                      child: CircularProgressIndicator(color: AppColors.primary),
-                    ),
+                    const SizedBox(height: 100),
+                    const Center(child: _LoadingIndicator()),
                   ] else if (_options != null) ...[
-                    // Balance card
+                    // Balance
                     _BalanceCard(
                       balanceRub: _options!.balanceRub,
                       currency: _options!.currency,
@@ -377,8 +361,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
                     const SizedBox(height: 12),
 
                     if (hasActivePaidSub) ...[
-                      // ── Upgrade section ─────────────────────────────────
-                      _SectionTitle('Улучшить подписку'),
+                      _SectionLabel('Продлить подписку'),
                       const SizedBox(height: 8),
                       _UpgradeDiffCard(
                         sub: sub,
@@ -387,19 +370,16 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
                         loading: _purchasing,
                       ),
                     ] else ...[
-                      // ── Benefits for new / trial users ───────────────────
                       if (isNewUser) ...[
-                        const _BenefitsList(),
+                        _BenefitsSection(),
                         const SizedBox(height: 16),
                       ],
-
-                      // ── Unified subscription builder ─────────────────────
-                      _SectionTitle(
+                      _SectionLabel(
                         sub?.isTrial == true
                             ? 'Перейти на платную подписку'
                             : 'Настройте подписку',
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       _SubscriptionBuilderCard(
                         options: _options!,
                         selectedPeriodId: _selectedPeriodId,
@@ -408,11 +388,9 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
                         onPeriodSelected: _onPeriodSelected,
                         onTrafficSelected: _onTrafficSelected,
                         onDevicesSelected: _onDevicesSelected,
-                        hidePeriodSelector: false,
                       ),
                       const SizedBox(height: 12),
 
-                      // ── Price preview ───────────────────────────────────
                       _PricePreviewCard(
                         calc: _calc,
                         loading: _loadingCalc,
@@ -420,15 +398,13 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
                       ),
                       const SizedBox(height: 16),
 
-                      // ── Buy button ──────────────────────────────────────
                       _BuyButton(
                         loading: _purchasing || _loadingCalc,
                         onPressed: _onBuyPressed,
                         totalKopeks: _calc?.totalKopeks,
-                        hasEnoughBalance: _options!.balanceKopeks >=
-                            (_calc?.totalKopeks ?? 0),
+                        hasEnoughBalance: _options!.balanceKopeks >= (_calc?.totalKopeks ?? 0),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
                       const _PaymentDisclaimer(),
                     ],
                   ] else ...[
@@ -444,85 +420,71 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Shared components
-// ══════════════════════════════════════════════════════════════════════════════
+// ─────────────────────────────────────────────────────────────────────────────
+// Header
+// ─────────────────────────────────────────────────────────────────────────────
 
-class _SectionTitle extends StatelessWidget {
-  final String text;
-  const _SectionTitle(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: AppColors.textNeutralSecondary,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 0.5,
-      ),
-    );
-  }
-}
-
-// ── Benefits list ─────────────────────────────────────────────────────────────
-
-class _BenefitsList extends StatelessWidget {
-  const _BenefitsList();
-
-  static const _benefits = [
-    (Icons.speed_rounded, 'Высокая скорость соединения'),
-    (Icons.lock_rounded, 'Надёжное шифрование трафика'),
-    (Icons.devices_rounded, 'Поддержка нескольких устройств'),
-    (Icons.public_rounded, 'Доступ к заблокированным сайтам'),
-  ];
+class _PremiumHeader extends StatelessWidget {
+  final bool hasActiveSub;
+  const _PremiumHeader({required this.hasActiveSub});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final top = MediaQuery.of(context).padding.top;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, top + 20, 20, 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          const Text(
-            'Возможности Premium',
-            style: TextStyle(
-              color: AppColors.textNeutralMain,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Премиум',
+                  style: TextStyle(
+                    color: _DS.textPrimary,
+                    fontSize: 32,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                    height: 1,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  hasActiveSub ? 'Управление подпиской' : 'Выберите тариф',
+                  style: const TextStyle(color: _DS.textSecondary, fontSize: 15),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 14),
-          ..._benefits.map(
-                (b) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF6C5CE7).withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(b.$1, color: const Color(0xFF6C5CE7), size: 17),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    b.$2,
-                    style: const TextStyle(
-                      color: AppColors.textNeutralMain,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
+          // Premium badge pill
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF7C6FF7), Color(0xFF4A44AA)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: _DS.violet.withValues(alpha: 0.3),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.workspace_premium_rounded, color: Colors.white, size: 14),
+                SizedBox(width: 5),
+                Text('PRO', style: TextStyle(
+                  color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800, letterSpacing: 1,
+                )),
+              ],
             ),
           ),
         ],
@@ -531,28 +493,314 @@ class _BenefitsList extends StatelessWidget {
   }
 }
 
-// ── Apple-style plan selector grid ────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Section label
+// ─────────────────────────────────────────────────────────────────────────────
 
-class _PlanSelectorGrid extends StatelessWidget {
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) => Text(
+    text.toUpperCase(),
+    style: const TextStyle(
+      color: _DS.textMuted,
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 1.2,
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Benefits
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BenefitsSection extends StatelessWidget {
+  static const _items = [
+    (Icons.bolt_rounded, 'Высокая скорость', 'Без ограничений пропускной способности'),
+    (Icons.shield_rounded, 'Шифрование', 'Военный уровень защиты трафика'),
+    (Icons.devices_rounded, 'Мультиустройство', 'Подключайте несколько гаджетов'),
+    (Icons.public_rounded, 'Без блокировок', 'Доступ к любым ресурсам'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const _SectionLabel('Возможности'),
+        const SizedBox(height: 10),
+        _GlassCard(
+          child: Column(
+            children: List.generate(_items.length, (i) {
+              final item = _items[i];
+              return Column(
+                children: [
+                  if (i > 0) const Divider(color: _DS.border, height: 1),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: _DS.violet.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(item.$1, color: _DS.violet, size: 20),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(item.$2, style: const TextStyle(
+                                color: _DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w600,
+                              )),
+                              const SizedBox(height: 2),
+                              Text(item.$3, style: const TextStyle(
+                                color: _DS.textSecondary, fontSize: 12,
+                              )),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.check_circle_rounded, color: _DS.emerald, size: 18),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Not logged in
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _NotLoggedInCard extends StatelessWidget {
+  final VoidCallback onLoginTap;
+  const _NotLoggedInCard({required this.onLoginTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return _GlassCard(
+      child: Column(
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: _DS.violet.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.lock_outline_rounded, color: _DS.violet, size: 30),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Войдите, чтобы\nувидеть тарифы',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: _DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w700, height: 1.3,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TelegramLoginButton(onTap: onLoginTap),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Balance card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BalanceCard extends StatelessWidget {
+  final double balanceRub;
+  final String currency;
+  const _BalanceCard({required this.balanceRub, required this.currency});
+
+  @override
+  Widget build(BuildContext context) {
+    return _GlassCard(
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: _DS.emerald.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.account_balance_wallet_rounded, color: _DS.emerald, size: 22),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Баланс счёта', style: TextStyle(color: _DS.textSecondary, fontSize: 12)),
+                const SizedBox(height: 2),
+                Text(
+                  '${balanceRub.toStringAsFixed(2)} $currency',
+                  style: const TextStyle(
+                    color: _DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: _DS.emerald.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _DS.emerald.withValues(alpha: 0.25)),
+            ),
+            child: const Text(
+              'Активен',
+              style: TextStyle(color: _DS.emerald, fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscription builder
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SubscriptionBuilderCard extends StatelessWidget {
   final SubscriptionOptions options;
   final String? selectedPeriodId;
+  final int? selectedTraffic;
+  final int? selectedDevices;
   final ValueChanged<String> onPeriodSelected;
+  final ValueChanged<int> onTrafficSelected;
+  final ValueChanged<int> onDevicesSelected;
 
-  const _PlanSelectorGrid({
+  const _SubscriptionBuilderCard({
     required this.options,
     required this.selectedPeriodId,
+    required this.selectedTraffic,
+    required this.selectedDevices,
     required this.onPeriodSelected,
+    required this.onTrafficSelected,
+    required this.onDevicesSelected,
   });
 
-  /// Determine which plan has the highest discount for "Best Value" badge.
+  @override
+  Widget build(BuildContext context) {
+    final selectedPeriod = options.periods.firstWhere(
+          (p) => p.id == selectedPeriodId,
+      orElse: () => options.periods.first,
+    );
+    final hasTraffic = selectedPeriod.traffic?.selectable == true &&
+        (selectedPeriod.traffic?.options.isNotEmpty ?? false);
+    final hasDevices =
+        selectedPeriod.devices != null && selectedPeriod.devices!.options.length > 1;
+
+    return _GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Duration
+          _BuilderRow(
+            icon: Icons.calendar_month_rounded,
+            label: 'Срок подписки',
+          ),
+          const SizedBox(height: 10),
+          _PeriodGrid(
+            options: options,
+            selectedPeriodId: selectedPeriodId,
+            onSelected: onPeriodSelected,
+          ),
+
+          // Traffic
+          if (hasTraffic) ...[
+            const SizedBox(height: 20),
+            const Divider(color: _DS.border, height: 1),
+            const SizedBox(height: 20),
+            _BuilderRow(icon: Icons.data_usage_rounded, label: 'Трафик'),
+            const SizedBox(height: 10),
+            _ChipRow<int>(
+              options: selectedPeriod.traffic!.options.map((t) => _Chip<int>(
+                value: t.value,
+                label: t.value == 0 ? '∞' : '${t.value} ГБ',
+              )).toList(),
+              selected: selectedTraffic,
+              onSelected: onTrafficSelected,
+            ),
+          ],
+
+          // Devices
+          if (hasDevices) ...[
+            const SizedBox(height: 20),
+            const Divider(color: _DS.border, height: 1),
+            const SizedBox(height: 20),
+            _BuilderRow(icon: Icons.devices_rounded, label: 'Устройства'),
+            const SizedBox(height: 10),
+            _ChipRow<int>(
+              options: selectedPeriod.devices!.options
+                  .map((d) => _Chip<int>(value: d, label: '$d'))
+                  .toList(),
+              selected: selectedDevices,
+              onSelected: onDevicesSelected,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BuilderRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _BuilderRow({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Icon(icon, size: 15, color: _DS.textSecondary),
+      const SizedBox(width: 6),
+      Text(label, style: const TextStyle(
+        color: _DS.textSecondary, fontSize: 13, fontWeight: FontWeight.w500,
+      )),
+    ],
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Period grid (plan cards)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PeriodGrid extends StatelessWidget {
+  final SubscriptionOptions options;
+  final String? selectedPeriodId;
+  final ValueChanged<String> onSelected;
+
+  const _PeriodGrid({
+    required this.options,
+    required this.selectedPeriodId,
+    required this.onSelected,
+  });
+
   String? _bestValueId() {
-    if (options.periods.isEmpty) return null;
     PeriodOption? best;
     for (final p in options.periods) {
-      if (p.discountPercent > 0) {
-        if (best == null || p.discountPercent > best.discountPercent) {
-          best = p;
-        }
+      if (p.discountPercent > 0 && (best == null || p.discountPercent > best.discountPercent)) {
+        best = p;
       }
     }
     return best?.id;
@@ -562,15 +810,11 @@ class _PlanSelectorGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final periods = options.periods;
     final bestId = _bestValueId();
-
-    // Use a scrollable row with a minimum card width so cards never become
-    // too narrow when many periods are available.
-    const double minCardWidth = 88.0;
-    final screenWidth = MediaQuery.of(context).size.width - 64; // account for padding
-    final cardWidth = periods.isEmpty
-        ? minCardWidth
-        : ((screenWidth - (periods.length - 1) * 8) / periods.length)
-        .clamp(minCardWidth, 160.0);
+    const minW = 80.0;
+    final available = MediaQuery.of(context).size.width - 64;
+    final cardW = periods.isEmpty
+        ? minW
+        : ((available - (periods.length - 1) * 8) / periods.length).clamp(minW, 160.0);
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -581,12 +825,12 @@ class _PlanSelectorGrid extends StatelessWidget {
             for (int i = 0; i < periods.length; i++) ...[
               if (i > 0) const SizedBox(width: 8),
               SizedBox(
-                width: cardWidth,
+                width: cardW,
                 child: _PlanCard(
                   period: periods[i],
                   isSelected: periods[i].id == selectedPeriodId,
                   isBestValue: periods[i].id == bestId,
-                  onTap: () => onPeriodSelected(periods[i].id),
+                  onTap: () => onSelected(periods[i].id),
                 ),
               ),
             ],
@@ -612,97 +856,72 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const purple = Color(0xFF6C5CE7);
-    const green = Color(0xFF00B894);
-
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
         decoration: BoxDecoration(
-          color: isSelected
-              ? purple.withValues(alpha: 0.15)
-              : AppColors.graphiteElevated,
-          borderRadius: BorderRadius.circular(14),
+          color: isSelected ? _DS.violet.withValues(alpha: 0.15) : _DS.surface2,
+          borderRadius: BorderRadius.circular(_DS.radiusSm),
           border: Border.all(
-            color: isSelected ? purple : Colors.white.withValues(alpha: 0.08),
-            width: isSelected ? 2 : 1,
+            color: isSelected ? _DS.violet : _DS.border,
+            width: isSelected ? 1.5 : 1,
           ),
           boxShadow: isSelected
-              ? [
-            BoxShadow(
-              color: purple.withValues(alpha: 0.25),
-              blurRadius: 16,
-              spreadRadius: -4,
-            ),
-          ]
+              ? [BoxShadow(color: _DS.violet.withValues(alpha: 0.3), blurRadius: 20, spreadRadius: -6)]
               : null,
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Best-value badge
+            // Best badge placeholder
             if (isBestValue)
               Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
-                  color: green.withValues(alpha: 0.15),
+                  color: _DS.emerald.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: green.withValues(alpha: 0.4)),
+                  border: Border.all(color: _DS.emerald.withValues(alpha: 0.35)),
                 ),
-                child: const Text(
-                  'Выгоднее',
-                  style: TextStyle(
-                    color: green,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
-                  ),
-                ),
+                child: const Text('Выгодно', style: TextStyle(
+                  color: _DS.emerald, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.3,
+                )),
               )
             else
-              const SizedBox(height: 22), // keeps consistent height
+              const SizedBox(height: 22),
 
-            // Plan label
             Text(
               period.label,
               textAlign: TextAlign.center,
               style: TextStyle(
-                color: isSelected ? Colors.white : AppColors.textNeutralMain,
+                color: isSelected ? Colors.white : _DS.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 6),
-
-            // Price
             Text(
               '${(period.basePriceKopeks / 100).toStringAsFixed(0)} ₽',
               style: TextStyle(
-                color: isSelected ? purple : AppColors.textNeutralSecondary,
-                fontSize: 15,
+                color: isSelected ? _DS.violet : _DS.textSecondary,
+                fontSize: 14,
                 fontWeight: FontWeight.w700,
               ),
             ),
-
-            // Discount badge
             if (period.discountPercent > 0) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 5),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withValues(alpha: 0.15),
+                  color: _DS.amber.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   '−${period.discountPercent}%',
-                  style: const TextStyle(
-                    color: AppColors.warning,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: const TextStyle(color: _DS.amber, fontSize: 10, fontWeight: FontWeight.w700),
                 ),
               ),
             ],
@@ -713,441 +932,61 @@ class _PlanCard extends StatelessWidget {
   }
 }
 
-// ── Payment disclaimer ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Generic chip row
+// ─────────────────────────────────────────────────────────────────────────────
 
-class _PaymentDisclaimer extends StatelessWidget {
-  const _PaymentDisclaimer();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Text(
-      'Оплата через YooKassa. После оплаты подписка активируется автоматически.',
-      textAlign: TextAlign.center,
-      style: TextStyle(
-        color: AppColors.textNeutralMuted,
-        fontSize: 11,
-        height: 1.5,
-      ),
-    );
-  }
-}
-
-// ── Payment polling card ──────────────────────────────────────────────────────
-
-class _PaymentPollingCard extends StatelessWidget {
-  const _PaymentPollingCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-      decoration: BoxDecoration(
-        color: AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF6C5CE7).withValues(alpha: 0.35)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF6C5CE7).withValues(alpha: 0.12),
-            blurRadius: 24,
-            spreadRadius: -4,
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          const SizedBox(
-            width: 48,
-            height: 48,
-            child: CircularProgressIndicator(
-              strokeWidth: 3,
-              color: Color(0xFF6C5CE7),
-            ),
-          ),
-          const SizedBox(height: 20),
-          const Text(
-            'Обрабатываем платёж…',
-            style: TextStyle(
-              color: AppColors.textNeutralMain,
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Ожидаем подтверждение от платёжного сервиса.\nЭто может занять до 2 минут.',
-            style: TextStyle(
-              color: AppColors.textNeutralSecondary,
-              fontSize: 13,
-              height: 1.5,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _NotLoggedInCard extends StatelessWidget {
-  final VoidCallback onLoginTap;
-  const _NotLoggedInCard({required this.onLoginTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-      ),
-      child: Column(
-        children: [
-          const Icon(Icons.lock_outline, color: AppColors.textNeutralSecondary, size: 48),
-          const SizedBox(height: 16),
-          const Text(
-            'Войдите, чтобы увидеть тарифы',
-            style: TextStyle(
-              color: AppColors.textNeutralMain,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 12),
-          TelegramLoginButton(onTap: onLoginTap),
-        ],
-      ),
-    );
-  }
-}
-
-class _BalanceCard extends StatelessWidget {
-  final double balanceRub;
-  final String currency;
-  const _BalanceCard({required this.balanceRub, required this.currency});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-      decoration: BoxDecoration(
-        color: AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Icon(
-              Icons.account_balance_wallet_outlined,
-              color: AppColors.success,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Баланс',
-                style: TextStyle(color: AppColors.textNeutralSecondary, fontSize: 12),
-              ),
-              Text(
-                '${balanceRub.toStringAsFixed(2)} $currency',
-                style: const TextStyle(
-                  color: AppColors.textNeutralMain,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Subscription Builder ─────────────────────────────────────────────────────
-
-class _SubscriptionBuilderCard extends StatelessWidget {
-  final SubscriptionOptions options;
-  final String? selectedPeriodId;
-  final int? selectedTraffic;
-  final int? selectedDevices;
-  final ValueChanged<String> onPeriodSelected;
-  final ValueChanged<int> onTrafficSelected;
-  final ValueChanged<int> onDevicesSelected;
-  final bool hidePeriodSelector;
-
-  const _SubscriptionBuilderCard({
-    required this.options,
-    required this.selectedPeriodId,
-    required this.selectedTraffic,
-    required this.selectedDevices,
-    required this.onPeriodSelected,
-    required this.onTrafficSelected,
-    required this.onDevicesSelected,
-    this.hidePeriodSelector = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final selectedPeriod = options.periods.firstWhere(
-          (p) => p.id == selectedPeriodId,
-      orElse: () => options.periods.first,
-    );
-
-    // If only period selector is available and it's hidden, skip the card.
-    final hasTraffic = selectedPeriod.traffic?.selectable == true &&
-        (selectedPeriod.traffic?.options.isNotEmpty ?? false);
-    final hasDevices =
-        selectedPeriod.devices != null && selectedPeriod.devices!.options.length > 1;
-
-    if (hidePeriodSelector && !hasTraffic && !hasDevices) {
-      return const SizedBox.shrink();
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Duration selector (hidden when separate plan grid is shown)
-          if (!hidePeriodSelector) ...[
-            _RowLabel(icon: Icons.calendar_today_outlined, label: 'Срок подписки'),
-            const SizedBox(height: 10),
-            _ChipSelector<String>(
-              equalWidth: true,
-              options: options.periods.map((p) {
-                final priceStr = '${(p.basePriceKopeks / 100).toStringAsFixed(0)} ₽';
-                String? badge;
-                if (p.discountPercent > 0) badge = '−${p.discountPercent}%';
-                return _ChipItem<String>(
-                  value: p.id,
-                  label: p.label,
-                  subtitle: priceStr,
-                  badge: badge,
-                );
-              }).toList(),
-              selected: selectedPeriodId,
-              onSelected: onPeriodSelected,
-            ),
-          ],
-
-          // Traffic
-          if (hasTraffic) ...[
-            if (!hidePeriodSelector) const SizedBox(height: 18),
-            _RowLabel(icon: Icons.data_usage_outlined, label: 'Трафик'),
-            const SizedBox(height: 10),
-            _ChipSelector<int>(
-              options: selectedPeriod.traffic!.options.map((t) {
-                final lbl = t.value == 0 ? '∞ Безлимит' : '${t.value} ГБ';
-                return _ChipItem<int>(value: t.value, label: lbl);
-              }).toList(),
-              selected: selectedTraffic,
-              onSelected: onTrafficSelected,
-            ),
-          ],
-
-          // Devices
-          if (hasDevices) ...[
-            const SizedBox(height: 18),
-            _RowLabel(icon: Icons.devices_outlined, label: 'Устройства'),
-            const SizedBox(height: 10),
-            _ChipSelector<int>(
-              options: selectedPeriod.devices!.options
-                  .map((d) => _ChipItem<int>(value: d, label: '$d'))
-                  .toList(),
-              selected: selectedDevices,
-              onSelected: onDevicesSelected,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _RowLabel extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  const _RowLabel({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, color: AppColors.textNeutralSecondary, size: 15),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            color: AppColors.textNeutralSecondary,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ChipItem<T> {
+class _Chip<T> {
   final T value;
   final String label;
-  final String? subtitle;
-  final String? badge;
-  const _ChipItem({required this.value, required this.label, this.subtitle, this.badge});
+  const _Chip({required this.value, required this.label});
 }
 
-class _ChipSelector<T> extends StatelessWidget {
-  final List<_ChipItem<T>> options;
+class _ChipRow<T> extends StatelessWidget {
+  final List<_Chip<T>> options;
   final T? selected;
   final ValueChanged<T> onSelected;
-  // When true, all chips share equal width (Row + Expanded) and equal height
-  // (CrossAxisAlignment.stretch). Badge placeholder is always reserved so
-  // chips with and without badges align vertically.
-  final bool equalWidth;
 
-  const _ChipSelector({
-    required this.options,
-    required this.selected,
-    required this.onSelected,
-    this.equalWidth = false,
-  });
-
-  Widget _buildChip(BuildContext context, _ChipItem<T> opt) {
-    final isSelected = opt.value == selected;
-    const purple = Color(0xFF6C5CE7);
-    const green = Color(0xFF00B894);
-
-    // Whether any option in this selector has a badge – used to decide whether
-    // to reserve space for the badge row so that chips are the same height.
-    final anyHasBadge = options.any((o) => o.badge != null);
-
-    return GestureDetector(
-      onTap: () => onSelected(opt.value),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? purple.withValues(alpha: 0.18)
-              : AppColors.graphiteElevated,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isSelected
-                ? purple
-                : Colors.white.withValues(alpha: 0.08),
-            width: isSelected ? 1.5 : 1,
-          ),
-          boxShadow: isSelected
-              ? [
-            BoxShadow(
-              color: purple.withValues(alpha: 0.2),
-              blurRadius: 12,
-              spreadRadius: -2,
-            ),
-          ]
-              : null,
-        ),
-        child: Column(
-          mainAxisSize: equalWidth ? MainAxisSize.max : MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Badge row: always reserve height when any chip in the group has
-            // a badge, so all chips are the same height.
-            if (anyHasBadge) ...[
-              opt.badge != null
-                  ? Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: green.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: green.withValues(alpha: 0.4)),
-                ),
-                child: Text(
-                  opt.badge!,
-                  style: const TextStyle(
-                    color: green,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-              )
-                  : const SizedBox(height: 17), // same height as badge container
-              const SizedBox(height: 5),
-            ],
-            Text(
-              opt.label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: isSelected ? purple : AppColors.textNeutralMain,
-                fontSize: 14,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-              ),
-            ),
-            if (opt.subtitle != null) ...[
-              const SizedBox(height: 3),
-              Text(
-                opt.subtitle!,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: isSelected
-                      ? purple.withValues(alpha: 0.8)
-                      : AppColors.textNeutralSecondary,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+  const _ChipRow({required this.options, required this.selected, required this.onSelected});
 
   @override
   Widget build(BuildContext context) {
-    if (equalWidth) {
-      final chips = <Widget>[];
-      for (var i = 0; i < options.length; i++) {
-        if (i > 0) chips.add(const SizedBox(width: 8));
-        chips.add(Expanded(child: _buildChip(context, options[i])));
-      }
-      return IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: chips,
-        ),
-      );
-    }
-
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      alignment: WrapAlignment.center,
-      children: options.map((opt) => _buildChip(context, opt)).toList(),
+      children: options.map((opt) {
+        final isSel = opt.value == selected;
+        return GestureDetector(
+          onTap: () => onSelected(opt.value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: isSel ? _DS.violet.withValues(alpha: 0.18) : _DS.surface3,
+              borderRadius: BorderRadius.circular(_DS.radiusXs),
+              border: Border.all(
+                color: isSel ? _DS.violet : _DS.border,
+                width: isSel ? 1.5 : 1,
+              ),
+            ),
+            child: Text(
+              opt.label,
+              style: TextStyle(
+                color: isSel ? _DS.violet : _DS.textPrimary,
+                fontSize: 14,
+                fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }
 
-// ── Price Preview ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Price preview
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _PricePreviewCard extends StatelessWidget {
   final CalcResult? calc;
@@ -1164,48 +1003,35 @@ class _PricePreviewCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final totalKopeks = calc?.totalKopeks ?? 0;
     final totalRub = calc?.totalRub ?? 0.0;
-    final hasEnoughBalance = totalKopeks > 0 && balanceKopeks >= totalKopeks;
+    final hasEnough = totalKopeks > 0 && balanceKopeks >= totalKopeks;
 
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            const Color(0xFF6C5CE7).withValues(alpha: 0.10),
-            const Color(0xFF311459).withValues(alpha: 0.15),
+            _DS.violet.withValues(alpha: 0.12),
+            _DS.surface1,
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFF6C5CE7).withValues(alpha: 0.25),
-        ),
+        borderRadius: BorderRadius.circular(_DS.radius),
+        border: Border.all(color: _DS.violet.withValues(alpha: 0.3)),
       ),
       child: loading
-          ? const Center(
-        child: SizedBox(
-          height: 24,
-          width: 24,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: Color(0xFF6C5CE7),
-          ),
-        ),
-      )
+          ? const Center(child: SizedBox(
+        height: 28, width: 28,
+        child: CircularProgressIndicator(strokeWidth: 2, color: _DS.violet),
+      ))
           : Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'К оплате',
-                  style: TextStyle(
-                    color: AppColors.textNeutralSecondary,
-                    fontSize: 13,
-                  ),
-                ),
+                const Text('К оплате', style: TextStyle(color: _DS.textSecondary, fontSize: 13)),
                 const SizedBox(height: 4),
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 300),
@@ -1215,10 +1041,11 @@ class _PricePreviewCard extends StatelessWidget {
                     '${totalRub.toStringAsFixed(2)} ₽',
                     key: ValueKey(totalKopeks),
                     style: const TextStyle(
-                      color: AppColors.textNeutralMain,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: -0.5,
+                      color: _DS.textPrimary,
+                      fontSize: 36,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -1,
+                      height: 1,
                     ),
                   ),
                 ),
@@ -1226,22 +1053,10 @@ class _PricePreviewCard extends StatelessWidget {
             ),
           ),
           if (totalKopeks > 0)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: hasEnoughBalance
-                    ? AppColors.success.withValues(alpha: 0.15)
-                    : AppColors.warning.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                hasEnoughBalance ? 'С баланса' : 'Пополнить баланс',
-                style: TextStyle(
-                  color: hasEnoughBalance ? AppColors.success : AppColors.warning,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+            _StatusPill(
+              label: hasEnough ? 'С баланса' : 'Онлайн-оплата',
+              color: hasEnough ? _DS.emerald : _DS.amber,
+              icon: hasEnough ? Icons.check_circle_outline : Icons.credit_card_rounded,
             ),
         ],
       ),
@@ -1249,7 +1064,36 @@ class _PricePreviewCard extends StatelessWidget {
   }
 }
 
-// ── Buy Button ───────────────────────────────────────────────────────────────
+class _StatusPill extends StatelessWidget {
+  final String label;
+  final Color color;
+  final IconData icon;
+  const _StatusPill({required this.label, required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(30),
+      border: Border.all(color: color.withValues(alpha: 0.3)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 14),
+        const SizedBox(width: 5),
+        Text(label, style: TextStyle(
+          color: color, fontSize: 12, fontWeight: FontWeight.w600,
+        )),
+      ],
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Buy button
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _BuyButton extends StatelessWidget {
   final bool loading;
@@ -1267,59 +1111,69 @@ class _BuyButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final needsPayment = !hasEnoughBalance && (totalKopeks ?? 0) > 0;
+    final color = needsPayment ? _DS.emerald : _DS.violet;
     final label = loading
         ? ''
         : needsPayment
         ? 'Оплатить ${(totalKopeks! / 100).toStringAsFixed(2)} ₽'
         : (totalKopeks != null && totalKopeks! > 0)
         ? 'Купить за ${(totalKopeks! / 100).toStringAsFixed(2)} ₽'
-        : 'Купить подписку';
+        : 'Оформить подписку';
 
-    return SizedBox(
+    return Container(
+      height: 58,
       width: double.infinity,
-      height: 56,
-      child: ElevatedButton(
-        onPressed: loading ? null : onPressed,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: needsPayment
-              ? const Color(0xFF00B894)
-              : const Color(0xFF6C5CE7),
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: const Color(0xFF6C5CE7).withValues(alpha: 0.5),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          elevation: 0,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [color, Color.lerp(color, Colors.black, 0.2)!],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        child: loading
-            ? const SizedBox(
-          height: 22,
-          width: 22,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-        )
-            : Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              needsPayment ? Icons.payment_rounded : Icons.lock_open_rounded,
-              size: 20,
+        borderRadius: BorderRadius.circular(_DS.radius),
+        boxShadow: [
+          BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 20, offset: const Offset(0, 6)),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: loading ? null : onPressed,
+          borderRadius: BorderRadius.circular(_DS.radius),
+          child: Center(
+            child: loading
+                ? const SizedBox(
+              height: 22, width: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+            )
+                : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  needsPayment ? Icons.payment_rounded : Icons.lock_open_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(label, style: const TextStyle(
+                  color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700, letterSpacing: 0.2,
+                )),
+              ],
             ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-// ── Upgrade Diff UI ───────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Upgrade card (existing subscribers)
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _UpgradeDiffCard extends StatefulWidget {
   final MeSubscription sub;
   final SubscriptionOptions options;
-  final Future<void> Function(String periodId, {int? trafficAdd, int? devicesAdd}) onUpgrade;
+  final Future<void> Function(String, {int? trafficAdd, int? devicesAdd}) onUpgrade;
   final bool loading;
 
   const _UpgradeDiffCard({
@@ -1346,96 +1200,70 @@ class _UpgradeDiffCardState extends State<_UpgradeDiffCard> {
 
   @override
   Widget build(BuildContext context) {
-    final currentTraffic = widget.sub.trafficLimitGb;
-    final currentDevices = widget.sub.deviceLimit;
-    final currentExpiry = widget.sub.formattedExpiry;
-
     final selectedPeriod = _selectedPeriodId != null
         ? widget.options.periods.firstWhere(
-          (p) => p.id == _selectedPeriodId,
-      orElse: () => widget.options.periods.first,
-    )
+            (p) => p.id == _selectedPeriodId,
+        orElse: () => widget.options.periods.first)
         : null;
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-      ),
+    return _GlassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Продлить на',
-            style: TextStyle(
-              color: AppColors.textNeutralSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
+          // Current status strip
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: _DS.emerald.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(_DS.radiusSm),
+              border: Border.all(color: _DS.emerald.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.verified_rounded, color: _DS.emerald, size: 16),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Активна до ${widget.sub.formattedExpiry}',
+                    style: const TextStyle(color: _DS.emerald, fontSize: 13, fontWeight: FontWeight.w500),
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(height: 20),
+
+          const _BuilderRow(icon: Icons.add_circle_outline_rounded, label: 'Продлить на'),
           const SizedBox(height: 10),
-          _ChipSelector<String>(
+
+          _ChipRow<String>(
             options: widget.options.periods
-                .map((p) => _ChipItem<String>(value: p.id, label: p.label))
+                .map((p) => _Chip<String>(value: p.id, label: p.label))
                 .toList(),
             selected: _selectedPeriodId,
             onSelected: (id) => setState(() => _selectedPeriodId = id),
           ),
           const SizedBox(height: 20),
-          const Text(
-            'Изменения',
-            style: TextStyle(
-              color: AppColors.textNeutralSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          const Divider(color: _DS.border, height: 1),
+          const SizedBox(height: 20),
+
+          // Diff summary
+          _DiffItem(label: 'Трафик', value: widget.sub.trafficLimitGb == 0 ? '∞ ГБ' : '${widget.sub.trafficLimitGb} ГБ', changed: false),
           const SizedBox(height: 10),
-          _DiffRow(
-            label: 'Трафик',
-            current: currentTraffic == 0 ? '∞ ГБ' : '$currentTraffic ГБ',
-            upgraded: currentTraffic == 0 ? '∞ ГБ' : '$currentTraffic ГБ',
-            changed: false,
-          ),
-          _DiffRow(
-            label: 'Устройства',
-            current: '$currentDevices',
-            upgraded: '$currentDevices',
-            changed: false,
-          ),
-          _DiffRow(
+          _DiffItem(label: 'Устройства', value: '${widget.sub.deviceLimit}', changed: false),
+          const SizedBox(height: 10),
+          _DiffItem(
             label: 'Срок',
-            current: currentExpiry,
-            upgraded: selectedPeriod != null ? '+ ${selectedPeriod.label}' : '—',
+            value: selectedPeriod != null ? '+ ${selectedPeriod.label}' : '—',
             changed: true,
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: (widget.loading || _selectedPeriodId == null)
-                  ? null
-                  : () => widget.onUpgrade(_selectedPeriodId!),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF6C5CE7),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                elevation: 0,
-              ),
-              child: widget.loading
-                  ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              )
-                  : const Text(
-                'Продлить подписку',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-            ),
+          const SizedBox(height: 20),
+
+          _BuyButton(
+            loading: widget.loading,
+            onPressed: _selectedPeriodId != null ? () => widget.onUpgrade(_selectedPeriodId!) : () {},
+            totalKopeks: null,
+            hasEnoughBalance: true,
           ),
         ],
       ),
@@ -1443,66 +1271,68 @@ class _UpgradeDiffCardState extends State<_UpgradeDiffCard> {
   }
 }
 
-class _DiffRow extends StatelessWidget {
+class _DiffItem extends StatelessWidget {
   final String label;
-  final String current;
-  final String upgraded;
+  final String value;
   final bool changed;
+  const _DiffItem({required this.label, required this.value, required this.changed});
 
-  const _DiffRow({
-    required this.label,
-    required this.current,
-    required this.upgraded,
-    required this.changed,
-  });
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(flex: 2, child: Text(label, style: const TextStyle(color: _DS.textSecondary, fontSize: 13))),
+      Expanded(
+        flex: 3,
+        child: changed
+            ? Row(children: [
+          const Icon(Icons.arrow_forward_rounded, size: 13, color: _DS.textMuted),
+          const SizedBox(width: 4),
+          Text(value, style: const TextStyle(
+            color: _DS.emerald, fontSize: 13, fontWeight: FontWeight.w600,
+          )),
+        ])
+            : Text(value, style: const TextStyle(color: _DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w500)),
+      ),
+    ],
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payment polling card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PaymentPollingCard extends StatelessWidget {
+  const _PaymentPollingCard();
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+    return _GlassCard(
+      accentColor: _DS.violet,
+      child: Column(
         children: [
-          Expanded(
-            flex: 3,
-            child: Text(
-              label,
-              style: const TextStyle(color: AppColors.textNeutralSecondary, fontSize: 13),
-            ),
+          const SizedBox(
+            width: 52, height: 52,
+            child: CircularProgressIndicator(strokeWidth: 3, color: _DS.violet),
           ),
-          Expanded(
-            flex: 3,
-            child: Text(
-              current,
-              style: const TextStyle(color: AppColors.textNeutralMain, fontSize: 13),
-            ),
-          ),
-          Expanded(
-            flex: 4,
-            child: changed
-                ? Row(
-              children: [
-                const Icon(Icons.arrow_forward, size: 12, color: AppColors.textNeutralMuted),
-                const SizedBox(width: 4),
-                Text(
-                  upgraded,
-                  style: const TextStyle(
-                    color: AppColors.success,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            )
-                : Text(
-              upgraded,
-              style: const TextStyle(color: AppColors.textNeutralMuted, fontSize: 13),
-            ),
+          const SizedBox(height: 20),
+          const Text('Обрабатываем платёж…', style: TextStyle(
+            color: _DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w700,
+          ), textAlign: TextAlign.center),
+          const SizedBox(height: 8),
+          const Text(
+            'Ожидаем подтверждение от платёжного сервиса.\nЭто может занять до 2 минут.',
+            style: TextStyle(color: _DS.textSecondary, fontSize: 13, height: 1.6),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Error card
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _ErrorCard extends StatelessWidget {
   final VoidCallback onRetry;
@@ -1510,36 +1340,88 @@ class _ErrorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.graphiteSurface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-      ),
+    return _GlassCard(
       child: Column(
         children: [
-          const Icon(Icons.wifi_off_rounded, color: AppColors.textNeutralSecondary, size: 48),
-          const SizedBox(height: 16),
-          const Text(
-            'Не удалось загрузить тарифы',
-            style: TextStyle(
-              color: AppColors.textNeutralMain,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
+          Container(
+            width: 56, height: 56,
+            decoration: BoxDecoration(
+              color: _DS.rose.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
             ),
-            textAlign: TextAlign.center,
+            child: const Icon(Icons.wifi_off_rounded, color: _DS.rose, size: 28),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          const Text('Не удалось загрузить тарифы', style: TextStyle(
+            color: _DS.textPrimary, fontSize: 16, fontWeight: FontWeight.w600,
+          ), textAlign: TextAlign.center),
+          const SizedBox(height: 14),
           TextButton(
             onPressed: onRetry,
-            child: const Text(
-              'Повторить',
-              style: TextStyle(color: Color(0xFF6C5CE7)),
-            ),
+            child: const Text('Повторить', style: TextStyle(color: _DS.violet, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payment disclaimer
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PaymentDisclaimer extends StatelessWidget {
+  const _PaymentDisclaimer();
+
+  @override
+  Widget build(BuildContext context) => const Text(
+    'Оплата через YooKassa · Подписка активируется автоматически',
+    textAlign: TextAlign.center,
+    style: TextStyle(color: _DS.textMuted, fontSize: 11, height: 1.5),
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared primitives
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GlassCard extends StatelessWidget {
+  final Widget child;
+  final Color? accentColor;
+
+  const _GlassCard({required this.child, this.accentColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _DS.surface1,
+        borderRadius: BorderRadius.circular(_DS.radius),
+        border: Border.all(
+          color: accentColor != null
+              ? accentColor!.withValues(alpha: 0.35)
+              : _DS.border,
+        ),
+        boxShadow: accentColor != null
+            ? [BoxShadow(
+          color: accentColor!.withValues(alpha: 0.1),
+          blurRadius: 24,
+          spreadRadius: -4,
+        )]
+            : null,
+      ),
+      child: child,
+    );
+  }
+}
+
+class _LoadingIndicator extends StatelessWidget {
+  const _LoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) => const CircularProgressIndicator(
+    color: _DS.violet, strokeWidth: 2.5,
+  );
 }
