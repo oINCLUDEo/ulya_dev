@@ -985,8 +985,26 @@ class _UpgradeSectionState extends State<_UpgradeSection>
   int?    _addTrafficGb;
   int?    _addDevices;
 
-  static const _trafficOpts = [10, 50, 100, 200, 500];
-  static const _devicesOpts = [1, 2, 3, 5, 10];
+  /// Traffic add options derived from backend subscription options.
+  List<int> get _trafficOpts {
+    final first = widget.options.periods.isNotEmpty
+        ? widget.options.periods.first
+        : null;
+    final opts = first?.traffic?.options
+        .map((o) => o.value)
+        .where((v) => v > 0)
+        .toList();
+    return opts != null && opts.isNotEmpty ? opts : [10, 50, 100, 200, 500];
+  }
+
+  /// Device add options derived from backend subscription options.
+  List<int> get _devicesOpts {
+    final first = widget.options.periods.isNotEmpty
+        ? widget.options.periods.first
+        : null;
+    final opts = first?.devices?.options.where((v) => v > 0).toList();
+    return opts != null && opts.isNotEmpty ? opts : [1, 2, 3, 5, 10];
+  }
 
   @override
   void initState() {

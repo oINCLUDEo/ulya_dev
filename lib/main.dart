@@ -196,7 +196,7 @@ class _MainShellState extends State<MainShell> {
         onGoToPremium: () => _go(3),
       ),
       SubscriptionPage(onGoToPremium: () => _go(3)),
-      const HomePage(),
+      HomePage(onGoToPremium: () => _go(3)),
       const PremiumPage(),
       const SettingsPage(),
     ];
