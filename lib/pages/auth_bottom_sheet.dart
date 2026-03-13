@@ -288,13 +288,6 @@ class _AuthBottomSheetState extends State<_AuthBottomSheet>
               child: _buildActionArea(),
             ),
 
-            // ── Subscription info row ────────────────────────────────────
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: _buildInfoRow(),
-            ),
-
             const SizedBox(height: 24),
           ],
         ),
@@ -357,35 +350,6 @@ class _AuthBottomSheetState extends State<_AuthBottomSheet>
     }
   }
 
-  // ── Info row ──────────────────────────────────────────────────────────────
-
-  Widget _buildInfoRow() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.amber.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.amber.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.info_outline, size: 16, color: Colors.amber[300]),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'В будущем подписку можно будет купить прямо в приложении. '
-                  'Если подписка уже есть — просто войдите в аккаунт.',
-              style: TextStyle(
-                color: Colors.amber[300],
-                fontSize: 12,
-                height: 1.4,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // ── Shared widgets ────────────────────────────────────────────────────────────

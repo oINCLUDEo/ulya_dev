@@ -11,6 +11,7 @@ import '../services/remnawave_service.dart';
 import '../services/subscription_api_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/purple_header.dart';
+import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 
 class SubscriptionPage extends StatefulWidget {
@@ -133,7 +134,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                   if (!auth.isLoggedIn) ...[
                     _NotLoggedInCard(onLoginTap: _onLoginTap),
                     const SizedBox(height: 12),
-                    _BuySubscriptionCard(),
+                    _BuySubscriptionCard(onTap: _onPremiumTap),
                   ] else if (_loading && me == null) ...[
                     const SizedBox(height: 60),
                     const Center(
@@ -319,25 +320,7 @@ class _NotLoggedInCard extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: onLoginTap,
-              icon: const Icon(Icons.telegram, size: 20),
-              label: const Text(
-                'Войти через Telegram',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-              ),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF229ED9),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
+          TelegramLoginButton(onTap: onLoginTap),
         ],
       ),
     );
@@ -345,52 +328,57 @@ class _NotLoggedInCard extends StatelessWidget {
 }
 
 class _BuySubscriptionCard extends StatelessWidget {
-  const _BuySubscriptionCard();
+  final VoidCallback onTap;
+  const _BuySubscriptionCard({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return _Card(
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Colors.amber.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: _Card(
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.star_outline, color: Colors.amber[400], size: 24),
             ),
-            child: Icon(Icons.star_outline, color: Colors.amber[400], size: 24),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Купить подписку',
-                  style: TextStyle(
-                    color: AppColors.textNeutralMain,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Купить подписку',
+                    style: TextStyle(
+                      color: AppColors.textNeutralMain,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Скоро будет доступно прямо в приложении',
-                  style: TextStyle(
-                    color: AppColors.textNeutralMuted,
-                    fontSize: 12,
+                  const SizedBox(height: 4),
+                  Text(
+                    'Выберите тариф и оплатите подписку',
+                    style: TextStyle(
+                      color: AppColors.textNeutralMuted,
+                      fontSize: 12,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          Icon(
-            Icons.chevron_right,
-            color: AppColors.textNeutralMuted,
-            size: 20,
-          ),
-        ],
+            Icon(
+              Icons.chevron_right,
+              color: AppColors.textNeutralMuted,
+              size: 20,
+            ),
+          ],
+        ),
       ),
     );
   }

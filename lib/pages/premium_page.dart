@@ -9,6 +9,7 @@ import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/purple_header.dart';
+import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 
 class PremiumPage extends StatefulWidget {
@@ -562,22 +563,35 @@ class _PlanSelectorGrid extends StatelessWidget {
     final periods = options.periods;
     final bestId = _bestValueId();
 
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (int i = 0; i < periods.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            Expanded(
-              child: _PlanCard(
-                period: periods[i],
-                isSelected: periods[i].id == selectedPeriodId,
-                isBestValue: periods[i].id == bestId,
-                onTap: () => onPeriodSelected(periods[i].id),
+    // Use a scrollable row with a minimum card width so cards never become
+    // too narrow when many periods are available.
+    const double minCardWidth = 88.0;
+    final screenWidth = MediaQuery.of(context).size.width - 64; // account for padding
+    final cardWidth = periods.isEmpty
+        ? minCardWidth
+        : ((screenWidth - (periods.length - 1) * 8) / periods.length)
+        .clamp(minCardWidth, 160.0);
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (int i = 0; i < periods.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              SizedBox(
+                width: cardWidth,
+                child: _PlanCard(
+                  period: periods[i],
+                  isSelected: periods[i].id == selectedPeriodId,
+                  isBestValue: periods[i].id == bestId,
+                  onTap: () => onPeriodSelected(periods[i].id),
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -802,16 +816,7 @@ class _NotLoggedInCard extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: onLoginTap,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              minimumSize: const Size(double.infinity, 48),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            child: const Text('Войти через Telegram'),
-          ),
+          TelegramLoginButton(onTap: onLoginTap),
         ],
       ),
     );
@@ -1136,6 +1141,7 @@ class _ChipSelector<T> extends StatelessWidget {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
+      alignment: WrapAlignment.center,
       children: options.map((opt) => _buildChip(context, opt)).toList(),
     );
   }

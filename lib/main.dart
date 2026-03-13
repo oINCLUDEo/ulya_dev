@@ -66,6 +66,7 @@ class _MainShellState extends State<MainShell> with TickerProviderStateMixin {
       ServersPage(
         onGoToHome: () => setState(() => _currentIndex = 2),
         onGoToSettings: () => setState(() => _currentIndex = 4),
+        onGoToPremium: () => setState(() => _currentIndex = 3),
       ),
       SubscriptionPage(
         onGoToPremium: () => setState(() => _currentIndex = 3),

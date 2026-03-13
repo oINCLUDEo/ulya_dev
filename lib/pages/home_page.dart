@@ -16,6 +16,7 @@ import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
 import '../utils/speed_calculator.dart';
 import '../widgets/purple_header.dart';
+import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 import 'config_editor_page.dart';
 
@@ -1246,22 +1247,7 @@ class _HomePageState extends State<HomePage>
           ],
         ),
         const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: () => showAuthBottomSheet(context),
-            icon: const Icon(Icons.login, size: 16),
-            label: const Text('Войти'),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF229ED9),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          ),
-        ),
+        TelegramLoginButton(onTap: () => showAuthBottomSheet(context)),
       ],
     );
   }

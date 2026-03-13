@@ -17,10 +17,12 @@ import 'auth_bottom_sheet.dart';
 class ServersPage extends StatefulWidget {
   final VoidCallback onGoToHome;
   final VoidCallback? onGoToSettings;
+  final VoidCallback? onGoToPremium;
 
   const ServersPage({
     required this.onGoToHome,
     required this.onGoToSettings,
+    this.onGoToPremium,
     super.key,
   });
 
@@ -177,9 +179,13 @@ class _ServersPageState extends State<ServersPage> {
 
     Future<void> onSelect(ServerNode node) async {
       if (_isPublicCatalog) {
-        // Tapping a catalog server prompts authentication.
-        // The _onAuthChanged listener handles the reload after successful login.
-        await showAuthBottomSheet(context);
+        // If already authenticated but no subscription, redirect to Premium.
+        if (authStateNotifier.value.isLoggedIn) {
+          widget.onGoToPremium?.call();
+        } else {
+          // Not logged in — show auth sheet.
+          await showAuthBottomSheet(context);
+        }
         return;
       }
       selectedServerNotifier.value = node;
@@ -850,156 +856,173 @@ class _NodeTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final protocol = node.protocol ?? '';
     final isPinging = ping == -2;
+    const purple = Color(0xFF6C5CE7);
 
-    return Material(
-      color: isSelected
-          ? const Color(0xFF6C5CE7).withValues(alpha: 0.08)
-          : Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onSelect,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? purple.withValues(alpha: 0.12)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
-        splashColor: const Color(0xFF6C5CE7).withValues(alpha: 0.1),
-        highlightColor: Colors.transparent,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          child: Row(
-            children: [
-              CountryFlag.fromCountryCode(
-                node.countryCode,
-                theme: ImageTheme(
-                  width: 40,
-                  height: 32,
-                  shape: RoundedRectangle(12),
+        border: Border.all(
+          color: isSelected ? purple : Colors.white.withValues(alpha: 0.06),
+          width: isSelected ? 1.5 : 1,
+        ),
+        boxShadow: isSelected
+            ? [
+          BoxShadow(
+            color: purple.withValues(alpha: 0.18),
+            blurRadius: 12,
+            spreadRadius: -2,
+          ),
+        ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onSelect,
+          borderRadius: BorderRadius.circular(14),
+          splashColor: purple.withValues(alpha: 0.1),
+          highlightColor: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            child: Row(
+              children: [
+                CountryFlag.fromCountryCode(
+                  node.countryCode,
+                  theme: ImageTheme(
+                    width: 40,
+                    height: 32,
+                    shape: RoundedRectangle(12),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      node.name,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                        color: isSelected
-                            ? const Color(0xFF6C5CE7)
-                            : AppColors.textNeutralMain,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        node.name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                          color: isSelected
+                              ? const Color(0xFF6C5CE7)
+                              : AppColors.textNeutralMain,
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        if (protocol.isNotEmpty) ...[
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _protocolColor(
-                                protocol,
-                              ).withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              protocol.toUpperCase(),
-                              style: TextStyle(
-                                color: _protocolColor(protocol),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          if (protocol.isNotEmpty) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _protocolColor(
+                                  protocol,
+                                ).withValues(alpha: 0.18),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                protocol.toUpperCase(),
+                                style: TextStyle(
+                                  color: _protocolColor(protocol),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                        ],
-                        Flexible(
-                          child: Text(
-                            node.address,
-                            style: const TextStyle(
-                              color: AppColors.textNeutralSecondary,
-                              fontSize: 12,
+                            const SizedBox(width: 6),
+                          ],
+                          Flexible(
+                            child: Text(
+                              node.address,
+                              style: const TextStyle(
+                                color: AppColors.textNeutralSecondary,
+                                fontSize: 12,
+                              ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              // Trailing: checkmark when selected, lock for public catalog,
-              // or ping button for subscription servers.
-              if (isSelected)
-                const Padding(
-                  padding: EdgeInsets.only(right: 4),
-                  child: Icon(
-                    Icons.check_circle,
-                    color: Color(0xFF6C5CE7),
-                    size: 20,
-                  ),
-                )
-              else if (isPublicCatalog)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.lock_outline,
-                    size: 14,
-                    color: Colors.grey,
-                  ),
-                )
-              else
-                InkWell(
-                  onTap: (isPinging || node.link == null) ? null : onPing,
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
+                const SizedBox(width: 8),
+                // Trailing: checkmark when selected, lock for public catalog,
+                // or ping button for subscription servers.
+                if (isSelected)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(
+                      Icons.check_circle,
+                      color: Color(0xFF6C5CE7),
+                      size: 20,
+                    ),
+                  )
+                else if (isPublicCatalog)
+                  Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: _pingColor(ping).withValues(alpha: 0.15),
+                      color: Colors.grey.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: isPinging
-                        ? SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: _pingColor(ping),
+                    child: const Icon(
+                      Icons.lock_outline,
+                      size: 14,
+                      color: Colors.grey,
+                    ),
+                  )
+                else
+                  InkWell(
+                    onTap: (isPinging || node.link == null) ? null : onPing,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
                       ),
-                    )
-                        : Text(
-                      _pingLabel(ping),
-                      style: TextStyle(
-                        color: _pingColor(ping),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
+                      decoration: BoxDecoration(
+                        color: _pingColor(ping).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: isPinging
+                          ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: _pingColor(ping),
+                        ),
+                      )
+                          : Text(
+                        _pingLabel(ping),
+                        style: TextStyle(
+                          color: _pingColor(ping),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
-
-  // ──────────────────────────────────────────────────────────
-  // HELPERS
-  // ──────────────────────────────────────────────────────────
 
   Color _protocolColor(String p) {
     switch (p.toLowerCase()) {
