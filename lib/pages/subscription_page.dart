@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/me_response.dart';
 import '../models/subscription_info.dart';
@@ -7,12 +8,15 @@ import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
+import '../services/subscription_api_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/purple_header.dart';
 import 'auth_bottom_sheet.dart';
 
 class SubscriptionPage extends StatefulWidget {
-  const SubscriptionPage({super.key});
+  const SubscriptionPage({super.key, this.onGoToPremium});
+
+  final VoidCallback? onGoToPremium;
 
   @override
   State<SubscriptionPage> createState() => _SubscriptionPageState();
@@ -138,9 +142,15 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                       ),
                     ),
                   ] else ...[
-                    // Информация о пользователе - обновленная иконка!
+                    // Информация о пользователе
                     _UserCard(me: me, auth: auth),
                     const SizedBox(height: 12),
+
+                    // Баланс
+                    if (me != null)
+                      _BalanceCard(me: me),
+                    if (me != null)
+                      const SizedBox(height: 12),
 
                     // Статус подписки из MeService
                     _SubscriptionStatusCard(me: me),
@@ -150,8 +160,12 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                     if (me?.subscription != null) ...[
                       _TrafficCard(
                         sub: me!.subscription!,
-                        trafficInfo: _trafficInfo, // Добавляем данные о трафике
+                        trafficInfo: _trafficInfo,
                       ),
+                      const SizedBox(height: 12),
+
+                      // Автопродление
+                      _AutopayCard(sub: me.subscription!, onToggle: _onAutopayToggle),
                       const SizedBox(height: 12),
 
                       // Детали подписки из MeService
@@ -165,7 +179,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                         ),
                       const SizedBox(height: 12),
                     ],
-                    _QuickActionsCard(onLogout: _onLogout),
+                    _QuickActionsCard(onLogout: _onLogout, onPremiumTap: _onPremiumTap),
                   ],
                 ]),
               ),
@@ -236,6 +250,26 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     if (confirm == true) {
       await AuthService.logout();
       debugPrint('SubPage: logout proccess compeleted');
+    }
+  }
+
+  Future<void> _onAutopayToggle(bool enabled) async {
+    final result = await SubscriptionApiService.setAutopay(enabled: enabled);
+    if (result != null && mounted) {
+      await MeService.refresh();
+    }
+  }
+
+  void _onPremiumTap() {
+    if (widget.onGoToPremium != null) {
+      widget.onGoToPremium!();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Откройте вкладку «Премиум» для управления подпиской'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 }
@@ -966,10 +1000,366 @@ class _SubscriptionUrlCard extends StatelessWidget {
   }
 }
 
+// ── Balance Card ──────────────────────────────────────────────────────────────
+
+class _BalanceCard extends StatelessWidget {
+  final MeResponse me;
+
+  const _BalanceCard({required this.me});
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.success.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.account_balance_wallet_outlined,
+              color: AppColors.success,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Баланс',
+                  style: TextStyle(
+                    color: AppColors.textNeutralSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+                Text(
+                  '${me.balanceRub.toStringAsFixed(2)} ${me.balanceCurrency}',
+                  style: const TextStyle(
+                    color: AppColors.textNeutralMain,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => _showTopupSheet(context),
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Пополнить'),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.success,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showTopupSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _TopupBottomSheet(),
+    );
+  }
+}
+
+// ── Balance Top-up Bottom Sheet ───────────────────────────────────────────────
+
+class _TopupBottomSheet extends StatefulWidget {
+  const _TopupBottomSheet();
+
+  @override
+  State<_TopupBottomSheet> createState() => _TopupBottomSheetState();
+}
+
+class _TopupBottomSheetState extends State<_TopupBottomSheet> {
+  static const _amounts = [100, 200, 300, 500, 1000, 2000];
+  int _selectedAmount = 300;
+  bool _loading = false;
+
+  Future<void> _onTopup() async {
+    setState(() => _loading = true);
+    final amountKopeks = _selectedAmount * 100;
+    final result = await SubscriptionApiService.topupBalance(
+      amountKopeks: amountKopeks,
+    );
+    if (!mounted) return;
+
+    if (result == null) {
+      _showSnack('Ошибка соединения с сервером', isError: true);
+    } else if (result.requiresPayment && result.paymentUrl != null) {
+      Navigator.pop(context);
+      final uri = Uri.parse(result.paymentUrl!);
+      try {
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          _showSnack('Не удалось открыть страницу оплаты', isError: true);
+        }
+      } catch (_) {
+        _showSnack('Ошибка при открытии оплаты', isError: true);
+      }
+    } else {
+      _showSnack(result.message ?? 'Ошибка пополнения', isError: true);
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  void _showSnack(String msg, {required bool isError}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: isError ? AppColors.danger : AppColors.success,
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.graphiteSurface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Пополнить баланс',
+            style: TextStyle(
+              color: AppColors.textNeutralMain,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Оплата через YooKassa',
+            style: TextStyle(
+              color: AppColors.textNeutralSecondary,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Amount selector
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _amounts.map((amount) {
+              final selected = amount == _selectedAmount;
+              return GestureDetector(
+                onTap: () => setState(() => _selectedAmount = amount),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? AppColors.success.withValues(alpha: 0.15)
+                        : AppColors.graphiteElevated,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: selected
+                          ? AppColors.success
+                          : Colors.white.withValues(alpha: 0.08),
+                      width: selected ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Text(
+                    '$amount ₽',
+                    style: TextStyle(
+                      color: selected
+                          ? AppColors.success
+                          : AppColors.textNeutralMain,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+
+          const SizedBox(height: 24),
+
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton(
+              onPressed: _loading ? null : _onTopup,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.success,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor:
+                AppColors.success.withValues(alpha: 0.5),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                elevation: 0,
+              ),
+              child: _loading
+                  ? const SizedBox(
+                height: 22,
+                width: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+                  : Text(
+                'Пополнить на $_selectedAmount ₽',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Autopay Card ──────────────────────────────────────────────────────────────
+
+class _AutopayCard extends StatefulWidget {
+  final MeSubscription sub;
+  final Future<void> Function(bool enabled) onToggle;
+
+  const _AutopayCard({required this.sub, required this.onToggle});
+
+  @override
+  State<_AutopayCard> createState() => _AutopayCardState();
+}
+
+class _AutopayCardState extends State<_AutopayCard> {
+  late bool _enabled;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.sub.autopayEnabled;
+  }
+
+  @override
+  void didUpdateWidget(_AutopayCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sub.autopayEnabled != widget.sub.autopayEnabled) {
+      _enabled = widget.sub.autopayEnabled;
+    }
+  }
+
+  Future<void> _toggle(bool value) async {
+    setState(() {
+      _enabled = value;
+      _loading = true;
+    });
+    try {
+      await widget.onToggle(value);
+    } catch (_) {
+      if (mounted) setState(() => _enabled = !value);
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: (_enabled ? AppColors.primary : AppColors.graphiteElevated).withValues(alpha: 0.25),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              Icons.autorenew,
+              color: _enabled ? AppColors.primary : AppColors.textNeutralMuted,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Автопродление',
+                  style: TextStyle(
+                    color: AppColors.textNeutralMain,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  _enabled
+                      ? 'Подписка продлевается автоматически'
+                      : 'Автопродление отключено',
+                  style: const TextStyle(
+                    color: AppColors.textNeutralSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _loading
+              ? const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppColors.primary,
+            ),
+          )
+              : Switch(
+            value: _enabled,
+            onChanged: _toggle,
+            activeColor: const Color(0xFF6C5CE7),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _QuickActionsCard extends StatelessWidget {
   final VoidCallback onLogout;
+  final VoidCallback? onPremiumTap;
 
-  const _QuickActionsCard({required this.onLogout});
+  const _QuickActionsCard({required this.onLogout, this.onPremiumTap});
 
   @override
   Widget build(BuildContext context) {
@@ -987,11 +1377,11 @@ class _QuickActionsCard extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _ActionRow(
-            icon: Icons.star_border,
+            icon: Icons.workspace_premium,
             iconColor: Colors.amber,
-            label: 'Купить / продлить',
-            subtitle: 'Скоро в приложении',
-            onTap: null,
+            label: 'Купить / продлить подписку',
+            subtitle: 'Перейти на страницу Премиум',
+            onTap: onPremiumTap,
           ),
           const Divider(color: AppColors.graphiteElevated, height: 20),
           _ActionRow(

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
 import '../services/auth_state.dart';
+import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../theme/app_colors.dart';
@@ -46,11 +47,15 @@ class _ServersPageState extends State<ServersPage> {
   final Map<String, int> _pings = {};
   bool _pingAllInProgress = false;
 
+  /// Tracks the last subscription URL seen from [meNotifier] to detect changes.
+  String _lastKnownSubUrl = '';
+
   @override
   void initState() {
     super.initState();
     selectedServerNotifier.addListener(_onSelectionChanged);
     authStateNotifier.addListener(_onAuthChanged);
+    meNotifier.addListener(_onMeChanged);
     _loadNodes();
   }
 
@@ -58,6 +63,7 @@ class _ServersPageState extends State<ServersPage> {
   void dispose() {
     selectedServerNotifier.removeListener(_onSelectionChanged);
     authStateNotifier.removeListener(_onAuthChanged);
+    meNotifier.removeListener(_onMeChanged);
     super.dispose();
   }
 
@@ -69,6 +75,16 @@ class _ServersPageState extends State<ServersPage> {
   /// the public catalog automatically.
   void _onAuthChanged() {
     _loadNodes();
+  }
+
+  /// Reload servers when the subscription URL changes (e.g. after a successful
+  /// subscription purchase that updated [meNotifier]).
+  void _onMeChanged() {
+    final newUrl = meNotifier.value?.subscription?.subscriptionUrl ?? '';
+    if (newUrl != _lastKnownSubUrl) {
+      _lastKnownSubUrl = newUrl;
+      _loadNodes();
+    }
   }
 
   // ──────────────────────────────────────────────────────────────

@@ -7,6 +7,9 @@ class MeResponse {
     this.username,
     required this.hasSubscription,
     this.subscription,
+    this.balanceKopeks = 0,
+    this.balanceRub = 0.0,
+    this.balanceCurrency = 'RUB',
   });
 
   final int? telegramId;
@@ -15,6 +18,9 @@ class MeResponse {
   final String? username;
   final bool hasSubscription;
   final MeSubscription? subscription;
+  final int balanceKopeks;
+  final double balanceRub;
+  final String balanceCurrency;
 
   String get displayName {
     if (firstName != null && firstName!.isNotEmpty) {
@@ -34,6 +40,9 @@ class MeResponse {
       username: json['username'] as String?,
       hasSubscription: json['has_subscription'] as bool? ?? false,
       subscription: subJson != null ? MeSubscription.fromJson(subJson) : null,
+      balanceKopeks: (json['balance_kopeks'] as num?)?.toInt() ?? 0,
+      balanceRub: (json['balance_rub'] as num?)?.toDouble() ?? 0.0,
+      balanceCurrency: json['balance_currency'] as String? ?? 'RUB',
     );
   }
 }
@@ -47,6 +56,7 @@ class MeSubscription {
     required this.trafficUsedGb,
     this.subscriptionUrl,
     required this.deviceLimit,
+    this.autopayEnabled = false,
   });
 
   final String status;
@@ -63,6 +73,7 @@ class MeSubscription {
 
   final String? subscriptionUrl;
   final int deviceLimit;
+  final bool autopayEnabled;
 
   bool get isActive => status == 'active';
 
@@ -94,6 +105,7 @@ class MeSubscription {
       trafficUsedGb: (json['traffic_used_gb'] as num?)?.toDouble() ?? 0.0,
       subscriptionUrl: json['subscription_url'] as String?,
       deviceLimit: (json['device_limit'] as num?)?.toInt() ?? 1,
+      autopayEnabled: json['autopay_enabled'] as bool? ?? false,
     );
   }
 }
