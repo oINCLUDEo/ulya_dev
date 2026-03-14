@@ -94,9 +94,15 @@ class _ServersPageState extends State<ServersPage> {
     final map = {'bypass': <ServerNode>[], 'unlimited': <ServerNode>[], 'other': <ServerNode>[]};
     for (final n in _nodes) {
       final d = (n.description ?? '').toLowerCase();
-      if (d.contains('белые')) map['bypass']!.add(n);
-      else if (d.contains('безлимит')) map['unlimited']!.add(n);
-      else map['other']!.add(n);
+      if (d.contains('белые')) {
+        map['bypass']!.add(n);
+      }
+      else if (d.contains('безлимит')) {
+        map['unlimited']!.add(n);
+      }
+      else {
+        map['other']!.add(n);
+      }
     }
     for (final k in map.keys) {
       map[k]!.sort((a, b) {
@@ -133,11 +139,15 @@ class _ServersPageState extends State<ServersPage> {
     if (_nodes.isEmpty || _pingAllInProgress) return;
     setState(() {
       _pingAllInProgress = true;
-      for (final n in _nodes) if (n.link != null) _pings[n.uuid] = -2;
+      for (final n in _nodes) {
+        if (n.link != null) _pings[n.uuid] = -2;
+      }
     });
     final queue = _nodes.where((n) => n.link != null).toList();
     Future<void> worker() async {
-      while (queue.isNotEmpty) await _tcpPingNode(queue.removeLast());
+      while (queue.isNotEmpty) {
+        await _tcpPingNode(queue.removeLast());
+      }
     }
     await Future.wait(List.generate(5, (_) => worker()));
     if (mounted) setState(() => _pingAllInProgress = false);

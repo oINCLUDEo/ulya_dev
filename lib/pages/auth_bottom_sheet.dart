@@ -86,10 +86,12 @@ class _AuthSheetState extends State<_AuthSheet>
         }
       },
       onError: (_) {
-        if (mounted) setState(() {
-          _step = _Step.error;
-          _errorMessage = 'Ошибка соединения. Попробуйте снова.';
-        });
+        if (mounted) {
+          setState(() {
+            _step = _Step.error;
+            _errorMessage = 'Ошибка соединения. Попробуйте снова.';
+          });
+        }
       },
     );
   }

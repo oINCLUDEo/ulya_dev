@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -11,8 +9,6 @@ import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/subscription_api_service.dart';
-import '../theme/app_colors.dart';
-import '../widgets/purple_header.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 
@@ -22,6 +18,7 @@ import 'auth_bottom_sheet.dart';
 
 class _DS {
   static const violet = Color(0xFF7C6FF7);
+  // ignore: unused_field
   static const violetDim = Color(0xFF5A52C0);
   static const emerald = Color(0xFF34D399);
   static const amber = Color(0xFFFBBF24);
@@ -40,6 +37,7 @@ class _DS {
   static const border = Color(0xFF2A2A3D);
 
   static const radius = 20.0;
+  // ignore: unused_field
   static const radiusSm = 12.0;
   static const radiusXs = 8.0;
 }
@@ -97,7 +95,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
     if (!mounted) return;
     if (!force &&
         _lastRefresh != null &&
-        DateTime.now().difference(_lastRefresh!) < const Duration(seconds: 8)) return;
+        DateTime.now().difference(_lastRefresh!) < const Duration(seconds: 8)) {
+      return;
+    }
 
     _lastRefresh = DateTime.now();
     setState(() => _loading = true);
@@ -375,7 +375,7 @@ class _UserCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final name = me?.displayName ?? auth.displayName ?? '';
+    final name = me?.displayName ?? auth.displayName;
     final username = me?.username ?? auth.username;
     final initials = name.isNotEmpty ? name[0].toUpperCase() : '?';
 
@@ -769,7 +769,7 @@ class _AutopayCardState extends State<_AutopayCard> {
           Switch(
             value: _enabled,
             onChanged: _toggle,
-            activeColor: _DS.violet,
+            activeThumbColor: _DS.violet,
             inactiveThumbColor: _DS.textMuted,
             inactiveTrackColor: _DS.surface3,
           ),

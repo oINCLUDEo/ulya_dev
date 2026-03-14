@@ -25,6 +25,7 @@ class _DS {
   static const surface0 = Color(0xFF0F0F14);
   static const surface1 = Color(0xFF17171F);
   static const surface2 = Color(0xFF1E1E2A);
+  // ignore: unused_field
   static const surface3 = Color(0xFF26263A);
 
   static const textPrimary   = Color(0xFFEEEEF8);
@@ -644,7 +645,9 @@ class _PeriodList extends StatelessWidget {
     PeriodOption? best;
     for (final p in options.periods) {
       if (p.discountPercent > 0 &&
-          (best == null || p.discountPercent > best.discountPercent)) best = p;
+          (best == null || p.discountPercent > best.discountPercent)) {
+        best = p;
+      }
     }
     return best?.id;
   }
@@ -780,7 +783,7 @@ class _OptionChips<T> extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: EdgeInsets.zero,
         itemCount: options.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
           final opt   = options[i];
           final isSel = opt.value == selected;

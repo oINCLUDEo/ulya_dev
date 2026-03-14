@@ -829,7 +829,7 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
             child: Stack(children: [
               ValueListenableBuilder<int>(
                 valueListenable: AppsRepository.instance.iconsVersion,
-                builder: (_, __, ___) => ListView.builder(
+                builder: (_, _, _) => ListView.builder(
                   controller: scrollCtrl,
                   itemCount: _filtered.length,
                   itemBuilder: (_, i) {

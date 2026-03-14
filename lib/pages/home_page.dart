@@ -323,7 +323,7 @@ class _HomePageState extends State<HomePage>
                   controller: scrollCtrl,
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   itemCount: nodes.length,
-                  separatorBuilder: (_, __) => Divider(height: 1, indent: 16, endIndent: 16, color: DS.border),
+                  separatorBuilder: (_, _) => Divider(height: 1, indent: 16, endIndent: 16, color: DS.border),
                   itemBuilder: (_, i) {
                     final node = nodes[i];
                     final isSel = _selectedNode?.uuid == node.uuid;
@@ -421,7 +421,7 @@ class _HomePageState extends State<HomePage>
 
   String _fmtDuration(int sec) {
     final h = sec ~/ 3600, m = (sec % 3600) ~/ 60, s = sec % 60;
-    if (h > 0) return '${h}ч ${m.toString().padLeft(2, '0')}м';
+    if (h > 0) return '$hч ${m.toString().padLeft(2, '0')}м';
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
@@ -846,7 +846,7 @@ class _SpeedTile extends StatelessWidget {
       tween: Tween<double>(begin: 0, end: speed),
       duration: const Duration(milliseconds: 350),
       curve: Curves.easeOutCubic,
-      builder: (_, v, __) => Text(_fmt(v), style: TextStyle(
+      builder: (_, v, _) => Text(_fmt(v), style: TextStyle(
           color: color, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
     ),
     const SizedBox(height: 3),
@@ -1192,7 +1192,7 @@ class VpnIconBtn extends StatelessWidget {
   final bool loading;
   final IconData icon;
   final VoidCallback? onTap;
-  const VpnIconBtn({required this.loading, required this.icon, this.onTap});
+  const VpnIconBtn({super.key, required this.loading, required this.icon, this.onTap});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -1236,7 +1236,7 @@ class _Chip extends StatelessWidget {
 
 class VpnInfoBanner extends StatelessWidget {
   final Color color; final String text;
-  const VpnInfoBanner({required this.color, required this.text});
+  const VpnInfoBanner({super.key, required this.color, required this.text,});
 
   @override
   Widget build(BuildContext context) => Container(

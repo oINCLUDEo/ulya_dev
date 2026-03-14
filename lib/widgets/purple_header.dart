@@ -90,7 +90,7 @@ class PurpleHeader extends StatelessWidget {
           ),
         ),
         // Правая часть: кастомный виджет
-        if (trailing != null) trailing!,
+        ?trailing,
       ],
     );
   }
