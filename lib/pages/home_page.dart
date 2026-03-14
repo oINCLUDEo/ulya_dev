@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
@@ -18,7 +17,6 @@ import '../services/selected_server_state.dart';
 import '../utils/speed_calculator.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
-import 'config_editor_page.dart';
 import '../main.dart' show DS;
 
 class HomePage extends StatefulWidget {
