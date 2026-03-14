@@ -8,8 +8,11 @@ import 'pages/premium_page.dart';
 import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/subscription_page.dart';
+import 'services/app_logger.dart';
 import 'services/auth_state.dart';
 import 'services/me_service.dart';
+import 'services/notification_service.dart';
+import 'widgets/notification_banner.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global Design System tokens — imported by all pages
@@ -57,6 +60,9 @@ void main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
   ));
+  await appLogger.loadFromDisk();
+  await notificationService.init();
+  appLogger.info('App', 'Application started');
   await loadAuthState();
   MeService.refresh();
   runApp(const UlyaVpnApp());
@@ -71,7 +77,7 @@ class UlyaVpnApp extends StatelessWidget {
       title: 'Ulya VPN',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
-      home: const MainShell(),
+      home: const InAppNotificationOverlay(child: MainShell()),
     );
   }
 

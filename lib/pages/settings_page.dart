@@ -3,13 +3,17 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_config.dart';
+import '../services/app_logger.dart';
 import '../services/apps_repository.dart';
 import '../utils/core_info_parser.dart';
 import '../main.dart' show DS;
+import 'logs_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -246,6 +250,53 @@ class _SettingsPageState extends State<SettingsPage> {
               onTap: _showPingUrlDialog,
             ),
           )),
+          _gap,
+
+          // Diagnostics / Logs
+          _pad(_Section(
+            title: 'Диагностика',
+            icon: Icons.monitor_heart_rounded,
+            child: Column(children: [
+              _SettingsTile(
+                icon: Icons.terminal_rounded,
+                label: 'Журнал событий',
+                value: 'Просмотр системных логов приложения',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LogsPage()),
+                ),
+              ),
+              const Divider(height: 1, color: DS.border),
+              _SettingsTile(
+                icon: Icons.delete_sweep_outlined,
+                label: 'Очистить логи',
+                value: 'Удалить все сохранённые записи',
+                onTap: _clearLogs,
+              ),
+            ]),
+          )),
+          _gap,
+
+          // Support
+          _pad(_Section(
+            title: 'Поддержка',
+            icon: Icons.support_agent_rounded,
+            child: Column(children: [
+              _SettingsTile(
+                icon: Icons.send_rounded,
+                label: 'Написать в поддержку',
+                value: 'Telegram: @ulya_tech',
+                onTap: _openSupport,
+              ),
+              const Divider(height: 1, color: DS.border),
+              _SettingsTile(
+                icon: Icons.bug_report_outlined,
+                label: 'Отправить диагностику',
+                value: 'Скопировать логи для обращения в поддержку',
+                onTap: _sendDiagnostics,
+              ),
+            ]),
+          )),
 
           const SliverPadding(padding: EdgeInsets.only(bottom: 110)),
         ],
@@ -378,6 +429,30 @@ class _SettingsPageState extends State<SettingsPage> {
         onSave: (updated) { setState(() => _blockedApps = updated); _save(); },
       ),
     );
+  }
+
+  void _clearLogs() {
+    appLogger.clear();
+    _snack('Логи очищены');
+  }
+
+  Future<void> _openSupport() async {
+    final uri = Uri.parse('https://t.me/ulya_tech');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      _snack('Не удалось открыть Telegram');
+    }
+  }
+
+  void _sendDiagnostics() {
+    final logs = appLogger.exportText();
+    if (logs.isEmpty) {
+      _snack('Логи пусты — нечего отправлять');
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: logs));
+    _snack('Логи скопированы — вставьте в сообщение поддержке');
   }
 
   void _snack(String msg) {

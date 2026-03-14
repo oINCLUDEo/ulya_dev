@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
 import '../models/me_response.dart';
+import 'app_logger.dart';
 import 'auth_state.dart';
 import 'remnawave_service.dart';
 
@@ -56,12 +57,15 @@ class MeService {
         }
         meNotifier.value = me;
         await _saveToCache(me);
+        appLogger.info('MeService', '/me refreshed — subscription: ${me.hasSubscription}');
         return me;
       }
 
+      appLogger.warning('MeService', '/me returned ${response.statusCode}');
       debugPrint('MeService: /me returned ${response.statusCode}');
       return null;
     } on Exception catch (e) {
+      appLogger.error('MeService', '/me error: $e');
       debugPrint('MeService: error fetching /me: $e');
       return null;
     }

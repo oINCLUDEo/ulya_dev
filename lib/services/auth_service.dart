@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_config.dart';
+import 'app_logger.dart';
 import 'auth_state.dart';
 import 'me_service.dart';
 import 'remnawave_service.dart';
@@ -59,6 +60,7 @@ class AuthService {
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
+        appLogger.error('AuthService', 'init failed: HTTP ${response.statusCode}');
         onError('Ошибка сервера (${response.statusCode}). Попробуйте позже.');
         return null;
       }
@@ -85,6 +87,7 @@ class AuthService {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       }
 
+      appLogger.info('AuthService', 'auth init succeeded, token received');
       return token;
     } on Exception catch (e) {
       onError('Ошибка соединения с сервером: $e');
@@ -131,8 +134,10 @@ class AuthService {
 
           final result = await _applyAuthResponse(authMap);
           if (result != null) {
+            appLogger.error('AuthService', 'auth apply failed: $result');
             yield AuthResult.failed(result);
           } else {
+            appLogger.info('AuthService', 'user authenticated: ${authStateNotifier.value.displayName}');
             yield AuthResult.done(authStateNotifier.value);
           }
           return;
@@ -203,6 +208,7 @@ class AuthService {
         clearAuthState(),
       ]);
 
+      appLogger.info('AuthService', 'user logged out');
       debugPrint('Logout: все данные успешно очищены');
       debugPrint('Logout: Ключи после выхода: ${prefs.getKeys()}');
       for (String key in prefs.getKeys()) {

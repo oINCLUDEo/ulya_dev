@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/me_response.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
+import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
@@ -168,11 +169,16 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _toggleConnection() async {
     if (_isTransitioning) return;
-    if (_isConnected) { await _v2ray.stopVless(); return; }
+    if (_isConnected) {
+      appLogger.info('HomePage', 'disconnecting from ${_selectedNode?.name ?? "unknown"}');
+      await _v2ray.stopVless();
+      return;
+    }
     final node = _selectedNode;
     if (node == null) { _snack('Сначала выберите сервер'); return; }
     if (node.isDisabled || node.link == null) {
       if (authStateNotifier.value.isLoggedIn) {
+        appLogger.info('HomePage', 'blocked server tapped — redirecting to premium');
         widget.onGoToPremium?.call();
       } else {
         await showAuthBottomSheet(context);
@@ -181,6 +187,7 @@ class _HomePageState extends State<HomePage>
     }
     if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
     setState(() => _isConnecting = true);
+    appLogger.info('HomePage', 'connecting to ${node.name} (${node.countryCode})');
     try {
       final parser = FlutterV2ray.parseFromURL(node.link!);
       await _v2ray.startVless(
@@ -190,6 +197,7 @@ class _HomePageState extends State<HomePage>
         proxyOnly: false,
       );
     } catch (e) {
+      appLogger.error('HomePage', 'connection error: $e');
       _snack('Ошибка подключения: $e');
     } finally {
       if (mounted) setState(() => _isConnecting = false);
@@ -208,7 +216,6 @@ class _HomePageState extends State<HomePage>
     } catch (e) { _snack('Не удалось разобрать конфиг: $e'); }
   }
 
-  // ── Server picker sheet ────────────────────────────────────────────────────
   void _showServerPicker() {
     String? selectedCat;
     showModalBottomSheet<void>(
@@ -226,6 +233,11 @@ class _HomePageState extends State<HomePage>
           if (d.contains('безлимит')) hasUnlimited = true;
         }
         final showCats = !_isPublicCatalog && (hasBypass || hasUnlimited);
+
+        // Detect logged-in + no subscription state
+        final isLoggedIn = authStateNotifier.value.isLoggedIn;
+        final hasSubscription = meNotifier.value?.subscription != null;
+        final showNoPlanBanner = _isPublicCatalog && isLoggedIn && !hasSubscription;
 
         List<ServerNode> visible() {
           if (selectedCat == null) return _nodes;
@@ -262,8 +274,19 @@ class _HomePageState extends State<HomePage>
               ]),
             ),
 
-            // Public catalog warning
-            if (_isPublicCatalog)
+            // ── No plan banner (logged in, no subscription) ────────────
+            if (showNoPlanBanner)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: _SheetNoPlanBanner(
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onGoToPremium?.call();
+                  },
+                ),
+              )
+            // ── Public catalog warning (not logged in) ─────────────────
+            else if (_isPublicCatalog)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
                 child: VpnInfoBanner(
@@ -318,21 +341,33 @@ class _HomePageState extends State<HomePage>
                   itemBuilder: (_, i) {
                     final node = nodes[i];
                     final isSel = _selectedNode?.uuid == node.uuid;
+                    final isLocked = _isPublicCatalog || node.isDisabled || node.link == null;
                     return Material(
                       color: isSel ? DS.violet.withValues(alpha: 0.08) : Colors.transparent,
                       child: InkWell(
                         onTap: () async {
+                          // Public catalog tap — always just close, banner handles navigation
                           if (_isPublicCatalog) {
+                            if (!isLoggedIn) {
+                              Navigator.pop(ctx);
+                              if (context.mounted) await showAuthBottomSheet(context);
+                            }
+                            // If logged in but no subscription — do nothing,
+                            // the banner at the top already guides them
+                            return;
+                          }
+
+                          // Locked server in subscription (no link)
+                          if (node.isDisabled || node.link == null) {
                             Navigator.pop(ctx);
                             if (context.mounted) {
-                              if (authStateNotifier.value.isLoggedIn) {
-                                widget.onGoToPremium?.call();
-                              } else {
-                                await showAuthBottomSheet(context);
-                              }
+                              isLoggedIn
+                                  ? widget.onGoToPremium?.call()
+                                  : await showAuthBottomSheet(context);
                             }
                             return;
                           }
+
                           setState(() => _selectedNode = node);
                           selectedServerNotifier.value = node;
                           final p = await SharedPreferences.getInstance();
@@ -350,7 +385,7 @@ class _HomePageState extends State<HomePage>
                             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                               Text(node.name, style: TextStyle(
                                   fontWeight: FontWeight.w600, fontSize: 14,
-                                  color: isSel ? DS.violet : DS.textPrimary),
+                                  color: isSel ? DS.violet : isLocked ? DS.textSecondary : DS.textPrimary),
                                   overflow: TextOverflow.ellipsis),
                               Text(node.address, style: const TextStyle(
                                   color: DS.textSecondary, fontSize: 12),
@@ -358,8 +393,16 @@ class _HomePageState extends State<HomePage>
                             ])),
                             if (isSel)
                               const Icon(Icons.check_circle_rounded, color: DS.violet, size: 20)
-                            else if (_isPublicCatalog)
-                              const Icon(Icons.lock_outline_rounded, size: 16, color: DS.textMuted),
+                            else if (isLocked)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: DS.surface2,
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: DS.border),
+                                ),
+                                child: const Icon(Icons.lock_outline_rounded, size: 13, color: DS.textMuted),
+                              ),
                           ]),
                         ),
                       ),
@@ -444,6 +487,7 @@ class _HomePageState extends State<HomePage>
                 const SizedBox(height: 20),
                 _buildConnectionCard(),
                 const SizedBox(height: 12),
+                _buildUpgradeBanner(),
                 _buildSpeedCard(),
                 const SizedBox(height: 12),
                 _buildSubscriptionCard(),
@@ -595,6 +639,26 @@ class _HomePageState extends State<HomePage>
   }
 
   // ── Speed card ─────────────────────────────────────────────────────────────
+  // ─── Upgrade banner (logged in, no active paid sub) ────────────────────────
+  Widget _buildUpgradeBanner() {
+    final authState = authStateNotifier.value;
+    final sub = meNotifier.value?.subscription;
+    final isLoggedIn = authState.isLoggedIn;
+    final hasActivePaid = sub != null && sub.isActive && !sub.isTrial;
+    final isTrial = sub?.isTrial == true;
+
+    // Don't show if not logged in, or already has a paid subscription
+    if (!isLoggedIn || hasActivePaid) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: _UpgradeCallCard(
+        isTrial: isTrial,
+        onTap: widget.onGoToPremium,
+      ),
+    );
+  }
+
   Widget _buildSpeedCard() {
     final upActive = _speedCalc.uploadSpeed > 1024;
     final downActive = _speedCalc.downloadSpeed > 1024;
@@ -678,7 +742,9 @@ class _HomePageState extends State<HomePage>
           ),
         ],
 
-        const SizedBox(height: 16),
+        // Only show the gap when there's actual content below
+        if (!((_isPublicCatalog && authState.isLoggedIn) || (info == null && _isPublicCatalog)))
+          const SizedBox(height: 16),
 
         // Content
         if (info == null && !_isPublicCatalog)
@@ -686,45 +752,47 @@ class _HomePageState extends State<HomePage>
               style: TextStyle(color: DS.textSecondary, fontSize: 13)))
         else if (_isPublicCatalog && !authState.isLoggedIn)
           _LoginPrompt()
-        else if (info != null) ...[
-            // Big traffic numbers
-            Row(crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic, children: [
-                  Text(info.formattedUsed, style: const TextStyle(
-                      color: DS.textPrimary, fontSize: 28, fontWeight: FontWeight.w800, height: 1)),
-                  const SizedBox(width: 6),
-                  Text('/ ${info.formattedTotal}',
-                      style: const TextStyle(color: DS.textMuted, fontSize: 15)),
+        else if (_isPublicCatalog && authState.isLoggedIn)
+            const SizedBox.shrink()
+          else if (info != null) ...[
+              // Big traffic numbers
+              Row(crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic, children: [
+                    Text(info.formattedUsed, style: const TextStyle(
+                        color: DS.textPrimary, fontSize: 28, fontWeight: FontWeight.w800, height: 1)),
+                    const SizedBox(width: 6),
+                    Text('/ ${info.formattedTotal}',
+                        style: const TextStyle(color: DS.textMuted, fontSize: 15)),
+                  ]),
+              const SizedBox(height: 12),
+
+              // Progress bar
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Stack(children: [
+                  Container(height: 6, color: DS.surface3),
+                  FractionallySizedBox(
+                    widthFactor: info.usedFraction.clamp(0.0, 1.0),
+                    child: Container(height: 6,
+                        decoration: BoxDecoration(
+                          color: _progressColor(info.usedFraction),
+                          boxShadow: [BoxShadow(
+                              color: _progressColor(info.usedFraction).withValues(alpha: 0.5),
+                              blurRadius: 8)],
+                        )),
+                  ),
                 ]),
-            const SizedBox(height: 12),
+              ),
+              const SizedBox(height: 10),
 
-            // Progress bar
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: Stack(children: [
-                Container(height: 6, color: DS.surface3),
-                FractionallySizedBox(
-                  widthFactor: info.usedFraction.clamp(0.0, 1.0),
-                  child: Container(height: 6,
-                      decoration: BoxDecoration(
-                        color: _progressColor(info.usedFraction),
-                        boxShadow: [BoxShadow(
-                            color: _progressColor(info.usedFraction).withValues(alpha: 0.5),
-                            blurRadius: 8)],
-                      )),
-                ),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Text('Осталось: ${_remaining(info)}',
+                    style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
+                Text('${(info.usedFraction * 100).toStringAsFixed(1)}%', style: TextStyle(
+                    color: _progressColor(info.usedFraction),
+                    fontSize: 12, fontWeight: FontWeight.w600)),
               ]),
-            ),
-            const SizedBox(height: 10),
-
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text('Осталось: ${_remaining(info)}',
-                  style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
-              Text('${(info.usedFraction * 100).toStringAsFixed(1)}%', style: TextStyle(
-                  color: _progressColor(info.usedFraction),
-                  fontSize: 12, fontWeight: FontWeight.w600)),
-            ]),
-          ],
+            ],
       ]),
     );
   }
@@ -843,6 +911,238 @@ class _LoginPrompt extends StatelessWidget {
     const SizedBox(height: 12),
     TelegramLoginButton(onTap: () => showAuthBottomSheet(context)),
   ]);
+}
+
+/// Inline banner shown inside the server picker sheet when the user
+/// is authenticated but has no active subscription.
+class _SheetNoPlanBanner extends StatelessWidget {
+  final VoidCallback onTap;
+  const _SheetNoPlanBanner({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: DS.violet.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(DS.radiusSm),
+          border: Border.all(color: DS.violet.withValues(alpha: 0.28)),
+        ),
+        child: Row(children: [
+          Container(
+            width: 38, height: 38,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [DS.violet, DS.violetDim],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.workspace_premium_rounded,
+                color: Colors.white, size: 18),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Подписка не оформлена',
+                    style: TextStyle(color: DS.textPrimary,
+                        fontSize: 13, fontWeight: FontWeight.w700)),
+                SizedBox(height: 2),
+                Text('Нажмите, чтобы выбрать тариф',
+                    style: TextStyle(color: DS.textSecondary, fontSize: 11)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [DS.violet, DS.violetDim],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text('Получить',
+                style: TextStyle(color: Colors.white,
+                    fontSize: 11, fontWeight: FontWeight.w700)),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _UpgradeCallCard extends StatefulWidget {
+  final bool isTrial;
+  final VoidCallback? onTap;
+  const _UpgradeCallCard({required this.isTrial, this.onTap});
+
+  @override
+  State<_UpgradeCallCard> createState() => _UpgradeCallCardState();
+}
+
+class _UpgradeCallCardState extends State<_UpgradeCallCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _shimmer;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _shimmer = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+    // Smooth sine-like curve so it eases in and out at both ends
+    _anim = CurvedAnimation(parent: _shimmer, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _shimmer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = widget.isTrial
+        ? 'Пробный период заканчивается'
+        : 'Нет активной подписки';
+    final subtitle = widget.isTrial
+        ? 'Оформите платный тариф чтобы не потерять доступ'
+        : 'Выберите тариф и получите полный доступ к VPN';
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: AnimatedBuilder(
+        animation: _anim,
+        builder: (_, child) {
+          // v goes 0→1→0 smoothly, use it to interpolate border alpha and glow
+          final v = _anim.value;
+          return Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(DS.radius),
+              // Static base gradient — no jumping stops
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color.lerp(
+                    DS.violetDim.withValues(alpha: 0.10),
+                    DS.violet.withValues(alpha: 0.22),
+                    v,
+                  )!,
+                  Color.lerp(
+                    DS.violet.withValues(alpha: 0.14),
+                    DS.violetDim.withValues(alpha: 0.08),
+                    v,
+                  )!,
+                ],
+              ),
+              border: Border.all(
+                color: DS.violet.withValues(alpha: 0.25 + v * 0.20),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: DS.violet.withValues(alpha: 0.08 + v * 0.10),
+                  blurRadius: 16 + v * 8,
+                  spreadRadius: -4,
+                ),
+              ],
+            ),
+            child: child,
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              // Icon container
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [DS.violet, DS.violetDim],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(13),
+                  boxShadow: [
+                    BoxShadow(
+                      color: DS.violet.withValues(alpha: 0.4),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: const Icon(
+                  Icons.workspace_premium_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 14),
+
+              // Text
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        height: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: DS.textSecondary,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+
+              // Arrow
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: DS.violet.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: DS.violet.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.arrow_forward_rounded,
+                  color: DS.violet,
+                  size: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _SubBadge extends StatelessWidget {
