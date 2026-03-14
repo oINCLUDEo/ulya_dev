@@ -426,15 +426,6 @@ class _HomePageState extends State<HomePage>
     ));
   }
 
-  String _countryEmoji(String code) {
-    if (code.length != 2) return '🌐';
-    final u = code.toUpperCase();
-    final f = u.codeUnitAt(0), s = u.codeUnitAt(1);
-    if (f < 0x41 || f > 0x5A || s < 0x41 || s > 0x5A) return '🌐';
-    const base = 0x1F1E6 - 0x41;
-    return String.fromCharCode(base + f) + String.fromCharCode(base + s);
-  }
-
   String _fmtBytes(int b) {
     if (b < 1024) return '${b}B';
     if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)}KB';
