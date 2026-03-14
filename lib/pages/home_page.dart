@@ -204,18 +204,6 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  void _openConfigEditor(ServerNode node) {
-    if (node.link == null) { _snack('Нет ссылки'); return; }
-    try {
-      final parser = FlutterV2ray.parseFromURL(node.link!);
-      final json = const JsonEncoder.withIndent('  ')
-          .convert(jsonDecode(parser.getFullConfiguration()));
-      Navigator.push(context, MaterialPageRoute(
-        builder: (_) => ConfigEditorPage(configJson: json, configName: node.name),
-      ));
-    } catch (e) { _snack('Не удалось разобрать конфиг: $e'); }
-  }
-
   void _showServerPicker() {
     String? selectedCat;
     showModalBottomSheet<void>(
