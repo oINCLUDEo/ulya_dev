@@ -112,7 +112,7 @@ class RemnawaveService {
     }
 
     return {
-      'User-Agent': 'Happ/1.5.1/Ulya/1.0.2',
+      'User-Agent': 'Happ/1.5.1/Ulya/1.1.0',
       'X-HWID': hwid,
       'X-Ver-OS': osVersion,
       'X-Device-OS': platform,
