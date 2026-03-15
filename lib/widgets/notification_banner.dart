@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
@@ -6,7 +7,7 @@ import '../services/notification_service.dart';
 import '../main.dart' show DS;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Overlay that listens to NotificationService and stacks banners at the top.
+// Overlay
 // ─────────────────────────────────────────────────────────────────────────────
 
 class InAppNotificationOverlay extends StatelessWidget {
@@ -20,21 +21,20 @@ class InAppNotificationOverlay extends StatelessWidget {
         child,
         ValueListenableBuilder<List<InAppNotification>>(
           valueListenable: notificationService.activeNotifications,
-          builder: (context, notifs, _) {
+          builder: (_, notifs, _) {
             if (notifs.isEmpty) return const SizedBox.shrink();
-            final top = MediaQuery.of(context).padding.top + 12;
-            return Positioned(
-              top: top,
-              left: 12,
-              right: 12,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: notifs
-                    .map((n) => _NotifBanner(
-                  key: ValueKey(n.id),
-                  notif: n,
-                ))
-                    .toList(),
+            return Align(
+              alignment: Alignment.topCenter,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: notifs
+                        .map((n) => _Banner(key: ValueKey(n.id), notif: n))
+                        .toList(),
+                  ),
+                ),
               ),
             );
           },
@@ -45,59 +45,49 @@ class InAppNotificationOverlay extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Single banner card with slide-in + auto-dismiss
+// Banner
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _NotifBanner extends StatefulWidget {
+class _Banner extends StatefulWidget {
   final InAppNotification notif;
-  const _NotifBanner({super.key, required this.notif});
+  const _Banner({super.key, required this.notif});
 
   @override
-  State<_NotifBanner> createState() => _NotifBannerState();
+  State<_Banner> createState() => _BannerState();
 }
 
-class _NotifBannerState extends State<_NotifBanner>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<Offset> _slide;
-  late final Animation<double> _fade;
+class _BannerState extends State<_Banner> {
+  bool _visible    = false;
+  bool _dismissing = false;
   Timer? _autoTimer;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 320),
-    );
-    _slide = Tween<Offset>(
-      begin: const Offset(0, -0.4),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
-    _fade = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
-
-    _ctrl.forward();
-
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _visible = true);
+    });
     if (widget.notif.type == InAppNotifType.informational) {
       _autoTimer = Timer(widget.notif.autoDismiss, _dismiss);
     }
   }
 
-  void _dismiss() {
-    if (!mounted) return;
-    _ctrl.reverse().then((_) {
-      notificationService.dismiss(widget.notif.id);
-    });
-  }
-
   @override
   void dispose() {
     _autoTimer?.cancel();
-    _ctrl.dispose();
     super.dispose();
   }
 
-  // ── Colors ─────────────────────────────────────────────────────────────────
+  Future<void> _dismiss() async {
+    if (_dismissing || !mounted) return;
+    _dismissing = true;
+    _autoTimer?.cancel();
+    setState(() => _visible = false);
+    await Future<void>.delayed(const Duration(milliseconds: 320));
+    if (mounted) notificationService.dismiss(widget.notif.id);
+  }
+
+  // ── Accent ─────────────────────────────────────────────────────────────────
 
   Color get _accent {
     switch (widget.notif.severity) {
@@ -110,106 +100,214 @@ class _NotifBannerState extends State<_NotifBanner>
 
   IconData get _icon {
     switch (widget.notif.severity) {
-      case InAppNotifSeverity.success: return Icons.check_circle_outline_rounded;
-      case InAppNotifSeverity.warning: return Icons.warning_amber_rounded;
-      case InAppNotifSeverity.error:   return Icons.error_outline_rounded;
-      case InAppNotifSeverity.info:    return Icons.info_outline_rounded;
+      case InAppNotifSeverity.success: return Icons.check_circle_rounded;
+      case InAppNotifSeverity.warning: return Icons.warning_rounded;
+      case InAppNotifSeverity.error:   return Icons.error_rounded;
+      case InAppNotifSeverity.info:    return Icons.info_rounded;
     }
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // ── Build ───────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: SlideTransition(
-        position: _slide,
-        child: FadeTransition(
-          opacity: _fade,
-          child: Material(
-            color: Colors.transparent,
-            child: Container(
-              decoration: BoxDecoration(
-                color: DS.surface2,
-                borderRadius: BorderRadius.circular(DS.radiusSm),
-                border: Border.all(color: _accent.withValues(alpha: 0.4)),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.45),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Accent side bar
-                  Container(
-                    width: 4,
-                    height: double.infinity,
-                    decoration: BoxDecoration(
-                      color: _accent,
-                      borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(DS.radiusSm),
-                        bottomLeft: Radius.circular(DS.radiusSm),
-                      ),
+    final accent = _accent;
+    final hasBody = widget.notif.body.isNotEmpty;
+    final hasTitle = widget.notif.title.isNotEmpty;
+    final isAuto = widget.notif.type == InAppNotifType.informational;
+
+    return AnimatedSlide(
+      offset: _visible ? Offset.zero : const Offset(0, -1.3),
+      duration: Duration(milliseconds: _visible ? 380 : 260),
+      curve: _visible ? Curves.easeOutBack : Curves.easeInQuart,
+      child: AnimatedOpacity(
+        opacity: _visible ? 1.0 : 0.0,
+        duration: Duration(milliseconds: _visible ? 240 : 180),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: GestureDetector(
+            // swipe up → dismiss
+            onVerticalDragEnd: (d) {
+              if ((d.primaryVelocity ?? 0) < -200) _dismiss();
+            },
+            // tap → dismiss auto banners
+            onTap: isAuto ? _dismiss : null,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                child: Container(
+                  decoration: BoxDecoration(
+                    // Deep glass with a strong dark base so text is always readable
+                    color: DS.surface1.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: accent.withValues(alpha: 0.40),
+                      width: 1,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.50),
+                        blurRadius: 24,
+                        offset: const Offset(0, 8),
+                      ),
+                      // Soft colour glow matching severity
+                      BoxShadow(
+                        color: accent.withValues(alpha: 0.14),
+                        blurRadius: 20,
+                        spreadRadius: -6,
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  // Icon
-                  Padding(
-                    padding: const EdgeInsets.only(top: 14),
-                    child: Icon(_icon, color: _accent, size: 20),
-                  ),
-                  const SizedBox(width: 10),
-                  // Text
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (widget.notif.title.isNotEmpty)
-                            Text(
-                              widget.notif.title,
-                              style: const TextStyle(
-                                color: DS.textPrimary,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          if (widget.notif.body.isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              widget.notif.body,
-                              style: const TextStyle(
-                                color: DS.textSecondary,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      14,
+                      hasBody ? 12 : 14,
+                      isAuto ? 14 : 6,
+                      hasBody ? 12 : 14,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+
+                        // ── Icon pill ────────────────────────────────────
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.14),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(_icon, color: accent, size: 17),
+                        ),
+
+                        const SizedBox(width: 11),
+
+                        // ── Text ─────────────────────────────────────────
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (hasTitle)
+                                Text(
+                                  widget.notif.title,
+                                  style: TextStyle(
+                                    color: DS.textPrimary,
+                                    fontSize: hasBody ? 13.0 : 14.0,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.2,
+                                  ),
+                                ),
+                              if (hasBody) ...[
+                                if (hasTitle) const SizedBox(height: 2),
+                                Text(
+                                  widget.notif.body,
+                                  style: const TextStyle(
+                                    color: DS.textSecondary,
+                                    fontSize: 12,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(width: 8),
+
+                        // ── Trailing ──────────────────────────────────────
+                        if (isAuto)
+                          _CountdownArc(
+                            duration: widget.notif.autoDismiss,
+                            color: accent,
+                          )
+                        else ...[
+                          // Thin separator
+                          const SizedBox(
+                            width: 1,
+                            height: 28,
+                            child: ColoredBox(color: DS.border),
+                          ),
+                          _CloseBtn(onTap: _dismiss),
                         ],
-                      ),
+                      ],
                     ),
                   ),
-                  // Close button (for non-informational)
-                  if (widget.notif.type != InAppNotifType.informational)
-                    GestureDetector(
-                      onTap: _dismiss,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Icon(Icons.close_rounded,
-                            size: 16, color: DS.textMuted),
-                      ),
-                    )
-                  else
-                    const SizedBox(width: 12),
-                ],
+                ),
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Close button
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CloseBtn extends StatelessWidget {
+  final VoidCallback onTap;
+  const _CloseBtn({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Icon(Icons.close_rounded, size: 16, color: DS.textMuted),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Countdown arc (thin ring that depletes over autoDismiss duration)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CountdownArc extends StatefulWidget {
+  final Duration duration;
+  final Color color;
+  const _CountdownArc({required this.duration, required this.color});
+
+  @override
+  State<_CountdownArc> createState() => _CountdownArcState();
+}
+
+class _CountdownArcState extends State<_CountdownArc>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(vsync: this, duration: widget.duration)
+      ..forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, _) => SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(
+          value: 1.0 - _ctrl.value,
+          strokeWidth: 2,
+          strokeCap: StrokeCap.round,
+          backgroundColor: widget.color.withValues(alpha: 0.12),
+          color: widget.color,
         ),
       ),
     );

@@ -14,6 +14,7 @@ import '../services/apps_repository.dart';
 import '../utils/core_info_parser.dart';
 import '../main.dart' show DS;
 import 'logs_page.dart';
+import 'support_page.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -283,9 +284,16 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: Icons.support_agent_rounded,
             child: Column(children: [
               _SettingsTile(
+                icon: Icons.confirmation_number_outlined,
+                label: 'Обращения в поддержку',
+                value: 'Создать тикет или просмотреть историю',
+                onTap: _openTickets,
+              ),
+              const Divider(height: 1, color: DS.border),
+              _SettingsTile(
                 icon: Icons.send_rounded,
-                label: 'Написать в поддержку',
-                value: 'Telegram: @ulya_tech',
+                label: 'Написать в Telegram',
+                value: '@ulya_tech',
                 onTap: _openSupport,
               ),
               const Divider(height: 1, color: DS.border),
@@ -434,6 +442,10 @@ class _SettingsPageState extends State<SettingsPage> {
   void _clearLogs() {
     appLogger.clear();
     _snack('Логи очищены');
+  }
+
+  Future<void> _openTickets() async {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const SupportPage()));
   }
 
   Future<void> _openSupport() async {

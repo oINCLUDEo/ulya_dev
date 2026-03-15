@@ -497,15 +497,10 @@ class _NodeTile extends StatelessWidget {
                     color: isSelected ? accentColor : DS.textPrimary),
                     overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 3),
-                Row(children: [
-                  if ((node.protocol ?? '').isNotEmpty) ...[
+                if ((node.protocol ?? '').isNotEmpty)
+                  Row(children: [
                     _ProtoBadge(protocol: node.protocol!),
-                    const SizedBox(width: 6),
-                  ],
-                  Flexible(child: Text(node.address,
-                      style: const TextStyle(color: DS.textSecondary, fontSize: 12),
-                      overflow: TextOverflow.ellipsis)),
-                ]),
+                  ]),
               ])),
               const SizedBox(width: 8),
               // Trailing

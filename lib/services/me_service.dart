@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,7 @@ import '../config/app_config.dart';
 import '../models/me_response.dart';
 import 'app_logger.dart';
 import 'auth_state.dart';
+import 'notification_service.dart';
 import 'remnawave_service.dart';
 
 /// Global notifier for the current user's /me response.
@@ -58,6 +60,8 @@ class MeService {
         meNotifier.value = me;
         await _saveToCache(me);
         appLogger.info('MeService', '/me refreshed — subscription: ${me.hasSubscription}');
+        // Fetch and post backend-driven in-app notifications
+        unawaited(_fetchAndPostNotifications(auth.telegramId!));
         return me;
       }
 
@@ -138,5 +142,28 @@ class MeService {
   static Future<void> clear() async {
     meNotifier.value = null;
     await clearCache();
+  }
+
+  // ── Backend notifications ─────────────────────────────────────────────────
+
+  static Future<void> _fetchAndPostNotifications(int telegramId) async {
+    try {
+      final url = '${AppConfig.backendBaseUrl}/mobile/v1/notifications';
+      final resp = await http
+          .get(Uri.parse(url), headers: {'X-Telegram-Id': telegramId.toString()})
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode != 200) return;
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      final items = body['notifications'] as List<dynamic>? ?? [];
+      for (final raw in items) {
+        try {
+          final notif = InAppNotification.fromJson(raw as Map<String, dynamic>);
+          notificationService.post(notif);
+          appLogger.info('MeService', 'Backend notification posted: ${notif.id}');
+        } catch (_) {}
+      }
+    } on Exception catch (e) {
+      debugPrint('MeService: _fetchAndPostNotifications error: $e');
+    }
   }
 }

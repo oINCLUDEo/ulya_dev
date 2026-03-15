@@ -220,11 +220,6 @@ class _HomePageState extends State<HomePage>
         }
         final showCats = !_isPublicCatalog && (hasBypass || hasUnlimited);
 
-        // Detect logged-in + no subscription state
-        final isLoggedIn = authStateNotifier.value.isLoggedIn;
-        final hasSubscription = meNotifier.value?.subscription != null;
-        final showNoPlanBanner = _isPublicCatalog && isLoggedIn && !hasSubscription;
-
         List<ServerNode> visible() {
           if (selectedCat == null) return _nodes;
           return _nodes.where((n) {
@@ -260,19 +255,8 @@ class _HomePageState extends State<HomePage>
               ]),
             ),
 
-            // ── No plan banner (logged in, no subscription) ────────────
-            if (showNoPlanBanner)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: _SheetNoPlanBanner(
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    widget.onGoToPremium?.call();
-                  },
-                ),
-              )
-            // ── Public catalog warning (not logged in) ─────────────────
-            else if (_isPublicCatalog)
+            // Public catalog warning
+            if (_isPublicCatalog)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
                 child: VpnInfoBanner(
@@ -327,33 +311,21 @@ class _HomePageState extends State<HomePage>
                   itemBuilder: (_, i) {
                     final node = nodes[i];
                     final isSel = _selectedNode?.uuid == node.uuid;
-                    final isLocked = _isPublicCatalog || node.isDisabled || node.link == null;
                     return Material(
                       color: isSel ? DS.violet.withValues(alpha: 0.08) : Colors.transparent,
                       child: InkWell(
                         onTap: () async {
-                          // Public catalog tap — always just close, banner handles navigation
-                          if (_isPublicCatalog) {
-                            if (!isLoggedIn) {
-                              Navigator.pop(ctx);
-                              if (context.mounted) await showAuthBottomSheet(context);
-                            }
-                            // If logged in but no subscription — do nothing,
-                            // the banner at the top already guides them
-                            return;
-                          }
-
-                          // Locked server in subscription (no link)
-                          if (node.isDisabled || node.link == null) {
+                          if (_isPublicCatalog || node.isDisabled || node.link == null) {
                             Navigator.pop(ctx);
                             if (context.mounted) {
-                              isLoggedIn
-                                  ? widget.onGoToPremium?.call()
-                                  : await showAuthBottomSheet(context);
+                              if (authStateNotifier.value.isLoggedIn) {
+                                widget.onGoToPremium?.call();
+                              } else {
+                                await showAuthBottomSheet(context);
+                              }
                             }
                             return;
                           }
-
                           setState(() => _selectedNode = node);
                           selectedServerNotifier.value = node;
                           final p = await SharedPreferences.getInstance();
@@ -371,24 +343,16 @@ class _HomePageState extends State<HomePage>
                             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                               Text(node.name, style: TextStyle(
                                   fontWeight: FontWeight.w600, fontSize: 14,
-                                  color: isSel ? DS.violet : isLocked ? DS.textSecondary : DS.textPrimary),
+                                  color: isSel ? DS.violet : DS.textPrimary),
                                   overflow: TextOverflow.ellipsis),
-                              Text(node.address, style: const TextStyle(
-                                  color: DS.textSecondary, fontSize: 12),
-                                  overflow: TextOverflow.ellipsis),
+                              if ((node.protocol ?? '').isNotEmpty)
+                                Text(node.protocol!.toUpperCase(), style: const TextStyle(
+                                    color: DS.textSecondary, fontSize: 12)),
                             ])),
                             if (isSel)
                               const Icon(Icons.check_circle_rounded, color: DS.violet, size: 20)
-                            else if (isLocked)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: DS.surface2,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: DS.border),
-                                ),
-                                child: const Icon(Icons.lock_outline_rounded, size: 13, color: DS.textMuted),
-                              ),
+                            else if (_isPublicCatalog || node.isDisabled || node.link == null)
+                              const Icon(Icons.lock_outline_rounded, size: 16, color: DS.textMuted),
                           ]),
                         ),
                       ),
@@ -464,7 +428,6 @@ class _HomePageState extends State<HomePage>
                 const SizedBox(height: 20),
                 _buildConnectionCard(),
                 const SizedBox(height: 12),
-                _buildUpgradeBanner(),
                 _buildSpeedCard(),
                 const SizedBox(height: 12),
                 _buildSubscriptionCard(),
@@ -602,8 +565,8 @@ class _HomePageState extends State<HomePage>
                         color: _selectedNode != null ? DS.textPrimary : DS.violet,
                         fontWeight: FontWeight.w600, fontSize: 15),
                   ),
-                  if (_selectedNode != null)
-                    Text(_selectedNode!.address,
+                  if (_selectedNode != null && (_selectedNode!.protocol ?? '').isNotEmpty)
+                    Text(_selectedNode!.protocol!.toUpperCase(),
                         style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
                 ])),
                 const Icon(Icons.chevron_right_rounded, color: DS.violet, size: 20),
@@ -616,26 +579,6 @@ class _HomePageState extends State<HomePage>
   }
 
   // ── Speed card ─────────────────────────────────────────────────────────────
-  // ─── Upgrade banner (logged in, no active paid sub) ────────────────────────
-  Widget _buildUpgradeBanner() {
-    final authState = authStateNotifier.value;
-    final sub = meNotifier.value?.subscription;
-    final isLoggedIn = authState.isLoggedIn;
-    final hasActivePaid = sub != null && sub.isActive && !sub.isTrial;
-    final isTrial = sub?.isTrial == true;
-
-    // Don't show if not logged in, or already has a paid subscription
-    if (!isLoggedIn || hasActivePaid) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: _UpgradeCallCard(
-        isTrial: isTrial,
-        onTap: widget.onGoToPremium,
-      ),
-    );
-  }
-
   Widget _buildSpeedCard() {
     final upActive = _speedCalc.uploadSpeed > 1024;
     final downActive = _speedCalc.downloadSpeed > 1024;
@@ -719,9 +662,7 @@ class _HomePageState extends State<HomePage>
           ),
         ],
 
-        // Only show the gap when there's actual content below
-        if (!((_isPublicCatalog && authState.isLoggedIn) || (info == null && _isPublicCatalog)))
-          const SizedBox(height: 16),
+        const SizedBox(height: 16),
 
         // Content
         if (info == null && !_isPublicCatalog)
@@ -730,7 +671,7 @@ class _HomePageState extends State<HomePage>
         else if (_isPublicCatalog && !authState.isLoggedIn)
           _LoginPrompt()
         else if (_isPublicCatalog && authState.isLoggedIn)
-            const SizedBox.shrink()
+            _NoPlanPrompt(onGoToPremium: widget.onGoToPremium)
           else if (info != null) ...[
               // Big traffic numbers
               Row(crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -890,236 +831,38 @@ class _LoginPrompt extends StatelessWidget {
   ]);
 }
 
-/// Inline banner shown inside the server picker sheet when the user
-/// is authenticated but has no active subscription.
-class _SheetNoPlanBanner extends StatelessWidget {
-  final VoidCallback onTap;
-  const _SheetNoPlanBanner({required this.onTap});
+class _NoPlanPrompt extends StatelessWidget {
+  final VoidCallback? onGoToPremium;
+  const _NoPlanPrompt({this.onGoToPremium});
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: DS.violet.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(DS.radiusSm),
-          border: Border.all(color: DS.violet.withValues(alpha: 0.28)),
-        ),
-        child: Row(children: [
-          Container(
-            width: 38, height: 38,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [DS.violet, DS.violetDim],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(10),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text('У вас нет активной подписки.',
+          style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
+      const SizedBox(height: 12),
+      GestureDetector(
+        onTap: onGoToPremium,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [DS.violet, DS.violetDim],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            child: const Icon(Icons.workspace_premium_rounded,
-                color: Colors.white, size: 18),
+            borderRadius: BorderRadius.circular(DS.radiusSm),
           ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Подписка не оформлена',
-                    style: TextStyle(color: DS.textPrimary,
-                        fontSize: 13, fontWeight: FontWeight.w700)),
-                SizedBox(height: 2),
-                Text('Нажмите, чтобы выбрать тариф',
-                    style: TextStyle(color: DS.textSecondary, fontSize: 11)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [DS.violet, DS.violetDim],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Text('Получить',
-                style: TextStyle(color: Colors.white,
-                    fontSize: 11, fontWeight: FontWeight.w700)),
-          ),
-        ]),
-      ),
-    );
-  }
-}
-
-class _UpgradeCallCard extends StatefulWidget {
-  final bool isTrial;
-  final VoidCallback? onTap;
-  const _UpgradeCallCard({required this.isTrial, this.onTap});
-
-  @override
-  State<_UpgradeCallCard> createState() => _UpgradeCallCardState();
-}
-
-class _UpgradeCallCardState extends State<_UpgradeCallCard>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _shimmer;
-  late final Animation<double> _anim;
-
-  @override
-  void initState() {
-    super.initState();
-    _shimmer = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat(reverse: true);
-    // Smooth sine-like curve so it eases in and out at both ends
-    _anim = CurvedAnimation(parent: _shimmer, curve: Curves.easeInOut);
-  }
-
-  @override
-  void dispose() {
-    _shimmer.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final title = widget.isTrial
-        ? 'Пробный период заканчивается'
-        : 'Нет активной подписки';
-    final subtitle = widget.isTrial
-        ? 'Оформите платный тариф чтобы не потерять доступ'
-        : 'Выберите тариф и получите полный доступ к VPN';
-
-    return GestureDetector(
-      onTap: widget.onTap,
-      child: AnimatedBuilder(
-        animation: _anim,
-        builder: (_, child) {
-          // v goes 0→1→0 smoothly, use it to interpolate border alpha and glow
-          final v = _anim.value;
-          return Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(DS.radius),
-              // Static base gradient — no jumping stops
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color.lerp(
-                    DS.violetDim.withValues(alpha: 0.10),
-                    DS.violet.withValues(alpha: 0.22),
-                    v,
-                  )!,
-                  Color.lerp(
-                    DS.violet.withValues(alpha: 0.14),
-                    DS.violetDim.withValues(alpha: 0.08),
-                    v,
-                  )!,
-                ],
-              ),
-              border: Border.all(
-                color: DS.violet.withValues(alpha: 0.25 + v * 0.20),
-                width: 1.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: DS.violet.withValues(alpha: 0.08 + v * 0.10),
-                  blurRadius: 16 + v * 8,
-                  spreadRadius: -4,
-                ),
-              ],
-            ),
-            child: child,
-          );
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              // Icon container
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [DS.violet, DS.violetDim],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(13),
-                  boxShadow: [
-                    BoxShadow(
-                      color: DS.violet.withValues(alpha: 0.4),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.workspace_premium_rounded,
+          child: const Text('Получить подписку',
+              style: TextStyle(
                   color: Colors.white,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 14),
-
-              // Text
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: DS.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(
-                        color: DS.textSecondary,
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-
-              // Arrow
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: DS.violet.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: DS.violet.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: const Icon(
-                  Icons.arrow_forward_rounded,
-                  color: DS.violet,
-                  size: 16,
-                ),
-              ),
-            ],
-          ),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700)),
         ),
       ),
-    );
-  }
+    ],
+  );
 }
 
 class _SubBadge extends StatelessWidget {
@@ -1236,7 +979,7 @@ class _Chip extends StatelessWidget {
 
 class VpnInfoBanner extends StatelessWidget {
   final Color color; final String text;
-  const VpnInfoBanner({super.key, required this.color, required this.text,});
+  const VpnInfoBanner({super.key, required this.color, required this.text});
 
   @override
   Widget build(BuildContext context) => Container(
