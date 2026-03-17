@@ -281,6 +281,23 @@ class TopupResult {
   }
 }
 
+class UpgradeCalcResult {
+  final int amountKopeks;
+  final double amountRub;
+
+  const UpgradeCalcResult({
+    required this.amountKopeks,
+    required this.amountRub,
+  });
+
+  factory UpgradeCalcResult.fromJson(Map<String, dynamic> json) {
+    return UpgradeCalcResult(
+      amountKopeks: (json['amount_kopeks'] as num?)?.toInt() ?? 0,
+      amountRub: (json['amount_rub'] as num?)?.toDouble() ?? 0.0,
+    );
+  }
+}
+
 /// Service for the mobile subscription API.
 class SubscriptionApiService {
   SubscriptionApiService._();
@@ -434,6 +451,40 @@ class SubscriptionApiService {
     } on Exception catch (e) {
       debugPrint('SubscriptionApiService.upgradeSubscription error: $e');
       return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
+  /// POST /mobile/v1/subscription/upgrade/calc
+  static Future<UpgradeCalcResult?> calcUpgradePrice({
+    String? periodId,
+    int? trafficAdd,
+    int? devicesAdd,
+    List<String>? servers,
+  }) async {
+    try {
+      final body = <String, dynamic>{};
+      if (periodId != null) body['period_id'] = periodId;
+      if (trafficAdd != null) body['traffic_add'] = trafficAdd;
+      if (devicesAdd != null) body['devices_add'] = devicesAdd;
+      if (servers != null) body['servers'] = servers;
+
+      final resp = await http
+          .post(
+        Uri.parse('$_base/mobile/v1/subscription/upgrade/calc'),
+        headers: _headers(),
+        body: jsonEncode(body),
+      )
+          .timeout(const Duration(seconds: 15));
+      if (resp.statusCode == 200) {
+        return UpgradeCalcResult.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      debugPrint('SubscriptionApiService.calcUpgradePrice: ${resp.statusCode} ${resp.body}');
+      return null;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.calcUpgradePrice error: $e');
+      return null;
     }
   }
 

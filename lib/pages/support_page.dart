@@ -761,6 +761,8 @@ class _TicketDetailPage extends StatefulWidget {
 class _TicketDetailPageState extends State<_TicketDetailPage> {
   SupportTicketDetail? _detail;
   bool _loading = true;
+  bool _closing = false;
+  String _ticketStatus = '';
   final _replyCtrl  = TextEditingController();
   final _scrollCtrl = ScrollController();
   bool _sending = false;
@@ -768,6 +770,7 @@ class _TicketDetailPageState extends State<_TicketDetailPage> {
   @override
   void initState() {
     super.initState();
+    _ticketStatus = widget.ticket.status;
     _load();
   }
 
@@ -781,7 +784,13 @@ class _TicketDetailPageState extends State<_TicketDetailPage> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final detail = await SupportApiService.getTicket(widget.ticket.id);
-    if (mounted) setState(() { _detail = detail; _loading = false; });
+    if (mounted) {
+      setState(() {
+        _detail = detail;
+        _loading = false;
+        if (detail != null) _ticketStatus = detail.status;
+      });
+    }
     _scrollToBottom();
   }
 
@@ -811,12 +820,57 @@ class _TicketDetailPageState extends State<_TicketDetailPage> {
     }
   }
 
+  Future<void> _closeTicket() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: DS.surface1,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Закрыть тикет',
+            style: TextStyle(color: DS.textPrimary, fontSize: 17, fontWeight: FontWeight.w700)),
+        content: const Text('Тикет будет закрыт. Вы уверены?',
+            style: TextStyle(color: DS.textSecondary, fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена', style: TextStyle(color: DS.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Закрыть', style: TextStyle(color: DS.rose)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _closing = true);
+    final result = await SupportApiService.closeTicket(widget.ticket.id);
+    if (!mounted) return;
+    setState(() {
+      _closing = false;
+      if (result != null) _ticketStatus = result.status;
+    });
+    if (result != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Тикет закрыт'),
+            backgroundColor: DS.emerald,
+            behavior: SnackBarBehavior.floating),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось закрыть тикет'),
+            backgroundColor: DS.rose,
+            behavior: SnackBarBehavior.floating),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final top      = MediaQuery.of(context).padding.top;
-    final isClosed = widget.ticket.status == 'closed';
-    final color    = _statusColor(widget.ticket.status);
-    final label    = _statusLabel(widget.ticket.status);
+    final isClosed = _ticketStatus == 'closed';
+    final color    = _statusColor(_ticketStatus);
+    final label    = _statusLabel(_ticketStatus);
 
     return Scaffold(
       backgroundColor: DS.surface0,
@@ -852,7 +906,31 @@ class _TicketDetailPageState extends State<_TicketDetailPage> {
               Text('#${widget.ticket.id}',
                   style: const TextStyle(color: DS.textMuted, fontSize: 11)),
             ])),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
+            // Close button (only when ticket is open)
+            if (!isClosed)
+              GestureDetector(
+                onTap: _closing ? null : _closeTicket,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: DS.rose.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: DS.rose.withValues(alpha: 0.3)),
+                  ),
+                  child: _closing
+                      ? const SizedBox(width: 14, height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: DS.rose))
+                      : const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.close_rounded, color: DS.rose, size: 14),
+                    SizedBox(width: 4),
+                    Text('Закрыть', style: TextStyle(
+                        color: DS.rose, fontSize: 12, fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              ),
+            if (isClosed) const SizedBox(width: 2),
+            const SizedBox(width: 6),
             // Status pill
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -959,6 +1037,20 @@ class _MessageBubble extends StatelessWidget {
                   const Text('Поддержка', style: TextStyle(
                       color: DS.emerald, fontSize: 11, fontWeight: FontWeight.w700)),
                 ]),
+                if (msg.hasMedia) ...[
+                  const SizedBox(height: 6),
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.attach_file_rounded,
+                        size: 13,
+                        color: isAdmin ? DS.textMuted : Colors.white70),
+                    const SizedBox(width: 4),
+                    Text('Логи прикреплены',
+                        style: TextStyle(
+                            color: isAdmin ? DS.textMuted : Colors.white70,
+                            fontSize: 11,
+                            fontStyle: FontStyle.italic)),
+                  ]),
+                ],
                 const SizedBox(height: 5),
               ],
               Text(msg.messageText,

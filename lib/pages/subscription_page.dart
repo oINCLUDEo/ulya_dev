@@ -1090,12 +1090,51 @@ class _TopupSheet extends StatefulWidget {
 
 class _TopupSheetState extends State<_TopupSheet> {
   static const _amounts = [100, 200, 300, 500, 1000, 2000];
-  int _selected = 300;
+  static const _minAmount = 50;
+  static const _maxAmount = 100000;
+
+  int? _selected = 300;
   bool _loading = false;
 
+  final _customController = TextEditingController();
+  final _focusNode = FocusNode();
+
+  /// The resolved amount in roubles (from preset or custom input).
+  int? get _resolvedAmount {
+    if (_selected != null) return _selected;
+    final raw = _customController.text.trim();
+    return int.tryParse(raw.replaceAll(RegExp(r'[^\d]'), ''));
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _customController.addListener(() {
+      if (_customController.text.isNotEmpty) {
+        if (mounted) setState(() => _selected = null);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _customController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
   Future<void> _onTopup() async {
+    final amount = _resolvedAmount;
+    if (amount == null || amount < _minAmount) {
+      _snack('Минимальная сумма — $_minAmount ₽', isError: true);
+      return;
+    }
+    if (amount > _maxAmount) {
+      _snack('Максимальная сумма — $_maxAmount ₽', isError: true);
+      return;
+    }
     setState(() => _loading = true);
-    final result = await SubscriptionApiService.topupBalance(amountKopeks: _selected * 100);
+    final result = await SubscriptionApiService.topupBalance(amountKopeks: amount * 100);
     if (!mounted) return;
 
     if (result == null) {
@@ -1129,6 +1168,10 @@ class _TopupSheetState extends State<_TopupSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final amount = _resolvedAmount;
+    final canSubmit = amount != null && amount >= _minAmount && amount <= _maxAmount;
+    final buttonLabel = canSubmit ? 'Пополнить на $amount ₽' : 'Пополнить';
+
     return Container(
       margin: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       decoration: const BoxDecoration(
@@ -1158,9 +1201,13 @@ class _TopupSheetState extends State<_TopupSheet> {
           Wrap(
             spacing: 8, runSpacing: 8,
             children: _amounts.map((a) {
-              final isSel = a == _selected;
+              final isSel = _selected == a;
               return GestureDetector(
-                onTap: () => setState(() => _selected = a),
+                onTap: () {
+                  _customController.clear();
+                  _focusNode.unfocus();
+                  setState(() => _selected = a);
+                },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 160),
                   padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
@@ -1180,12 +1227,42 @@ class _TopupSheetState extends State<_TopupSheet> {
               );
             }).toList(),
           ),
+          const SizedBox(height: 16),
+
+          // Custom amount input
+          TextField(
+            controller: _customController,
+            focusNode: _focusNode,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: _DS.textPrimary, fontSize: 15),
+            decoration: InputDecoration(
+              hintText: 'Другая сумма, ₽',
+              hintStyle: const TextStyle(color: _DS.textMuted, fontSize: 14),
+              filled: true,
+              fillColor: _DS.surface2,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _DS.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _DS.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _DS.emerald, width: 1.5),
+              ),
+              suffixText: '₽',
+              suffixStyle: const TextStyle(color: _DS.textSecondary),
+            ),
+          ),
           const SizedBox(height: 24),
 
           SizedBox(
             width: double.infinity, height: 54,
             child: ElevatedButton(
-              onPressed: _loading ? null : _onTopup,
+              onPressed: (_loading || !canSubmit) ? null : _onTopup,
               style: ElevatedButton.styleFrom(
                 backgroundColor: _DS.emerald,
                 foregroundColor: Colors.white,
@@ -1196,7 +1273,7 @@ class _TopupSheetState extends State<_TopupSheet> {
               child: _loading
                   ? const SizedBox(height: 22, width: 22,
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : Text('Пополнить на $_selected ₽', style: const TextStyle(
+                  : Text(buttonLabel, style: const TextStyle(
                 fontSize: 16, fontWeight: FontWeight.w700,
               )),
             ),

@@ -78,7 +78,30 @@ class _HomePageState extends State<HomePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refreshAll();
+    if (state == AppLifecycleState.resumed) {
+      // Reset speed calculator to prevent stale delta causing unrealistic values
+      _speedCalc.reset();
+      _refreshAll();
+      // Re-subscribe to VPN status to catch any state changes that happened
+      // while the app was in the background (e.g. user disconnected via
+      // the system VPN notification).
+      _resubscribeVpnStatus();
+    }
+  }
+
+  void _resubscribeVpnStatus() {
+    // Cancel the old subscription and re-attach so the plugin sends the
+    // current real state immediately rather than waiting for the next change.
+    _statusSub?.cancel();
+    _statusSub = _v2ray.onStatusChanged.listen((s) {
+      if (!mounted) return;
+      if (s.state.toUpperCase() == 'CONNECTED') {
+        _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
+      } else {
+        _speedCalc.reset();
+      }
+      setState(() => _status = s);
+    });
   }
 
   @override
@@ -112,9 +135,12 @@ class _HomePageState extends State<HomePage>
     );
     _statusSub = _v2ray.onStatusChanged.listen((s) {
       if (!mounted) return;
-      _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
+      if (s.state.toUpperCase() == 'CONNECTED') {
+        _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
+      } else {
+        _speedCalc.reset();
+      }
       setState(() => _status = s);
-      if (s.state.toUpperCase() != 'CONNECTED') _speedCalc.reset();
     });
     if (mounted) setState(() => _initialized = true);
     _loadNodes();

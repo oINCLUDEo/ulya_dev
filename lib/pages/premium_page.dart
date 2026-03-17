@@ -202,7 +202,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     if (mounted) setState(() => _purchasing = false);
   }
 
-  Future<void> _onUpgradePressed(String periodId, {int? trafficAdd, int? devicesAdd}) async {
+  Future<void> _onUpgradePressed(String? periodId, {int? trafficAdd, int? devicesAdd}) async {
     setState(() => _purchasing = true);
     try {
       final r = await SubscriptionApiService.upgradeSubscription(
@@ -970,7 +970,7 @@ class _BuyButton extends StatelessWidget {
 class _UpgradeSection extends StatefulWidget {
   final MeSubscription sub;
   final SubscriptionOptions options;
-  final Future<void> Function(String, {int? trafficAdd, int? devicesAdd}) onUpgrade;
+  final Future<void> Function(String?, {int? trafficAdd, int? devicesAdd}) onUpgrade;
   final bool loading;
   const _UpgradeSection({required this.sub, required this.options,
     required this.onUpgrade, required this.loading});
@@ -987,6 +987,11 @@ class _UpgradeSectionState extends State<_UpgradeSection>
   String? _renewPeriodId;
   int?    _addTrafficGb;
   int?    _addDevices;
+
+  int?  _trafficPriceKopeks;
+  int?  _devicesPriceKopeks;
+  bool  _calcingTrafficPrice  = false;
+  bool  _calcingDevicesPrice  = false;
 
   /// Traffic add options derived from backend subscription options.
   List<int> get _trafficOpts {
@@ -1017,6 +1022,30 @@ class _UpgradeSectionState extends State<_UpgradeSection>
     if (widget.options.periods.isNotEmpty) _renewPeriodId = widget.options.periods.first.id;
     _addTrafficGb = _trafficOpts.first;
     _addDevices   = _devicesOpts.first;
+    _calcTrafficPrice(_addTrafficGb);
+    _calcDevicesPrice(_addDevices);
+  }
+
+  Future<void> _calcTrafficPrice(int? trafficAdd) async {
+    if (trafficAdd == null) return;
+    if (mounted) setState(() { _calcingTrafficPrice = true; _trafficPriceKopeks = null; });
+    final result = await SubscriptionApiService.calcUpgradePrice(trafficAdd: trafficAdd);
+    if (!mounted) return;
+    setState(() {
+      _calcingTrafficPrice = false;
+      _trafficPriceKopeks = result?.amountKopeks;
+    });
+  }
+
+  Future<void> _calcDevicesPrice(int? devicesAdd) async {
+    if (devicesAdd == null) return;
+    if (mounted) setState(() { _calcingDevicesPrice = true; _devicesPriceKopeks = null; });
+    final result = await SubscriptionApiService.calcUpgradePrice(devicesAdd: devicesAdd);
+    if (!mounted) return;
+    setState(() {
+      _calcingDevicesPrice = false;
+      _devicesPriceKopeks = result?.amountKopeks;
+    });
   }
 
   @override
@@ -1051,17 +1080,23 @@ class _UpgradeSectionState extends State<_UpgradeSection>
             _AddTrafficTab(
                 currentGb: widget.sub.trafficLimitGb,
                 selectedAdd: _addTrafficGb, options: _trafficOpts,
-                onSelected: (v) => setState(() => _addTrafficGb = v),
-                loading: widget.loading,
-                onConfirm: () => widget.onUpgrade(
-                    widget.options.periods.first.id, trafficAdd: _addTrafficGb)),
+                onSelected: (v) {
+                  setState(() { _addTrafficGb = v; });
+                  _calcTrafficPrice(v);
+                },
+                loading: widget.loading || _calcingTrafficPrice,
+                amountKopeks: _trafficPriceKopeks,
+                onConfirm: () => widget.onUpgrade(null, trafficAdd: _addTrafficGb)),
             _AddDevicesTab(
                 currentDevices: widget.sub.deviceLimit,
                 selectedAdd: _addDevices, options: _devicesOpts,
-                onSelected: (v) => setState(() => _addDevices = v),
-                loading: widget.loading,
-                onConfirm: () => widget.onUpgrade(
-                    widget.options.periods.first.id, devicesAdd: _addDevices)),
+                onSelected: (v) {
+                  setState(() { _addDevices = v; });
+                  _calcDevicesPrice(v);
+                },
+                loading: widget.loading || _calcingDevicesPrice,
+                amountKopeks: _devicesPriceKopeks,
+                onConfirm: () => widget.onUpgrade(null, devicesAdd: _addDevices)),
           ][_tab],
         ),
       ),
@@ -1208,9 +1243,10 @@ class _AddTrafficTab extends StatelessWidget {
   final List<int> options;
   final ValueChanged<int> onSelected;
   final bool loading; final VoidCallback onConfirm;
+  final int? amountKopeks;
   const _AddTrafficTab({required this.currentGb, required this.selectedAdd,
     required this.options, required this.onSelected,
-    required this.loading, required this.onConfirm});
+    required this.loading, required this.onConfirm, this.amountKopeks});
 
   @override
   Widget build(BuildContext context) {
@@ -1228,7 +1264,7 @@ class _AddTrafficTab extends StatelessWidget {
           before: current, after: after, color: _DS.sky),
       const SizedBox(height: 14),
       _BuyButton(loading: loading, onPressed: onConfirm,
-          totalKopeks: null, hasEnoughBalance: true),
+          totalKopeks: amountKopeks, hasEnoughBalance: true),
     ]));
   }
 }
@@ -1240,9 +1276,10 @@ class _AddDevicesTab extends StatelessWidget {
   final List<int> options;
   final ValueChanged<int> onSelected;
   final bool loading; final VoidCallback onConfirm;
+  final int? amountKopeks;
   const _AddDevicesTab({required this.currentDevices, required this.selectedAdd,
     required this.options, required this.onSelected,
-    required this.loading, required this.onConfirm});
+    required this.loading, required this.onConfirm, this.amountKopeks});
 
   @override
   Widget build(BuildContext context) {
@@ -1258,7 +1295,7 @@ class _AddDevicesTab extends StatelessWidget {
           before: '$currentDevices', after: after, color: _DS.violet),
       const SizedBox(height: 14),
       _BuyButton(loading: loading, onPressed: onConfirm,
-          totalKopeks: null, hasEnoughBalance: true),
+          totalKopeks: amountKopeks, hasEnoughBalance: true),
     ]));
   }
 }
