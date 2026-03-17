@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +14,7 @@ import '../utils/core_info_parser.dart';
 import '../main.dart' show DS;
 import 'logs_page.dart';
 import 'support_page.dart';
+import '../services/support_api_service.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -35,6 +35,10 @@ class _SettingsPageState extends State<SettingsPage> {
       architecture: '', goVersion: '', fullString: '');
   bool _loading = true;
 
+  // Badge: количество тикетов с ответом от поддержки
+  int _answeredTickets = 0;
+  Timer? _ticketPollTimer;
+
   late final FlutterV2ray _v2ray;
 
   static const _kProxyOnly   = 'settings_proxy_only';
@@ -50,9 +54,31 @@ class _SettingsPageState extends State<SettingsPage> {
     _v2ray = FlutterV2ray();
     _load();
     _loadCoreInfo();
+    _pollTickets();
+    _ticketPollTimer = Timer.periodic(
+        const Duration(seconds: 60), (_) => _pollTickets());
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       AppsRepository.instance.preload();
     }
+  }
+
+  @override
+  void dispose() {
+    _ticketPollTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _pollTickets() async {
+    try {
+      final tickets = await SupportApiService.getTickets();
+      if (mounted) {
+        setState(() {
+          _answeredTickets = tickets
+              .where((t) => t.status == 'answered')
+              .length;
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadCoreInfo() async {
@@ -269,10 +295,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               const Divider(height: 1, color: DS.border),
               _SettingsTile(
-                icon: Icons.delete_sweep_outlined,
-                label: 'Очистить логи',
-                value: 'Удалить все сохранённые записи',
-                onTap: _clearLogs,
+                icon: Icons.bug_report_outlined,
+                label: 'Отправить диагностику',
+                value: 'Скопировать логи для обращения в поддержку',
+                onTap: _sendDiagnostics,
               ),
             ]),
           )),
@@ -287,6 +313,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 icon: Icons.confirmation_number_outlined,
                 label: 'Обращения в поддержку',
                 value: 'Создать тикет или просмотреть историю',
+                badge: _answeredTickets,
                 onTap: _openTickets,
               ),
               const Divider(height: 1, color: DS.border),
@@ -295,13 +322,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 label: 'Написать в Telegram',
                 value: '@ulya_tech',
                 onTap: _openSupport,
-              ),
-              const Divider(height: 1, color: DS.border),
-              _SettingsTile(
-                icon: Icons.bug_report_outlined,
-                label: 'Отправить диагностику',
-                value: 'Скопировать логи для обращения в поддержку',
-                onTap: _sendDiagnostics,
               ),
             ]),
           )),
@@ -445,7 +465,11 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _openTickets() async {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const SupportPage()));
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SupportPage()),
+    );
+    if (mounted) _pollTickets();
   }
 
   Future<void> _openSupport() async {
@@ -521,7 +545,15 @@ class _SettingsTile extends StatelessWidget {
   final String label;
   final String value;
   final VoidCallback? onTap;
-  const _SettingsTile({required this.icon, required this.label, required this.value, this.onTap});
+  final int badge; // 0 = no badge
+
+  const _SettingsTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.onTap,
+    this.badge = 0,
+  });
 
   @override
   Widget build(BuildContext context) => Material(
@@ -531,11 +563,40 @@ class _SettingsTile extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(children: [
-          Container(width: 36, height: 36,
-              decoration: BoxDecoration(
-                  color: DS.violet.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Icon(icon, color: DS.violet, size: 18)),
+          // Icon with optional badge dot
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                  width: 36, height: 36,
+                  decoration: BoxDecoration(
+                      color: DS.violet.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10)),
+                  child: Icon(icon, color: DS.violet, size: 18)),
+              if (badge > 0)
+                Positioned(
+                  top: -3, right: -3,
+                  child: Container(
+                    width: 16, height: 16,
+                    decoration: const BoxDecoration(
+                      color: DS.rose,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        badge > 9 ? '9+' : '$badge',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(label, style: const TextStyle(
