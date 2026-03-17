@@ -327,8 +327,8 @@ class _GlassNavBar extends StatelessWidget {
                 onTap: () => onTabSelected(2),
               ),
               _NavItem(
-                icon: Icons.workspace_premium_outlined,
-                activeIcon: Icons.workspace_premium_rounded,
+                icon: Icons.diamond_outlined,
+                activeIcon: Icons.diamond_rounded,
                 label: 'Premium',
                 selected: currentIndex == 3,
                 onTap: () => onTabSelected(3),
