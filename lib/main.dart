@@ -241,7 +241,8 @@ class _NavBarContainer extends StatelessWidget {
       children: [
         // Gradient fog so content scrolls under gracefully
         Positioned(
-          bottom: 0, left: 0, right: 0, height: 130,
+          bottom: 0, left: 0, right: 0,
+          height: 130 + MediaQuery.viewPaddingOf(context).bottom,
           child: IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -262,7 +263,10 @@ class _NavBarContainer extends StatelessWidget {
         ),
 
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          padding: EdgeInsets.fromLTRB(
+            16, 0, 16,
+            14 + MediaQuery.viewPaddingOf(context).bottom,
+          ),
           child: _GlassNavBar(
             currentIndex: currentIndex,
             onTabSelected: onTabSelected,
