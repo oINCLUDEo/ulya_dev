@@ -179,6 +179,8 @@ class _SupportPageState extends State<SupportPage> with WidgetsBindingObserver {
                                 color: DS.textSecondary, size: 16),
                           ),
                         ),
+
+                        // Title — takes all available space
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -188,7 +190,7 @@ class _SupportPageState extends State<SupportPage> with WidgetsBindingObserver {
                                 fontWeight: FontWeight.w800,
                                 letterSpacing: -0.5, height: 1,
                               )),
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 3),
                               Text(
                                 _loading
                                     ? 'Загрузка…'
@@ -196,12 +198,13 @@ class _SupportPageState extends State<SupportPage> with WidgetsBindingObserver {
                                     ? 'Обращений пока нет'
                                     : '${_tickets.length} ${_plural(_tickets.length)}',
                                 style: const TextStyle(
-                                    color: DS.textSecondary, fontSize: 14),
+                                    color: DS.textSecondary, fontSize: 13),
                               ),
                             ],
                           ),
                         ),
-                        // Telegram button
+
+                        // Telegram icon chip
                         _IconChip(
                           icon: Icons.telegram,
                           color: DS.telegramBlue,
@@ -214,12 +217,13 @@ class _SupportPageState extends State<SupportPage> with WidgetsBindingObserver {
                           },
                         ),
                         const SizedBox(width: 8),
-                        // New ticket button
-                        _GradientBtn(
-                          label: 'Новое',
+
+                        // New ticket — icon chip with violet accent
+                        _IconChip(
                           icon: Icons.add_rounded,
+                          color: DS.violet,
                           onTap: _openCreate,
-                          fullWidth: false,
+                          filled: true,
                         ),
                       ],
                     ),
@@ -1204,100 +1208,157 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isAdmin = msg.isFromAdmin;
+    final time = _fmtTsShort(msg.createdAt);
+
     return Align(
       alignment: isAdmin ? Alignment.centerLeft : Alignment.centerRight,
       child: GestureDetector(
         onLongPress: () {
           Clipboard.setData(ClipboardData(text: msg.messageText));
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Скопировано'),
-                  duration: Duration(seconds: 1)));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Скопировано'),
+              duration: Duration(seconds: 1)));
         },
         child: ConstrainedBox(
           constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.75),
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: isAdmin
-                  ? DS.surface2
-                  : DS.violet.withValues(alpha: 0.88),
-              border: isAdmin
-                  ? Border.all(color: DS.border)
-                  : null,
-              borderRadius: BorderRadius.only(
-                topLeft:     const Radius.circular(16),
-                topRight:    const Radius.circular(16),
-                bottomLeft:  Radius.circular(isAdmin ? 4 : 16),
-                bottomRight: Radius.circular(isAdmin ? 16 : 4),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (isAdmin) ...[
-                  Row(children: [
-                    Container(
-                        width: 6, height: 6,
-                        decoration: const BoxDecoration(
-                            color: DS.emerald, shape: BoxShape.circle)),
-                    const SizedBox(width: 5),
-                    const Text('Поддержка',
-                        style: TextStyle(
-                            color: DS.emerald,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700)),
-                  ]),
-                  const SizedBox(height: 5),
-                ],
-                if (msg.hasMedia) ...[
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.attach_file_rounded,
-                        size: 13,
-                        color: isAdmin
-                            ? DS.textMuted
-                            : Colors.white70),
-                    const SizedBox(width: 4),
-                    Text('Логи прикреплены',
-                        style: TextStyle(
-                            color: isAdmin
-                                ? DS.textMuted
-                                : Colors.white70,
-                            fontSize: 11,
-                            fontStyle: FontStyle.italic)),
-                  ]),
-                  const SizedBox(height: 4),
-                ],
-                Text(msg.messageText,
-                    style: TextStyle(
-                        color: isAdmin ? DS.textPrimary : Colors.white,
-                        fontSize: 14,
-                        height: 1.4)),
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.bottomRight,
-                  child: Text(_fmtTsShort(msg.createdAt),
-                      style: TextStyle(
-                          color: isAdmin
-                              ? DS.textMuted
-                              : Colors.white54,
-                          fontSize: 10)),
-                ),
-              ],
-            ),
-          ),
+              maxWidth: MediaQuery.of(context).size.width * 0.72),
+          child: isAdmin
+              ? _AdminBubble(msg: msg, time: time)
+              : _UserBubble(msg: msg, time: time),
         ),
       ),
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reply bar
-// ─────────────────────────────────────────────────────────────────────────────
+/// Бабл поддержки — с аватаркой слева
+class _AdminBubble extends StatelessWidget {
+  final SupportTicketMessage msg;
+  final String time;
+  const _AdminBubble({required this.msg, required this.time});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Container(
+          width: 28, height: 28,
+          margin: const EdgeInsets.only(right: 8, bottom: 2),
+          decoration: BoxDecoration(
+            color: DS.emerald.withValues(alpha: 0.12),
+            shape: BoxShape.circle,
+            border: Border.all(color: DS.emerald.withValues(alpha: 0.30)),
+          ),
+          child: const Icon(Icons.support_agent_rounded, color: DS.emerald, size: 14),
+        ),
+        Flexible(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(13, 10, 13, 8),
+            decoration: BoxDecoration(
+              color: DS.surface2,
+              borderRadius: const BorderRadius.only(
+                topLeft:     Radius.circular(18),
+                topRight:    Radius.circular(18),
+                bottomLeft:  Radius.circular(4),
+                bottomRight: Radius.circular(18),
+              ),
+              border: Border.all(color: DS.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Поддержка',
+                    style: TextStyle(
+                        color: DS.emerald, fontSize: 11,
+                        fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+                const SizedBox(height: 4),
+                if (msg.hasMedia) ...[
+                  const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.attach_file_rounded, size: 12, color: DS.textMuted),
+                    SizedBox(width: 4),
+                    Text('Логи прикреплены',
+                        style: TextStyle(color: DS.textMuted, fontSize: 11,
+                            fontStyle: FontStyle.italic)),
+                  ]),
+                  const SizedBox(height: 4),
+                ],
+                Text(msg.messageText,
+                    style: const TextStyle(
+                        color: DS.textPrimary, fontSize: 14, height: 1.45)),
+                const SizedBox(height: 3),
+                Align(
+                    alignment: Alignment.bottomRight,
+                    child: Text(time,
+                        style: const TextStyle(color: DS.textMuted, fontSize: 10))),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Бабл пользователя — gradient violet
+class _UserBubble extends StatelessWidget {
+  final SupportTicketMessage msg;
+  final String time;
+  const _UserBubble({required this.msg, required this.time});
+
+  @override
+  Widget build(BuildContext context) {
+    return Flexible(
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [DS.violet, DS.violetDim],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: const BorderRadius.only(
+            topLeft:     Radius.circular(18),
+            topRight:    Radius.circular(18),
+            bottomLeft:  Radius.circular(18),
+            bottomRight: Radius.circular(4),
+          ),
+          boxShadow: [
+            BoxShadow(
+                color: DS.violet.withValues(alpha: 0.25),
+                blurRadius: 8, offset: const Offset(0, 3)),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (msg.hasMedia) ...[
+              const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.attach_file_rounded, size: 12, color: Colors.white70),
+                SizedBox(width: 4),
+                Text('Логи прикреплены',
+                    style: TextStyle(color: Colors.white70, fontSize: 11,
+                        fontStyle: FontStyle.italic)),
+              ]),
+              const SizedBox(height: 4),
+            ],
+            Text(msg.messageText,
+                style: const TextStyle(
+                    color: Colors.white, fontSize: 14, height: 1.45)),
+            const SizedBox(height: 3),
+            Align(
+                alignment: Alignment.bottomRight,
+                child: Text(time,
+                    style: const TextStyle(color: Colors.white54, fontSize: 10))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 
 class _ReplyBar extends StatelessWidget {
   final TextEditingController ctrl;
@@ -1660,8 +1721,14 @@ class _IconChip extends StatelessWidget {
   final IconData icon;
   final Color color;
   final VoidCallback onTap;
-  const _IconChip(
-      {required this.icon, required this.color, required this.onTap});
+  final bool filled;
+
+  const _IconChip({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    this.filled = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1670,11 +1737,20 @@ class _IconChip extends StatelessWidget {
       child: Container(
         width: 38, height: 38,
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.10),
+          color: filled ? color : color.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: color.withValues(alpha: 0.25)),
+          border: filled ? null : Border.all(color: color.withValues(alpha: 0.25)),
+          boxShadow: filled ? [
+            BoxShadow(
+              color: color.withValues(alpha: 0.30),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ] : null,
         ),
-        child: Icon(icon, color: color, size: 20),
+        child: Icon(icon,
+            color: filled ? Colors.white : color,
+            size: 20),
       ),
     );
   }
