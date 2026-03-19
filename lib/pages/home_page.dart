@@ -892,23 +892,26 @@ class _NoPlanPrompt extends StatelessWidget {
       const Text('У вас нет активной подписки.',
           style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
       const SizedBox(height: 12),
-      GestureDetector(
-        onTap: onGoToPremium,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [DS.violet, DS.violetDim],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+      Center(
+        child: GestureDetector(
+          onTap: onGoToPremium,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [DS.violet, DS.violetDim],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(DS.radiusSm),
             ),
-            borderRadius: BorderRadius.circular(DS.radiusSm),
+            child: const Text('Получить подписку',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700)),
           ),
-          child: const Text('Получить подписку',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700)),
         ),
       ),
     ],

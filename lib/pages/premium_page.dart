@@ -928,7 +928,7 @@ class _PayPill extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _BuyButton extends StatelessWidget {
-  final bool loading; final VoidCallback onPressed;
+  final bool loading; final VoidCallback? onPressed;
   final int? totalKopeks; final bool hasEnoughBalance;
   const _BuyButton({required this.loading, required this.onPressed,
     this.totalKopeks, this.hasEnoughBalance = true});
@@ -1012,24 +1012,48 @@ class _UpgradeSectionState extends State<_UpgradeSection>
   }
 
   /// Traffic add options derived from backend subscription options.
+  /// We take the first period's traffic options (they already include labels/pricing)
+  /// and keep only positive values. If backend gives nothing – no buttons.
   List<int> get _trafficOpts {
-    final first = widget.options.periods.isNotEmpty
-        ? widget.options.periods.first
-        : null;
+    final current = _resolveCurrentTrafficGb();
+    if (current <= 0) return const [];
+    final first = widget.options.periods.firstOrNull;
     final opts = first?.traffic?.options
         .map((o) => o.value)
         .where((v) => v > 0)
         .toList();
-    return opts != null && opts.isNotEmpty ? opts : [10, 50, 100, 200, 500];
+    if (opts == null || opts.isEmpty) return const [];
+    final additions = opts
+        .where((v) => v > current)
+        .map((v) => v - current)
+        .where((v) => v > 0)
+        .toSet()
+        .toList()
+      ..sort();
+    return additions;
   }
 
   /// Device add options derived from backend subscription options.
+  /// Backend provides absolute device counts; convert them to increments,
+  /// honouring current limit and backend maximum.
   List<int> get _devicesOpts {
-    final first = widget.options.periods.isNotEmpty
-        ? widget.options.periods.first
-        : null;
-    final opts = first?.devices?.options.where((v) => v > 0).toList();
-    return opts != null && opts.isNotEmpty ? opts : [1, 2, 3, 5, 10];
+    final current = widget.sub.deviceLimit;
+    final first = widget.options.periods.firstOrNull;
+    final cfg = first?.devices;
+    if (cfg == null) return const [];
+
+    final maxCfg = cfg.maximum ??
+        (cfg.options.isNotEmpty ? cfg.options.reduce((a, b) => a > b ? a : b) : null);
+    if (maxCfg != null && current >= maxCfg) return const [];
+
+    final targetOptions = cfg.options.where((v) => v > current && (maxCfg == null || v <= maxCfg)).toList();
+    final additions = targetOptions.map((v) => v - current).where((v) => v > 0).toSet().toList()..sort();
+
+    if (additions.isNotEmpty) return additions;
+
+    // Fallback: offer a single +1 if still below max, otherwise nothing.
+    if (maxCfg == null || current < maxCfg) return [1];
+    return const [];
   }
 
   @override
@@ -1038,8 +1062,8 @@ class _UpgradeSectionState extends State<_UpgradeSection>
     _tabCtrl = TabController(length: 3, vsync: this)
       ..addListener(() { if (mounted) setState(() => _tab = _tabCtrl.index); });
     if (widget.options.periods.isNotEmpty) _renewPeriodId = widget.options.periods.first.id;
-    _addTrafficGb = _trafficOpts.first;
-    _addDevices   = _devicesOpts.first;
+    _addTrafficGb = _trafficOpts.firstOrNull;
+    _addDevices   = _devicesOpts.firstOrNull;
     _calcTrafficPrice(_addTrafficGb);
     _calcDevicesPrice(_addDevices);
   }
@@ -1104,7 +1128,9 @@ class _UpgradeSectionState extends State<_UpgradeSection>
                 },
                 loading: widget.loading || _calcingTrafficPrice,
                 amountKopeks: _trafficPriceKopeks,
-                onConfirm: () => widget.onUpgrade(null, trafficAdd: _addTrafficGb)),
+                onConfirm: _addTrafficGb == null
+                    ? null
+                    : () => widget.onUpgrade(null, trafficAdd: _addTrafficGb)),
             _AddDevicesTab(
                 currentDevices: widget.sub.deviceLimit,
                 selectedAdd: _addDevices, options: _devicesOpts,
@@ -1114,7 +1140,9 @@ class _UpgradeSectionState extends State<_UpgradeSection>
                 },
                 loading: widget.loading || _calcingDevicesPrice,
                 amountKopeks: _devicesPriceKopeks,
-                onConfirm: () => widget.onUpgrade(null, devicesAdd: _addDevices)),
+                onConfirm: _addDevices == null
+                    ? null
+                    : () => widget.onUpgrade(null, devicesAdd: _addDevices)),
           ][_tab],
         ),
       ),
@@ -1265,7 +1293,7 @@ class _AddTrafficTab extends StatelessWidget {
   final int currentGb; final int? selectedAdd;
   final List<int> options;
   final ValueChanged<int> onSelected;
-  final bool loading; final VoidCallback onConfirm;
+  final bool loading; final VoidCallback? onConfirm;
   final int? amountKopeks;
   const _AddTrafficTab({required this.currentGb, required this.selectedAdd,
     required this.options, required this.onSelected,
@@ -1273,6 +1301,17 @@ class _AddTrafficTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (options.isEmpty) {
+      return _Card(child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          _RowLabel(icon: Icons.data_usage_rounded, label: 'Добавить трафик'),
+          SizedBox(height: 10),
+          _InfoNote(text: 'Дополнительные пакеты трафика недоступны для вашей подписки.'),
+        ],
+      ));
+    }
+
     final current = currentGb == 0 ? '∞ ГБ' : '$currentGb ГБ';
     final after   = selectedAdd != null
         ? (currentGb == 0 ? '∞ ГБ' : '${currentGb + selectedAdd!} ГБ') : '—';
@@ -1298,7 +1337,7 @@ class _AddDevicesTab extends StatelessWidget {
   final int currentDevices; final int? selectedAdd;
   final List<int> options;
   final ValueChanged<int> onSelected;
-  final bool loading; final VoidCallback onConfirm;
+  final bool loading; final VoidCallback? onConfirm;
   final int? amountKopeks;
   const _AddDevicesTab({required this.currentDevices, required this.selectedAdd,
     required this.options, required this.onSelected,
@@ -1306,6 +1345,17 @@ class _AddDevicesTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (options.isEmpty) {
+      return _Card(child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          _RowLabel(icon: Icons.devices_rounded, label: 'Добавить устройства'),
+          SizedBox(height: 10),
+          _InfoNote(text: 'Лимит устройств уже достигнут — добавление недоступно.'),
+        ],
+      ));
+    }
+
     final after = selectedAdd != null ? '${currentDevices + selectedAdd!}' : '—';
     return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _RowLabel(icon: Icons.devices_rounded, label: 'Добавить устройства'),
