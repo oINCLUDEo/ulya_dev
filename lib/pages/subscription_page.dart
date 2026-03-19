@@ -65,6 +65,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
     WidgetsBinding.instance.addObserver(this);
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
+    globalRefreshNotifier.addListener(_onGlobalRefresh);
     _loadCachedMe();
     _refresh();
   }
@@ -76,6 +77,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
+    globalRefreshNotifier.removeListener(_onGlobalRefresh);
     super.dispose();
   }
 
@@ -91,6 +93,20 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
 
   void _onMeChanged() { if (mounted) setState(() {}); }
 
+  /// Called when another page triggers a global refresh.  Update traffic info
+  /// from the already-refreshed [RemnawaveService.lastSubscriptionInfo] cache.
+  void _onGlobalRefresh() {
+    if (!mounted) return;
+    // Only update traffic info — do not touch _loading if this page
+    // is already running its own refresh to avoid premature hide of the spinner.
+    if (!_loading) {
+      setState(() => _trafficInfo = RemnawaveService.lastSubscriptionInfo);
+    } else {
+      // Just update the traffic info; _loading is managed by _refresh().
+      _trafficInfo = RemnawaveService.lastSubscriptionInfo;
+    }
+  }
+
   Future<void> _refresh({bool force = false}) async {
     if (!mounted) return;
     if (!force &&
@@ -103,14 +119,8 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
     setState(() => _loading = true);
 
     try {
-      await MeService.refresh();
-      final subUrl = await RemnawaveService.getSubscriptionUrl();
-      if (subUrl.isNotEmpty) {
-        await RemnawaveService.fetchNodes();
-        if (mounted) setState(() => _trafficInfo = RemnawaveService.lastSubscriptionInfo);
-      } else {
-        if (mounted) setState(() => _trafficInfo = null);
-      }
+      await MeService.refreshAll();
+      if (mounted) setState(() => _trafficInfo = RemnawaveService.lastSubscriptionInfo);
     } catch (e, st) {
       debugPrint('SubscriptionPage refresh error: $e\n$st');
     }
@@ -619,15 +629,20 @@ class _TrafficCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final unlimited = sub.trafficLimitGb == 0;
-    // Always use the authoritative DB value for the total traffic limit so
-    // that the subscription page and the premium page show consistent numbers.
-    // Only used bytes come from the real-time Remnawave subscription info.
+    final unlimited = sub.trafficLimitGb == 0 && (trafficInfo == null || trafficInfo!.totalBytes == 0);
+    // Prefer real-time Remnawave subscription info for both used and total
+    // bytes — this is the authoritative source from the VPN panel and stays
+    // correct immediately after a traffic top-up, unlike the cached /me value.
     final usedBytes = trafficInfo?.usedBytes ?? (sub.trafficUsedGb * 1024 * 1024 * 1024).round();
-    final totalBytes = unlimited ? 0 : (sub.trafficLimitGb * 1024 * 1024 * 1024);
+    final totalBytes = (trafficInfo != null && trafficInfo!.totalBytes > 0)
+        ? trafficInfo!.totalBytes
+        : (sub.trafficLimitGb == 0 ? 0 : (sub.trafficLimitGb * 1024 * 1024 * 1024));
     final fraction = totalBytes > 0 ? (usedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
     final usedLabel = trafficInfo?.formattedUsed ?? '${sub.trafficUsedGb.toStringAsFixed(1)} ГБ';
-    final totalLabel = unlimited ? '∞' : '${sub.trafficLimitGb} ГБ';
+    final totalLabel = unlimited ? '∞'
+        : (trafficInfo != null && trafficInfo!.totalBytes > 0
+        ? trafficInfo!.formattedTotal
+        : '${sub.trafficLimitGb} ГБ');
     final remainingBytes = totalBytes - usedBytes;
     final remaining = _fmtBytes(remainingBytes);
 

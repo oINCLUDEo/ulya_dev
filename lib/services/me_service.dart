@@ -18,6 +18,11 @@ import 'remnawave_service.dart';
 /// so they react immediately when auth state changes.
 final ValueNotifier<MeResponse?> meNotifier = ValueNotifier<MeResponse?>(null);
 
+/// Incremented whenever a full refresh (me + Remnawave subscription info) has
+/// completed.  Pages that display Remnawave traffic data listen to this and
+/// update their local traffic state from [RemnawaveService.lastSubscriptionInfo].
+final ValueNotifier<int> globalRefreshNotifier = ValueNotifier<int>(0);
+
 /// Service responsible for calling GET /mobile/v1/me.
 ///
 /// Call [refresh] after login and on app resume when the user is authenticated.
@@ -73,6 +78,22 @@ class MeService {
       debugPrint('MeService: error fetching /me: $e');
       return null;
     }
+  }
+
+  /// Full refresh: fetch /me AND the Remnawave subscription info (nodes).
+  ///
+  /// Increments [globalRefreshNotifier] after all data has been updated so
+  /// that pages that display Remnawave traffic data can pick up the new values
+  /// from [RemnawaveService.lastSubscriptionInfo] with a simple setState call.
+  static Future<void> refreshAll() async {
+    await refresh();
+    final subUrl = await RemnawaveService.getSubscriptionUrl();
+    if (subUrl.isNotEmpty) {
+      try {
+        await RemnawaveService.fetchNodes();
+      } catch (_) {}
+    }
+    globalRefreshNotifier.value++;
   }
 
   static Future<void> _saveToCache(MeResponse me) async {

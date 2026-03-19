@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/me_response.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
+import '../services/remnawave_service.dart';
 import '../services/subscription_api_service.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
@@ -74,6 +75,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
+    globalRefreshNotifier.addListener(_onGlobalRefresh);
     _loadOptions();
   }
 
@@ -83,6 +85,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
+    globalRefreshNotifier.removeListener(_onGlobalRefresh);
     super.dispose();
   }
 
@@ -92,6 +95,11 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
       _pendingPaymentPoll = false;
       _startPaymentPolling();
     }
+  }
+
+  /// Called when another page triggers a global refresh.
+  void _onGlobalRefresh() {
+    if (mounted) _loadOptions();
   }
 
   void _startPaymentPolling() {
@@ -993,6 +1001,16 @@ class _UpgradeSectionState extends State<_UpgradeSection>
   bool  _calcingTrafficPrice  = false;
   bool  _calcingDevicesPrice  = false;
 
+  /// Returns the current traffic limit in GB, preferring the real-time
+  /// Remnawave subscription info over the cached /me value.
+  int _resolveCurrentTrafficGb() {
+    final info = RemnawaveService.lastSubscriptionInfo;
+    if (info != null && info.totalBytes > 0) {
+      return (info.totalBytes / (1024 * 1024 * 1024)).round();
+    }
+    return widget.sub.trafficLimitGb;
+  }
+
   /// Traffic add options derived from backend subscription options.
   List<int> get _trafficOpts {
     final first = widget.options.periods.isNotEmpty
@@ -1078,7 +1096,7 @@ class _UpgradeSectionState extends State<_UpgradeSection>
                 loading: widget.loading,
                 onConfirm: () => widget.onUpgrade(_renewPeriodId!)),
             _AddTrafficTab(
-                currentGb: widget.sub.trafficLimitGb,
+                currentGb: _resolveCurrentTrafficGb(),
                 selectedAdd: _addTrafficGb, options: _trafficOpts,
                 onSelected: (v) {
                   setState(() { _addTrafficGb = v; });
@@ -1112,7 +1130,12 @@ class _StatusStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final traffic = sub.trafficLimitGb == 0 ? '∞ ГБ' : '${sub.trafficLimitGb} ГБ';
+    // Prefer real-time Remnawave subscription info for the traffic limit — it
+    // stays correct immediately after a top-up, unlike the cached /me value.
+    final remnaInfo = RemnawaveService.lastSubscriptionInfo;
+    final traffic = (remnaInfo != null && remnaInfo.totalBytes > 0)
+        ? remnaInfo.formattedTotal
+        : (sub.trafficLimitGb == 0 ? '∞ ГБ' : '${sub.trafficLimitGb} ГБ');
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(

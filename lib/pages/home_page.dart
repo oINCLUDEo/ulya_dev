@@ -72,6 +72,7 @@ class _HomePageState extends State<HomePage>
     selectedServerNotifier.addListener(_onSelectedServerChanged);
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
+    globalRefreshNotifier.addListener(_onGlobalRefresh);
     _speedCalc = SpeedCalculator(smoothing: 0.25);
     _v2ray = FlutterV2ray();
     _init();
@@ -111,6 +112,7 @@ class _HomePageState extends State<HomePage>
     selectedServerNotifier.removeListener(_onSelectedServerChanged);
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
+    globalRefreshNotifier.removeListener(_onGlobalRefresh);
     _statusSub?.cancel();
     super.dispose();
   }
@@ -126,6 +128,17 @@ class _HomePageState extends State<HomePage>
   void _onMeChanged() {
     final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
     if (url != _lastKnownSubUrl) { _lastKnownSubUrl = url; _loadNodes(); }
+  }
+
+  /// Called when another page triggers a global refresh.  Update traffic/subscription
+  /// info from the already-refreshed [RemnawaveService.lastSubscriptionInfo] cache.
+  void _onGlobalRefresh() {
+    if (!mounted) return;
+    // Only update the subscription/traffic info from cache — do not touch
+    // _isLoadingNodes to avoid conflicting with any in-progress _loadNodes call.
+    setState(() {
+      _subscriptionInfo = RemnawaveService.lastSubscriptionInfo;
+    });
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -149,7 +162,7 @@ class _HomePageState extends State<HomePage>
 
   // ── Data ───────────────────────────────────────────────────────────────────
   Future<void> _refreshAll() async {
-    await MeService.refresh();
+    await MeService.refreshAll();
     await _loadNodes();
   }
 
@@ -469,7 +482,7 @@ class _HomePageState extends State<HomePage>
   // ── Header ─────────────────────────────────────────────────────────────────
   Widget _buildHeader() {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -968,15 +981,57 @@ class _StatusPill extends StatelessWidget {
 
 // ── Shared micro-widgets ──────────────────────────────────────────────────────
 
-class VpnIconBtn extends StatelessWidget {
+class VpnIconBtn extends StatefulWidget {
   final bool loading;
   final IconData icon;
   final VoidCallback? onTap;
   const VpnIconBtn({super.key, required this.loading, required this.icon, this.onTap});
 
   @override
+  State<VpnIconBtn> createState() => _VpnIconBtnState();
+}
+
+class _VpnIconBtnState extends State<VpnIconBtn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _rotCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _rotCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    if (widget.loading) _rotCtrl.repeat();
+  }
+
+  @override
+  void didUpdateWidget(VpnIconBtn old) {
+    super.didUpdateWidget(old);
+    if (widget.loading && !old.loading) {
+      _rotCtrl.repeat();
+    } else if (!widget.loading && old.loading) {
+      final remaining = 1.0 - (_rotCtrl.value % 1.0);
+      if (remaining > 0 && remaining < 1.0) {
+        _rotCtrl.animateTo(
+          _rotCtrl.value + remaining,
+          duration: Duration(milliseconds: (remaining * 700).round().clamp(1, 700)),
+        ).then((_) { if (mounted) _rotCtrl.reset(); });
+      } else {
+        _rotCtrl.reset();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _rotCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
+    onTap: widget.onTap,
     child: Container(
       width: 42, height: 42,
       decoration: BoxDecoration(
@@ -984,10 +1039,10 @@ class VpnIconBtn extends StatelessWidget {
         borderRadius: BorderRadius.circular(DS.radiusSm),
         border: Border.all(color: DS.border),
       ),
-      child: loading
-          ? const Center(child: SizedBox(width: 18, height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2, color: DS.violet)))
-          : Icon(icon, color: DS.textSecondary, size: 20),
+      child: RotationTransition(
+        turns: _rotCtrl,
+        child: Icon(widget.icon, color: DS.textSecondary, size: 20),
+      ),
     ),
   );
 }
