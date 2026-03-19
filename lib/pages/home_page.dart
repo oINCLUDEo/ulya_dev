@@ -17,6 +17,7 @@ import '../services/selected_server_state.dart';
 import '../utils/speed_calculator.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
+import 'support_page.dart';
 import '../main.dart' show DS;
 
 class HomePage extends StatefulWidget {
@@ -488,12 +489,22 @@ class _HomePageState extends State<HomePage>
           ]),
         ),
         VpnIconBtn(
+          loading: false,
+          icon: Icons.support_agent_rounded,
+          onTap: _openSupportPage,
+        ),
+        const SizedBox(width: 8),
+        VpnIconBtn(
           loading: _isLoadingNodes,
           icon: Icons.refresh_rounded,
           onTap: _isLoadingNodes ? null : _refreshAll,
         ),
       ],
     );
+  }
+
+  void _openSupportPage() {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const SupportPage()));
   }
 
   // ── Connection card ────────────────────────────────────────────────────────

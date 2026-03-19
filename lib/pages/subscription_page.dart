@@ -134,7 +134,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            SliverToBoxAdapter(child: _SubHeader(onRefresh: () => _refresh(force: true))),
+            SliverToBoxAdapter(child: _SubHeader(onRefresh: () => _refresh(force: true), isRefreshing: _loading)),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
               sliver: SliverList(
@@ -219,9 +219,52 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
 // Header
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _SubHeader extends StatelessWidget {
+class _SubHeader extends StatefulWidget {
   final VoidCallback onRefresh;
-  const _SubHeader({required this.onRefresh});
+  final bool isRefreshing;
+  const _SubHeader({required this.onRefresh, required this.isRefreshing});
+
+  @override
+  State<_SubHeader> createState() => _SubHeaderState();
+}
+
+class _SubHeaderState extends State<_SubHeader> with SingleTickerProviderStateMixin {
+  late final AnimationController _rotCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _rotCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    if (widget.isRefreshing) _rotCtrl.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_SubHeader old) {
+    super.didUpdateWidget(old);
+    if (widget.isRefreshing && !old.isRefreshing) {
+      _rotCtrl.repeat();
+    } else if (!widget.isRefreshing && old.isRefreshing) {
+      // Complete the current rotation smoothly before stopping.
+      final remaining = 1.0 - (_rotCtrl.value % 1.0);
+      if (remaining > 0 && remaining < 1.0) {
+        _rotCtrl.animateTo(
+          _rotCtrl.value + remaining,
+          duration: Duration(milliseconds: (remaining * 700).round().clamp(1, 700)),
+        ).then((_) { if (mounted) _rotCtrl.reset(); });
+      } else {
+        _rotCtrl.reset();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _rotCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -255,7 +298,7 @@ class _SubHeader extends StatelessWidget {
             ),
           ),
           GestureDetector(
-            onTap: onRefresh,
+            onTap: widget.isRefreshing ? null : widget.onRefresh,
             child: Container(
               width: 42, height: 42,
               decoration: BoxDecoration(
@@ -263,7 +306,10 @@ class _SubHeader extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: _DS.border),
               ),
-              child: const Icon(Icons.refresh_rounded, color: _DS.textSecondary, size: 20),
+              child: RotationTransition(
+                turns: _rotCtrl,
+                child: const Icon(Icons.refresh_rounded, color: _DS.textSecondary, size: 20),
+              ),
             ),
           ),
         ],
@@ -574,11 +620,14 @@ class _TrafficCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final unlimited = sub.trafficLimitGb == 0;
+    // Always use the authoritative DB value for the total traffic limit so
+    // that the subscription page and the premium page show consistent numbers.
+    // Only used bytes come from the real-time Remnawave subscription info.
     final usedBytes = trafficInfo?.usedBytes ?? (sub.trafficUsedGb * 1024 * 1024 * 1024).round();
-    final totalBytes = trafficInfo?.totalBytes ?? (sub.trafficLimitGb * 1024 * 1024 * 1024).round();
+    final totalBytes = unlimited ? 0 : (sub.trafficLimitGb * 1024 * 1024 * 1024);
     final fraction = totalBytes > 0 ? (usedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
     final usedLabel = trafficInfo?.formattedUsed ?? '${sub.trafficUsedGb.toStringAsFixed(1)} ГБ';
-    final totalLabel = trafficInfo?.formattedTotal ?? (unlimited ? '∞' : '${sub.trafficLimitGb} ГБ');
+    final totalLabel = unlimited ? '∞' : '${sub.trafficLimitGb} ГБ';
     final remainingBytes = totalBytes - usedBytes;
     final remaining = _fmtBytes(remainingBytes);
 
