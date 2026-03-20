@@ -16,6 +16,11 @@ class SubscriptionOptions {
   final String currency;
   final Map<String, dynamic>? currentSubscription;
 
+  // Traffic top-up (докупка ГБ к текущей подписке через /upgrade)
+  final bool trafficTopupEnabled;
+  final List<TrafficTopupPackage> trafficTopupPackages;
+  final int? availableTopupGb;
+
   const SubscriptionOptions({
     required this.hasSubscription,
     required this.periods,
@@ -23,11 +28,15 @@ class SubscriptionOptions {
     required this.balanceRub,
     required this.currency,
     this.currentSubscription,
+    this.trafficTopupEnabled = false,
+    this.trafficTopupPackages = const [],
+    this.availableTopupGb,
   });
 
   factory SubscriptionOptions.fromJson(Map<String, dynamic> json) {
     final ctx = json['context'] as Map<String, dynamic>? ?? {};
     final periodsRaw = ctx['periods'] as List<dynamic>? ?? [];
+    final packagesRaw = ctx['traffic_topup_packages'] as List<dynamic>? ?? [];
     return SubscriptionOptions(
       hasSubscription: json['has_subscription'] as bool? ?? false,
       periods: periodsRaw
@@ -38,6 +47,12 @@ class SubscriptionOptions {
       balanceRub: (ctx['balance_rub'] as num?)?.toDouble() ?? 0.0,
       currency: ctx['currency'] as String? ?? 'RUB',
       currentSubscription: ctx['current_subscription'] as Map<String, dynamic>?,
+      trafficTopupEnabled: ctx['traffic_topup_enabled'] as bool? ?? false,
+      trafficTopupPackages: packagesRaw
+          .whereType<Map<String, dynamic>>()
+          .map(TrafficTopupPackage.fromJson)
+          .toList(),
+      availableTopupGb: (ctx['available_topup_gb'] as num?)?.toInt(),
     );
   }
 }
@@ -104,6 +119,32 @@ class TrafficOption {
       label: json['label'] as String? ?? '',
       priceKopeks: (json['price_kopeks'] as num?)?.toInt() ?? 0,
       isDefault: json['is_default'] as bool? ?? false,
+    );
+  }
+}
+
+class TrafficTopupPackage {
+  final int gb;             // GB increment — send directly as traffic_add
+  final int priceKopeks;    // final price after discounts
+  final String priceLabel;  // formatted e.g. "89 ₽"
+  final int? originalPriceKopeks;
+  final int discountPercent;
+
+  const TrafficTopupPackage({
+    required this.gb,
+    required this.priceKopeks,
+    required this.priceLabel,
+    this.originalPriceKopeks,
+    this.discountPercent = 0,
+  });
+
+  factory TrafficTopupPackage.fromJson(Map<String, dynamic> j) {
+    return TrafficTopupPackage(
+      gb: (j['gb'] as num?)?.toInt() ?? 0,
+      priceKopeks: (j['price_kopeks'] as num?)?.toInt() ?? 0,
+      priceLabel: j['price_label'] as String? ?? '',
+      originalPriceKopeks: (j['original_price_kopeks'] as num?)?.toInt(),
+      discountPercent: (j['discount_percent'] as num?)?.toInt() ?? 0,
     );
   }
 }

@@ -26,7 +26,6 @@ class _DS {
   static const surface0 = Color(0xFF0F0F14);
   static const surface1 = Color(0xFF17171F);
   static const surface2 = Color(0xFF1E1E2A);
-  // ignore: unused_field
   static const surface3 = Color(0xFF26263A);
 
   static const textPrimary   = Color(0xFFEEEEF8);
@@ -97,11 +96,6 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     }
   }
 
-  /// Called when another page triggers a global refresh.
-  void _onGlobalRefresh() {
-    if (mounted) _loadOptions();
-  }
-
   void _startPaymentPolling() {
     if (!mounted) return;
     _pollTimer?.cancel();
@@ -130,6 +124,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
 
   void _onAuthChanged() { if (mounted) _loadOptions(); }
   void _onMeChanged()   { if (mounted) setState(() {}); }
+  void _onGlobalRefresh() { if (mounted) _loadOptions(); }
 
   Future<void> _loadOptions() async {
     if (!authStateNotifier.value.isLoggedIn) {
@@ -140,6 +135,13 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
     try {
       final opts = await SubscriptionApiService.getOptions();
       if (mounted) {
+        if (opts != null) {
+          debugPrint('[OPTIONS] periods=${opts.periods.length}');
+          debugPrint('[OPTIONS] trafficTopupEnabled=${opts.trafficTopupEnabled}');
+          debugPrint('[OPTIONS] trafficTopupPackages=${opts.trafficTopupPackages.length}');
+          debugPrint('[OPTIONS] availableTopupGb=${opts.availableTopupGb}');
+          debugPrint('[OPTIONS] raw check: will show topup tab=${opts.trafficTopupPackages.isNotEmpty}');
+        }
         setState(() {
           _options = opts;
           if (opts != null && opts.periods.isNotEmpty) {
@@ -217,7 +219,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
           periodId: periodId, trafficAdd: trafficAdd, devicesAdd: devicesAdd);
       if (!mounted) return;
       if (r == null)                          { _snack('Ошибка соединения с сервером', error: true); }
-      else if (r.isSuccess)                   { _snack('Подписка улучшена!', error: false); await MeService.refresh(); await _loadOptions(); }
+      else if (r.isSuccess)                   { _snack('Подписка улучшена!', error: false); await MeService.refresh(); globalRefreshNotifier.notifyListeners(); await _loadOptions(); }
       else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
       else                                    { _snack(r.message ?? 'Ошибка при улучшении', error: true); }
     } catch (e) { if (mounted) _snack('Ошибка: $e', error: true); }
@@ -589,10 +591,13 @@ class _SubscriptionBuilderCard extends StatelessWidget {
       // Traffic
       if (hasTraffic) ...[
         const Divider(height: 1, color: _DS.border),
-        Padding(padding: const EdgeInsets.fromLTRB(18, 14, 18, 14), child:
+        Padding(padding: const EdgeInsets.fromLTRB(18, 16, 18, 16), child:
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _RowLabel(icon: Icons.data_usage_rounded, label: 'Трафик'),
-          const SizedBox(height: 10),
+          const SizedBox(height: 4),
+          const Text('Объём данных в месяц',
+              style: TextStyle(color: _DS.textMuted, fontSize: 11)),
+          const SizedBox(height: 12),
           _OptionChips<int>(
               options: period.traffic!.options.map((t) => _OItem<int>(
                 value: t.value,
@@ -608,13 +613,16 @@ class _SubscriptionBuilderCard extends StatelessWidget {
       // Devices
       if (hasDevices) ...[
         const Divider(height: 1, color: _DS.border),
-        Padding(padding: const EdgeInsets.fromLTRB(18, 14, 18, 14), child:
+        Padding(padding: const EdgeInsets.fromLTRB(18, 16, 18, 16), child:
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _RowLabel(icon: Icons.devices_rounded, label: 'Устройства'),
-          const SizedBox(height: 10),
+          _RowLabel(icon: Icons.devices_rounded, label: 'Количество устройств'),
+          const SizedBox(height: 4),
+          const Text('Одновременных подключений',
+              style: TextStyle(color: _DS.textMuted, fontSize: 11)),
+          const SizedBox(height: 12),
           _OptionChips<int>(
               options: period.devices!.options.map((d) => _OItem<int>(
-                value: d, label: '$d',
+                value: d, label: '$d устр.',
                 hot: d == (period.devices!.defaultValue ?? period.devices!.minimum),
               )).toList(),
               selected: selectedDevices,
@@ -653,9 +661,7 @@ class _PeriodList extends StatelessWidget {
     PeriodOption? best;
     for (final p in options.periods) {
       if (p.discountPercent > 0 &&
-          (best == null || p.discountPercent > best.discountPercent)) {
-        best = p;
-      }
+          (best == null || p.discountPercent > best.discountPercent)) best = p;
     }
     return best?.id;
   }
@@ -762,90 +768,65 @@ class _PeriodRow extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _OItem<T> {
-  final T value;
-  final String label;
-  final bool hot;
-  const _OItem({required this.value, required this.label, this.hot = false});
+  final T value; final String label; final String? sub; final bool hot;
+  const _OItem({required this.value, required this.label, this.sub, this.hot = false});
 }
 
-/// Horizontal scrolling pill-selector — single row, no wrapping, no height variance.
-/// The "hot" item gets a subtle accent dot above, but the pill height is identical.
 class _OptionChips<T> extends StatelessWidget {
   final List<_OItem<T>> options;
   final T?    selected;
   final ValueChanged<T> onSelected;
   final Color accent;
-
-  const _OptionChips({
-    required this.options,
-    required this.selected,
-    required this.onSelected,
-    required this.accent,
-  });
+  const _OptionChips({required this.options, required this.selected,
+    required this.onSelected, required this.accent});
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 42,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
-        itemCount: options.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final opt   = options[i];
-          final isSel = opt.value == selected;
-
-          return GestureDetector(
-            onTap: () => onSelected(opt.value),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              padding: const EdgeInsets.symmetric(horizontal: 18),
-              decoration: BoxDecoration(
-                color: isSel ? accent.withValues(alpha: 0.16) : _DS.surface2,
-                borderRadius: BorderRadius.circular(21),
-                border: Border.all(
-                  color: isSel ? accent : _DS.border,
-                  width: isSel ? 1.5 : 1,
+    return Wrap(
+      spacing: 8,
+      runSpacing: 12,
+      children: options.map((opt) {
+        final isSel = opt.value == selected;
+        return GestureDetector(
+          onTap: () => onSelected(opt.value),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                height: 44,
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+                decoration: BoxDecoration(
+                  color: isSel ? accent.withValues(alpha: 0.15) : _DS.surface2,
+                  borderRadius: BorderRadius.circular(_DS.radiusXs),
+                  border: Border.all(
+                    color: isSel ? accent : _DS.border,
+                    width: isSel ? 1.5 : 1,
+                  ),
                 ),
-                boxShadow: isSel
-                    ? [BoxShadow(
-                  color: accent.withValues(alpha: 0.22),
-                  blurRadius: 10,
-                  spreadRadius: -3,
-                )]
-                    : null,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (opt.hot && !isSel)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 5),
-                      child: Container(
-                        width: 5, height: 5,
-                        decoration: BoxDecoration(
-                          color: accent.withValues(alpha: 0.7),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                  Text(
+                child: Center(
+                  child: Text(
                     opt.label,
                     style: TextStyle(
                       color: isSel ? accent : _DS.textPrimary,
-                      fontSize: 13,
-                      fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
-                      letterSpacing: 0.1,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
-          );
-        },
-      ),
+              if (opt.hot)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Container(
+                    width: 5, height: 5,
+                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                  ),
+                ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 }
@@ -930,7 +911,7 @@ class _PayPill extends StatelessWidget {
 class _BuyButton extends StatelessWidget {
   final bool loading; final VoidCallback? onPressed;
   final int? totalKopeks; final bool hasEnoughBalance;
-  const _BuyButton({required this.loading, required this.onPressed,
+  const _BuyButton({required this.loading, this.onPressed,
     this.totalKopeks, this.hasEnoughBalance = true});
 
   @override
@@ -954,7 +935,7 @@ class _BuyButton extends StatelessWidget {
           boxShadow: [BoxShadow(color: color.withValues(alpha: 0.35),
               blurRadius: 20, offset: const Offset(0, 6))]),
       child: Material(color: Colors.transparent, child: InkWell(
-        onTap: loading ? null : onPressed,
+        onTap: (loading || onPressed == null) ? null : onPressed,
         borderRadius: BorderRadius.circular(_DS.radius),
         child: Center(child: loading
             ? const SizedBox(height: 22, width: 22,
@@ -993,49 +974,38 @@ class _UpgradeSectionState extends State<_UpgradeSection>
   int _tab = 0;
 
   String? _renewPeriodId;
-  int?    _addTrafficGb;
+  int?    _selectedTrafficValue; // selected topup package gb (= traffic_add increment)
   int?    _addDevices;
 
-  int?  _trafficPriceKopeks;
-  int?  _devicesPriceKopeks;
-  bool  _calcingTrafficPrice  = false;
-  bool  _calcingDevicesPrice  = false;
+  // Цены для каждого варианта: ключ=инкремент, значение=kopeks
+  Map<int, int?> _devicesPrices = {}; // null = загружается, int = загружено
 
-  /// Returns the current traffic limit in GB, preferring the real-time
-  /// Remnawave subscription info over the cached /me value.
-  int _resolveCurrentTrafficGb() {
-    final info = RemnawaveService.lastSubscriptionInfo;
-    if (info != null && info.totalBytes > 0) {
-      return (info.totalBytes / (1024 * 1024 * 1024)).round();
+  /// Traffic top-up packages from backend (traffic_topup_packages).
+  /// gb = increment to send as traffic_add, priceKopeks = fixed price.
+  List<TrafficTopupPackage> get _topupPackages {
+    final pkgs = widget.options.trafficTopupPackages;
+    debugPrint('[TOPUP] trafficTopupEnabled=${widget.options.trafficTopupEnabled}');
+    debugPrint('[TOPUP] trafficTopupPackages count=${pkgs.length}');
+    for (final p in pkgs) {
+      debugPrint('[TOPUP]   package: gb=${p.gb} price=${p.priceKopeks}');
     }
-    return widget.sub.trafficLimitGb;
+    debugPrint('[TOPUP] availableTopupGb=${widget.options.availableTopupGb}');
+    return pkgs;
   }
 
-  /// Traffic add options derived from backend subscription options.
-  /// We take the first period's traffic options (they already include labels/pricing)
-  /// and keep only positive values. If backend gives nothing – no buttons.
-  List<int> get _trafficOpts {
-    final current = _resolveCurrentTrafficGb();
-    if (current <= 0) return const [];
-    final first = widget.options.periods.firstOrNull;
-    final opts = first?.traffic?.options
-        .map((o) => o.value)
-        .where((v) => v > 0)
-        .toList();
-    if (opts == null || opts.isEmpty) return const [];
-    final additions = opts
-        .where((v) => v > current)
-        .map((v) => v - current)
-        .where((v) => v > 0)
-        .toSet()
-        .toList()
-      ..sort();
-    return additions;
+  /// Price for the currently selected topup package.
+  int? get _trafficPriceKopeks {
+    if (_selectedTrafficValue == null) return null;
+    try {
+      return _topupPackages
+          .firstWhere((p) => p.gb == _selectedTrafficValue)
+          .priceKopeks;
+    } catch (_) {
+      return null;
+    }
   }
 
-  /// Device add options derived from backend subscription options.
-  /// Backend provides absolute device counts; convert them to increments,
-  /// honouring current limit and backend maximum.
+  /// Device add options: convert absolute backend values to increments.
   List<int> get _devicesOpts {
     final current = widget.sub.deviceLimit;
     final first = widget.options.periods.firstOrNull;
@@ -1046,12 +1016,17 @@ class _UpgradeSectionState extends State<_UpgradeSection>
         (cfg.options.isNotEmpty ? cfg.options.reduce((a, b) => a > b ? a : b) : null);
     if (maxCfg != null && current >= maxCfg) return const [];
 
-    final targetOptions = cfg.options.where((v) => v > current && (maxCfg == null || v <= maxCfg)).toList();
-    final additions = targetOptions.map((v) => v - current).where((v) => v > 0).toSet().toList()..sort();
+    final targetOptions = cfg.options
+        .where((v) => v > current && (maxCfg == null || v <= maxCfg))
+        .toList();
+    final additions = targetOptions
+        .map((v) => v - current)
+        .where((v) => v > 0)
+        .toSet()
+        .toList()
+      ..sort();
 
     if (additions.isNotEmpty) return additions;
-
-    // Fallback: offer a single +1 if still below max, otherwise nothing.
     if (maxCfg == null || current < maxCfg) return [1];
     return const [];
   }
@@ -1062,31 +1037,28 @@ class _UpgradeSectionState extends State<_UpgradeSection>
     _tabCtrl = TabController(length: 3, vsync: this)
       ..addListener(() { if (mounted) setState(() => _tab = _tabCtrl.index); });
     if (widget.options.periods.isNotEmpty) _renewPeriodId = widget.options.periods.first.id;
-    _addTrafficGb = _trafficOpts.firstOrNull;
-    _addDevices   = _devicesOpts.firstOrNull;
-    _calcTrafficPrice(_addTrafficGb);
-    _calcDevicesPrice(_addDevices);
-  }
-
-  Future<void> _calcTrafficPrice(int? trafficAdd) async {
-    if (trafficAdd == null) return;
-    if (mounted) setState(() { _calcingTrafficPrice = true; _trafficPriceKopeks = null; });
-    final result = await SubscriptionApiService.calcUpgradePrice(trafficAdd: trafficAdd);
-    if (!mounted) return;
-    setState(() {
-      _calcingTrafficPrice = false;
-      _trafficPriceKopeks = result?.amountKopeks;
-    });
+    // Default: first available topup package
+    _selectedTrafficValue = _topupPackages.firstOrNull?.gb;
+    _addDevices = _devicesOpts.firstOrNull;
+    // Pre-mark all options as loading, then fetch prices
+    _devicesPrices = { for (final d in _devicesOpts) d: null };
+    for (final d in _devicesOpts) {
+      _calcDevicesPrice(d);
+    }
   }
 
   Future<void> _calcDevicesPrice(int? devicesAdd) async {
     if (devicesAdd == null) return;
-    if (mounted) setState(() { _calcingDevicesPrice = true; _devicesPriceKopeks = null; });
+    // Mark as loading
+    if (mounted) setState(() {
+      _devicesPrices = Map.from(_devicesPrices)..[devicesAdd] = null;
+    });
     final result = await SubscriptionApiService.calcUpgradePrice(devicesAdd: devicesAdd);
     if (!mounted) return;
+    // Store result — copy map to force Flutter to detect the change
     setState(() {
-      _calcingDevicesPrice = false;
-      _devicesPriceKopeks = result?.amountKopeks;
+      _devicesPrices = Map.from(_devicesPrices)
+        ..[devicesAdd] = result?.amountKopeks ?? 0;
     });
   }
 
@@ -1120,27 +1092,25 @@ class _UpgradeSectionState extends State<_UpgradeSection>
                 loading: widget.loading,
                 onConfirm: () => widget.onUpgrade(_renewPeriodId!)),
             _AddTrafficTab(
-                currentGb: _resolveCurrentTrafficGb(),
-                selectedAdd: _addTrafficGb, options: _trafficOpts,
-                onSelected: (v) {
-                  setState(() { _addTrafficGb = v; });
-                  _calcTrafficPrice(v);
-                },
-                loading: widget.loading || _calcingTrafficPrice,
+                packages: _topupPackages,
+                selectedGb: _selectedTrafficValue,
+                onSelected: (gb) => setState(() => _selectedTrafficValue = gb),
+                loading: widget.loading,
                 amountKopeks: _trafficPriceKopeks,
-                onConfirm: _addTrafficGb == null
+                onConfirm: _selectedTrafficValue == null
                     ? null
-                    : () => widget.onUpgrade(null, trafficAdd: _addTrafficGb)),
+                // gb IS the increment — send directly as traffic_add
+                    : () => widget.onUpgrade(null,
+                    trafficAdd: _selectedTrafficValue)),
             _AddDevicesTab(
                 currentDevices: widget.sub.deviceLimit,
-                selectedAdd: _addDevices, options: _devicesOpts,
-                onSelected: (v) {
-                  setState(() { _addDevices = v; });
-                  _calcDevicesPrice(v);
-                },
-                loading: widget.loading || _calcingDevicesPrice,
-                amountKopeks: _devicesPriceKopeks,
-                onConfirm: _addDevices == null
+                selectedAdd: _addDevices,
+                options: _devicesOpts,
+                allPrices: _devicesPrices,
+                onSelected: (v) => setState(() => _addDevices = v),
+                loading: widget.loading,
+                onConfirm: (_addDevices == null ||
+                    _devicesPrices[_addDevices] == null)
                     ? null
                     : () => widget.onUpgrade(null, devicesAdd: _addDevices)),
           ][_tab],
@@ -1158,8 +1128,6 @@ class _StatusStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Prefer real-time Remnawave subscription info for the traffic limit — it
-    // stays correct immediately after a top-up, unlike the cached /me value.
     final remnaInfo = RemnawaveService.lastSubscriptionInfo;
     final traffic = (remnaInfo != null && remnaInfo.totalBytes > 0)
         ? remnaInfo.formattedTotal
@@ -1268,114 +1236,546 @@ class _RenewTab extends StatelessWidget {
         ? options.periods.firstWhere((p) => p.id == selectedPeriodId,
         orElse: () => options.periods.first)
         : null;
-    return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _RowLabel(icon: Icons.calendar_month_rounded, label: 'Выберите период продления'),
-      const SizedBox(height: 12),
-      _PeriodList(options: options, selectedPeriodId: selectedPeriodId,
-          onSelected: onPeriodSelected),
-      if (sel != null) ...[
-        const SizedBox(height: 14),
-        _InfoNote(text: 'Срок подписки будет продлён на ${sel.label}'),
-        const SizedBox(height: 14),
-      ] else const SizedBox(height: 14),
-      _BuyButton(
-          loading: loading,
-          onPressed: selectedPeriodId != null ? onConfirm : () {},
-          totalKopeks: sel?.basePriceKopeks,
-          hasEnoughBalance: true),
-    ]));
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+      // ── Single card: header + period rows + button ───────────────────
+      _Card(padding: EdgeInsets.zero, child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+
+          // Header with selected price
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+            child: Row(children: [
+              Container(
+                  width: 38, height: 38,
+                  decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                          colors: [_DS.violet, _DS.violetDim],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight),
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [BoxShadow(
+                          color: _DS.violet.withValues(alpha: 0.30),
+                          blurRadius: 8, offset: const Offset(0, 3))]),
+                  child: const Icon(Icons.refresh_rounded,
+                      color: Colors.white, size: 18)),
+              const SizedBox(width: 12),
+              const Expanded(child: Text('Продление подписки',
+                  style: TextStyle(color: _DS.textPrimary, fontSize: 15,
+                      fontWeight: FontWeight.w700))),
+              // Live price pill — updates as user picks period
+              if (sel != null)
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: Container(
+                    key: ValueKey(sel.id),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                        color: _DS.violet.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: _DS.violet.withValues(alpha: 0.35))),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                            '${(sel.basePriceKopeks / 100).toStringAsFixed(0)} ₽',
+                            style: const TextStyle(
+                                color: _DS.violet, fontSize: 15,
+                                fontWeight: FontWeight.w800)),
+                        if (sel.discountPercent > 0)
+                          Text(
+                              '${((sel.basePriceKopeks / 100) / (1 - sel.discountPercent / 100)).toStringAsFixed(0)} ₽',
+                              style: const TextStyle(
+                                  color: _DS.textMuted, fontSize: 10,
+                                  decoration: TextDecoration.lineThrough)),
+                      ],
+                    ),
+                  ),
+                ),
+            ]),
+          ),
+
+          const Divider(height: 1, color: _DS.border),
+
+          // Period rows — inline, no wrapping card
+          ...options.periods.asMap().entries.map((e) {
+            final i      = e.key;
+            final period = e.value;
+            final isSelected = period.id == selectedPeriodId;
+            final isBest = options.periods
+                .where((p) => p.discountPercent > 0)
+                .fold<PeriodOption?>(null, (best, p) =>
+            best == null || p.discountPercent > best.discountPercent
+                ? p : best)
+                ?.id == period.id;
+            final priceRub = period.basePriceKopeks / 100;
+            final isLast = i == options.periods.length - 1;
+
+            return Column(mainAxisSize: MainAxisSize.min, children: [
+              GestureDetector(
+                onTap: () => onPeriodSelected(period.id),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 13),
+                  decoration: BoxDecoration(
+                      color: isSelected
+                          ? _DS.violet.withValues(alpha: 0.08)
+                          : Colors.transparent),
+                  child: Row(children: [
+                    // Radio
+                    AnimatedContainer(
+                        duration: const Duration(milliseconds: 180),
+                        width: 20, height: 20,
+                        decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: isSelected ? _DS.violet : _DS.border,
+                                width: isSelected ? 5.5 : 2),
+                            color: isSelected
+                                ? _DS.surface0 : Colors.transparent)),
+                    const SizedBox(width: 12),
+                    // Label
+                    Expanded(child: Row(children: [
+                      Text(period.label, style: TextStyle(
+                          color: isSelected
+                              ? _DS.textPrimary : _DS.textSecondary,
+                          fontSize: 14, fontWeight: FontWeight.w600)),
+                      if (isBest) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                                color: _DS.emerald.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color: _DS.emerald.withValues(alpha: 0.3))),
+                            child: const Text('Выгодно', style: TextStyle(
+                                color: _DS.emerald, fontSize: 9,
+                                fontWeight: FontWeight.w700))),
+                      ],
+                    ])),
+                    // Price
+                    Column(crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text('${priceRub.toStringAsFixed(0)} ₽',
+                              style: TextStyle(
+                                  color: isSelected
+                                      ? _DS.violet : _DS.textPrimary,
+                                  fontSize: 15, fontWeight: FontWeight.w700)),
+                          if (period.discountPercent > 0)
+                            Text(
+                                '${(priceRub / (1 - period.discountPercent / 100)).toStringAsFixed(0)} ₽',
+                                style: const TextStyle(
+                                    color: _DS.textMuted, fontSize: 10,
+                                    decoration: TextDecoration.lineThrough)),
+                        ]),
+                  ]),
+                ),
+              ),
+              if (!isLast) const Divider(height: 1, color: _DS.border),
+            ]);
+          }),
+
+          const Divider(height: 1, color: _DS.border),
+
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: _BuyButton(
+                loading: loading,
+                onPressed: selectedPeriodId != null ? onConfirm : null,
+                totalKopeks: sel?.basePriceKopeks,
+                hasEnoughBalance: true),
+          ),
+        ],
+      )),
+    ]);
   }
 }
 
+
 // ── Add traffic tab ───────────────────────────────────────────────────────────
 
+// ── Traffic plan switcher ─────────────────────────────────────────────────────
+// Shows all traffic options as radio-row cards with the price for each.
+// The current plan is highlighted but not selectable (already active).
+// Price comes directly from TrafficOption.priceKopeks — no API call needed.
+
 class _AddTrafficTab extends StatelessWidget {
-  final int currentGb; final int? selectedAdd;
-  final List<int> options;
+  final List<TrafficTopupPackage> packages;
+  final int? selectedGb;       // selected package gb value
   final ValueChanged<int> onSelected;
-  final bool loading; final VoidCallback? onConfirm;
+  final bool loading;
+  final VoidCallback? onConfirm;
   final int? amountKopeks;
-  const _AddTrafficTab({required this.currentGb, required this.selectedAdd,
-    required this.options, required this.onSelected,
-    required this.loading, required this.onConfirm, this.amountKopeks});
+
+  const _AddTrafficTab({
+    required this.packages,
+    required this.selectedGb,
+    required this.onSelected,
+    required this.loading,
+    required this.onConfirm,
+    this.amountKopeks,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (options.isEmpty) {
-      return _Card(child: Column(
+    if (packages.isEmpty) {
+      return _Card(child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          _RowLabel(icon: Icons.data_usage_rounded, label: 'Добавить трафик'),
+        children: [
+          _RowLabel(icon: Icons.data_usage_rounded, label: 'Докупить трафик'),
           SizedBox(height: 10),
-          _InfoNote(text: 'Дополнительные пакеты трафика недоступны для вашей подписки.'),
+          _InfoNote(text: 'Докупка трафика недоступна для вашей подписки.'),
         ],
       ));
     }
 
-    final current = currentGb == 0 ? '∞ ГБ' : '$currentGb ГБ';
-    final after   = selectedAdd != null
-        ? (currentGb == 0 ? '∞ ГБ' : '${currentGb + selectedAdd!} ГБ') : '—';
-    return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _RowLabel(icon: Icons.data_usage_rounded, label: 'Добавить трафик'),
-      const SizedBox(height: 12),
-      _OptionChips<int>(
-          options: options.map((gb) => _OItem<int>(value: gb, label: '+$gb ГБ')).toList(),
-          selected: selectedAdd, onSelected: onSelected, accent: _DS.sky),
-      const SizedBox(height: 12),
-      _BeforeAfter(icon: Icons.data_usage_rounded, label: 'Трафик',
-          before: current, after: after, color: _DS.sky),
-      const SizedBox(height: 14),
-      _BuyButton(loading: loading, onPressed: onConfirm,
-          totalKopeks: amountKopeks, hasEnoughBalance: true),
-    ]));
+    return _Card(padding: EdgeInsets.zero, child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Header ────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+          child: Row(children: [
+            Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                    color: _DS.sky.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(9)),
+                child: const Icon(Icons.add_circle_outline_rounded,
+                    color: _DS.sky, size: 18)),
+            const SizedBox(width: 10),
+            const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Докупить трафик', style: TextStyle(
+                    color: _DS.textPrimary, fontSize: 14,
+                    fontWeight: FontWeight.w700)),
+                Text('Добавляется к текущему лимиту',
+                    style: TextStyle(color: _DS.textMuted, fontSize: 11)),
+              ],
+            )),
+          ]),
+        ),
+        const Divider(height: 1, color: _DS.border),
+
+        // ── Package rows ───────────────────────────────────────────────
+        ...packages.asMap().entries.map((e) {
+          final i   = e.key;
+          final pkg = e.value;
+          final sel = pkg.gb == selectedGb;
+          final isLast = i == packages.length - 1;
+          final hasDiscount = pkg.discountPercent > 0;
+
+          return Column(mainAxisSize: MainAxisSize.min, children: [
+            GestureDetector(
+              onTap: () => onSelected(pkg.gb),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                    color: sel
+                        ? _DS.sky.withValues(alpha: 0.08)
+                        : Colors.transparent),
+                child: Row(children: [
+                  // Radio
+                  AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 20, height: 20,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: sel ? _DS.sky : _DS.border,
+                              width: sel ? 5.5 : 2),
+                          color: sel ? _DS.surface0 : Colors.transparent)),
+                  const SizedBox(width: 12),
+
+                  // GB label + discount badge
+                  Expanded(child: Row(children: [
+                    Text('+${pkg.gb} ГБ', style: TextStyle(
+                        color: sel ? _DS.textPrimary : _DS.textSecondary,
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+                    if (hasDiscount) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                              color: _DS.amber.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                  color: _DS.amber.withValues(alpha: 0.3))),
+                          child: Text('−${pkg.discountPercent}%',
+                              style: const TextStyle(
+                                  color: _DS.amber, fontSize: 9,
+                                  fontWeight: FontWeight.w700))),
+                    ],
+                  ])),
+
+                  // Price chip
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                        gradient: sel
+                            ? const LinearGradient(
+                            colors: [_DS.sky, Color(0xFF0EA5E9)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight)
+                            : null,
+                        color: sel ? null : _DS.surface2,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: sel
+                                ? _DS.sky.withValues(alpha: 0.4)
+                                : _DS.border)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                            pkg.priceLabel.isNotEmpty
+                                ? pkg.priceLabel
+                                : '${(pkg.priceKopeks / 100).toStringAsFixed(0)} ₽',
+                            style: TextStyle(
+                                color: sel ? Colors.white : _DS.textMuted,
+                                fontSize: 11, fontWeight: FontWeight.w700)),
+                        if (hasDiscount &&
+                            pkg.originalPriceKopeks != null) ...[
+                          Text(
+                              '${(pkg.originalPriceKopeks! / 100).toStringAsFixed(0)} ₽',
+                              style: TextStyle(
+                                  color: sel
+                                      ? Colors.white60
+                                      : _DS.textMuted.withValues(alpha: 0.6),
+                                  fontSize: 9,
+                                  decoration: TextDecoration.lineThrough)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+            if (!isLast) const Divider(height: 1, color: _DS.border),
+          ]);
+        }),
+
+        const Divider(height: 1, color: _DS.border),
+
+        // ── Button ─────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: _BuyButton(
+            loading: loading,
+            onPressed: onConfirm,
+            totalKopeks: amountKopeks,
+            hasEnoughBalance: true,
+          ),
+        ),
+      ],
+    ));
   }
 }
+
 
 // ── Add devices tab ───────────────────────────────────────────────────────────
 
 class _AddDevicesTab extends StatelessWidget {
-  final int currentDevices; final int? selectedAdd;
+  final int currentDevices;
+  final int? selectedAdd;
   final List<int> options;
+  final Map<int, int?> allPrices; // null = loading, int = kopeks
   final ValueChanged<int> onSelected;
-  final bool loading; final VoidCallback? onConfirm;
-  final int? amountKopeks;
-  const _AddDevicesTab({required this.currentDevices, required this.selectedAdd,
-    required this.options, required this.onSelected,
-    required this.loading, required this.onConfirm, this.amountKopeks});
+  final bool loading;
+  final VoidCallback? onConfirm;
+
+  const _AddDevicesTab({
+    required this.currentDevices, required this.selectedAdd,
+    required this.options, required this.allPrices,
+    required this.onSelected, required this.loading,
+    required this.onConfirm,
+  });
 
   @override
   Widget build(BuildContext context) {
     if (options.isEmpty) {
-      return _Card(child: Column(
+      return _Card(child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          _RowLabel(icon: Icons.devices_rounded, label: 'Добавить устройства'),
+        children: [
+          _RowLabel(icon: Icons.devices_rounded, label: 'Устройства'),
           SizedBox(height: 10),
-          _InfoNote(text: 'Лимит устройств уже достигнут — добавление недоступно.'),
+          _InfoNote(text: 'Лимит устройств уже достигнут для вашего тарифа.'),
         ],
       ));
     }
 
-    final after = selectedAdd != null ? '${currentDevices + selectedAdd!}' : '—';
-    return _Card(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _RowLabel(icon: Icons.devices_rounded, label: 'Добавить устройства'),
-      const SizedBox(height: 12),
-      _OptionChips<int>(
-          options: options.map((d) => _OItem<int>(value: d, label: '+$d')).toList(),
-          selected: selectedAdd, onSelected: onSelected, accent: _DS.violet),
-      const SizedBox(height: 12),
-      _BeforeAfter(icon: Icons.devices_rounded, label: 'Устройства',
-          before: '$currentDevices', after: after, color: _DS.violet),
-      const SizedBox(height: 14),
-      _BuyButton(loading: loading, onPressed: onConfirm,
-          totalKopeks: amountKopeks, hasEnoughBalance: true),
-    ]));
+    final selectedPrice = selectedAdd != null ? allPrices[selectedAdd] : null;
+
+    return _Card(padding: EdgeInsets.zero, child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Header ──────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+          child: Row(children: [
+            Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                    color: _DS.violet.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(9)),
+                child: const Icon(Icons.devices_rounded, color: _DS.violet, size: 17)),
+            const SizedBox(width: 10),
+            const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Добавить устройства', style: TextStyle(
+                    color: _DS.textPrimary, fontSize: 14,
+                    fontWeight: FontWeight.w700)),
+                Text('Увеличение числа подключений',
+                    style: TextStyle(color: _DS.textMuted, fontSize: 11)),
+              ],
+            )),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                  color: _DS.violet.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: _DS.violet.withValues(alpha: 0.3))),
+              child: Text('$currentDevices устр. сейчас',
+                  style: const TextStyle(color: _DS.violet, fontSize: 11,
+                      fontWeight: FontWeight.w600)),
+            ),
+          ]),
+        ),
+        const Divider(height: 1, color: _DS.border),
+
+        // ── Option rows ──────────────────────────────────────────────
+        ...options.asMap().entries.map((e) {
+          final i          = e.key;
+          final add        = e.value;
+          final isSelected = add == selectedAdd;
+          final target     = currentDevices + add;
+          final isLast     = i == options.length - 1;
+
+          // allPrices[add]: null = still loading, 0+ = loaded
+          final priceEntry = allPrices[add];
+          final String priceLabel;
+          if (!allPrices.containsKey(add)) {
+            priceLabel = '…';
+          } else if (priceEntry == null) {
+            priceLabel = '…';
+          } else if (priceEntry == 0) {
+            priceLabel = 'Бесплатно';
+          } else {
+            priceLabel = '${(priceEntry / 100).toStringAsFixed(0)} ₽';
+          }
+
+          final bool priceReady = priceEntry != null;
+
+          return Column(mainAxisSize: MainAxisSize.min, children: [
+            GestureDetector(
+              onTap: () => onSelected(add),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                    color: isSelected
+                        ? _DS.violet.withValues(alpha: 0.08)
+                        : Colors.transparent),
+                child: Row(children: [
+                  // Radio
+                  AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 20, height: 20,
+                      decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: isSelected ? _DS.violet : _DS.border,
+                              width: isSelected ? 5.5 : 2),
+                          color: isSelected ? _DS.surface0 : Colors.transparent)),
+                  const SizedBox(width: 12),
+
+                  // Label + arrow
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('+ $add ${_deviceWord(add)}', style: TextStyle(
+                          color: isSelected ? _DS.textPrimary : _DS.textSecondary,
+                          fontSize: 15, fontWeight: FontWeight.w600)),
+                      Text('$currentDevices → $target устр.',
+                          style: TextStyle(
+                              color: isSelected
+                                  ? _DS.violet.withValues(alpha: 0.8)
+                                  : _DS.textMuted,
+                              fontSize: 11)),
+                    ],
+                  )),
+
+                  // Price chip — ALL options, gradient on selected
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                        gradient: isSelected && priceReady && (priceEntry ?? 0) > 0
+                            ? const LinearGradient(
+                            colors: [_DS.violet, _DS.violetDim],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight)
+                            : null,
+                        color: isSelected && priceReady && (priceEntry ?? 1) == 0
+                            ? _DS.emerald.withValues(alpha: 0.12)
+                            : _DS.surface2,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: isSelected && priceReady
+                                ? _DS.violet.withValues(alpha: 0.4)
+                                : _DS.border)),
+                    child: Text(priceLabel, style: TextStyle(
+                        color: isSelected && priceReady
+                            ? ((priceEntry ?? 0) > 0 ? Colors.white : _DS.emerald)
+                            : _DS.textMuted,
+                        fontSize: 11, fontWeight: FontWeight.w700)),
+                  ),
+                ]),
+              ),
+            ),
+            if (!isLast) const Divider(height: 1, color: _DS.border),
+          ]);
+        }),
+
+        const Divider(height: 1, color: _DS.border),
+
+        Padding(
+          padding: const EdgeInsets.all(14),
+          child: _BuyButton(
+            loading: loading,
+            onPressed: onConfirm,
+            totalKopeks: selectedPrice,
+            hasEnoughBalance: true,
+          ),
+        ),
+      ],
+    ));
+  }
+
+  String _deviceWord(int n) {
+    final m = n % 10, m100 = n % 100;
+    if (m100 >= 11 && m100 <= 19) return 'устройств';
+    if (m == 1) return 'устройство';
+    if (m >= 2 && m <= 4) return 'устройства';
+    return 'устройств';
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared small widgets
-// ─────────────────────────────────────────────────────────────────────────────
 
 class _BeforeAfter extends StatelessWidget {
   final IconData icon; final String label;

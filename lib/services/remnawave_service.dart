@@ -54,6 +54,18 @@ class RemnawaveService {
     await prefs.setString(_prefSubscriptionUrl, url.trim());
   }
 
+  /// Clears cached nodes, subscription info and selection while keeping
+  /// user-specific data like subscription URL and HWID.
+  static Future<void> clearCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_prefSubscriptionUrl);
+    await prefs.remove(_prefCachedNodes);
+    await prefs.remove(_prefCachedSubscriptionInfo);
+    await prefs.remove(_prefSelectedNodeUUID);
+    _lastSubscriptionInfo = null;
+    _lastFetchWasFromCache = false;
+  }
+
   // ── Device HWID ───────────────────────────────────────────────────────────
 
   /// Returns the stable hardware ID for this device installation.
@@ -112,7 +124,7 @@ class RemnawaveService {
     }
 
     return {
-      'User-Agent': 'Happ/1.5.1/Ulya/1.2.1',
+      'User-Agent': 'Happ/1.5.1/Ulya/1.1.0',
       'X-HWID': hwid,
       'X-Ver-OS': osVersion,
       'X-Device-OS': platform,
@@ -297,14 +309,6 @@ class RemnawaveService {
       debugPrint('RemnawaveService: failed to load cache: $e');
       return [];
     }
-  }
-
-  static Future<void> clearCache() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_prefSubscriptionUrl);
-    await prefs.remove(_prefCachedNodes);
-    await prefs.remove(_prefCachedSubscriptionInfo);
-    await prefs.remove(_prefSelectedNodeUUID);
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
