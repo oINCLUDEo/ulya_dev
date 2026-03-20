@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../config/app_config.dart';
 import '../services/app_logger.dart';
 import '../services/apps_repository.dart';
 import '../utils/core_info_parser.dart';
+import '../services/remnawave_service.dart';
 import '../main.dart' show DS;
 import 'logs_page.dart';
 import 'support_page.dart';
@@ -300,6 +302,13 @@ class _SettingsPageState extends State<SettingsPage> {
                 value: 'Скопировать логи для обращения в поддержку',
                 onTap: _sendDiagnostics,
               ),
+              const Divider(height: 1, color: DS.border),
+              _SettingsTile(
+                icon: Icons.cached_rounded,
+                label: 'Очистить кэш',
+                value: 'Сбросить сохранённые данные и лимиты',
+                onTap: _clearCache,
+              ),
             ]),
           )),
           _gap,
@@ -462,6 +471,11 @@ class _SettingsPageState extends State<SettingsPage> {
   void _clearLogs() {
     appLogger.clear();
     _snack('Логи очищены');
+  }
+
+  Future<void> _clearCache() async {
+    await RemnawaveService.clearCache();
+    _snack('Кэш очищен');
   }
 
   Future<void> _openTickets() async {
