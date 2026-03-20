@@ -10,9 +10,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
-// meNotifier is used to sync subscription URL from live /me data
-import '../services/auth_state.dart';
-import 'me_service.dart';
 
 /// Service that fetches and parses the user's personal subscription URL.
 ///
@@ -57,31 +54,11 @@ class RemnawaveService {
     await prefs.setString(_prefSubscriptionUrl, url.trim());
   }
 
-  /// Returns the subscription URL, preferring the live value from [meNotifier]
-  /// over the SharedPreferences cache.
-  ///
-  /// This ensures the URL is always current even after [clearCache] was called
-  /// while the user remained logged in.
-  static Future<String> _resolveSubscriptionUrl() async {
-    // 1. Try live value from /me response (in-memory, always fresh)
-    final liveUrl = meNotifier.value?.subscription?.subscriptionUrl ?? '';
-    if (liveUrl.isNotEmpty) {
-      // Persist so future cold-starts work without a /me round-trip
-      await saveSubscriptionUrl(liveUrl);
-      return liveUrl;
-    }
-    // 2. Fall back to whatever is stored in SharedPreferences
-    return getSubscriptionUrl();
-  }
-
-  /// Clears only derived/cached data.  Intentionally preserves
-  /// [_prefSubscriptionUrl] and [_prefHwid] — these are user credentials
-  /// that should survive cache invalidation.
+  /// Clears cached nodes, subscription info and selection while keeping
+  /// user-specific data like subscription URL and HWID.
   static Future<void> clearCache() async {
     final prefs = await SharedPreferences.getInstance();
-    // NOTE: _prefSubscriptionUrl is intentionally NOT removed here.
-    // Removing it while the user is logged in causes fetchNodes() to return []
-    // because meNotifier may not be populated yet on the next cold start.
+    await prefs.remove(_prefSubscriptionUrl);
     await prefs.remove(_prefCachedNodes);
     await prefs.remove(_prefCachedSubscriptionInfo);
     await prefs.remove(_prefSelectedNodeUUID);
@@ -91,17 +68,25 @@ class RemnawaveService {
 
   // ── Device HWID ───────────────────────────────────────────────────────────
 
+  /// Returns the stable hardware ID for this device installation.
+  ///
+  /// On first call a random UUID-v4-like string is generated and persisted in
+  /// SharedPreferences.  Subsequent calls return the same value so the
+  /// subscription server sees a consistent device identity.
   static Future<String> getOrCreateHwid() async {
     final prefs = await SharedPreferences.getInstance();
     final existing = prefs.getString(_prefHwid);
     if (existing != null && existing.isNotEmpty) return existing;
+
     final hwid = _generateUuid();
     await prefs.setString(_prefHwid, hwid);
     return hwid;
   }
 
+  /// Generates a random UUID v4 string without external dependencies.
   static String _generateUuid() {
     final bytes = List<int>.generate(16, (_) => _rng.nextInt(256));
+    // Set version bits (v4) and variant bits per RFC 4122.
     bytes[6] = (bytes[6] & 0x0F) | 0x40;
     bytes[8] = (bytes[8] & 0x3F) | 0x80;
     String h(int b) => b.toRadixString(16).padLeft(2, '0');
@@ -117,9 +102,11 @@ class RemnawaveService {
   static Future<Map<String, String>> _getDeviceHeaders() async {
     final deviceInfo = DeviceInfoPlugin();
     final hwid = await getOrCreateHwid();
+
     String osVersion = '';
     String deviceModel = '';
     String platform = '';
+
     try {
       if (Platform.isAndroid) {
         final androidInfo = await deviceInfo.androidInfo;
@@ -135,6 +122,7 @@ class RemnawaveService {
     } catch (e) {
       debugPrint('RemnawaveService: failed to get device info: $e');
     }
+
     return {
       'User-Agent': 'Happ/1.5.1/Ulya/1.1.0',
       'X-HWID': hwid,
@@ -148,13 +136,11 @@ class RemnawaveService {
 
   /// Fetches the subscription URL and returns a list of [ServerNode]s.
   ///
-  /// Uses [_resolveSubscriptionUrl] to always prefer the live URL from
-  /// [meNotifier] over the cached value — this fixes the case where
-  /// [clearCache] was called while the user remained logged in.
+  /// Returns an empty list when no subscription URL is configured or on error.
+  /// On success, nodes are cached in SharedPreferences.
+  /// On error, cached nodes are returned if available.
   static Future<List<ServerNode>> fetchNodes() async {
-    // KEY FIX: use _resolveSubscriptionUrl() instead of getSubscriptionUrl()
-    // so that a logged-in user with a cleared cache still gets their servers.
-    final subUrl = await _resolveSubscriptionUrl();
+    final subUrl = await getSubscriptionUrl();
     if (subUrl.isEmpty) return [];
 
     final uri = Uri.tryParse(subUrl);
@@ -162,8 +148,11 @@ class RemnawaveService {
 
     try {
       final headers = await _getDeviceHeaders();
-      final response = await http.get(uri, headers: headers)
-          .timeout(const Duration(seconds: 15));
+
+      final response = await http.get(
+        uri,
+        headers: headers,
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
         debugPrint('RemnawaveService: subscription returned ${response.statusCode}');
@@ -171,12 +160,15 @@ class RemnawaveService {
       }
 
       _lastSubscriptionInfo = _parseSubscriptionInfo(response.headers);
+
       final lines = _parseSubscriptionBody(response.body);
       final nodes = lines
           .map(_parseConfigLink)
           .whereType<ServerNode>()
           .toList();
       debugPrint('RemnawaveService: loaded ${nodes.length} nodes');
+
+      // Persist to cache for offline use.
       await _saveToCache(nodes, _lastSubscriptionInfo);
       _lastFetchWasFromCache = false;
       return nodes;
@@ -188,29 +180,47 @@ class RemnawaveService {
 
   // ── Public catalog (no subscription required) ─────────────────────────────
 
+  /// Fetches the public server catalog from the mobile API backend.
+  ///
+  /// Called when no personal subscription URL is configured.
+  /// These servers are for preview only — [ServerNode.link] is `null` and
+  /// [ServerNode.isDisabled] is `true`, so they cannot be used to connect.
   static Future<List<ServerNode>> fetchPublicServers() async {
     final url = '${AppConfig.backendBaseUrl}/mobile/v1/servers';
     final uri = Uri.tryParse(url);
     if (uri == null) return [];
+
     try {
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      final response = await http
+          .get(uri)
+          .timeout(const Duration(seconds: 15));
+
       if (response.statusCode != 200) {
         debugPrint('RemnawaveService: public servers returned ${response.statusCode}');
         return [];
       }
+
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final list = body['servers'] as List<dynamic>? ?? [];
       final nodes = list.map((e) {
         final serverJson = Map<String, dynamic>.from(e as Map<String, dynamic>);
+
         final rawName = serverJson['name']?.toString() ?? '';
+
         if ((serverJson['countryCode'] == null || serverJson['countryCode'].toString().isEmpty) &&
             rawName.isNotEmpty) {
           final code = _countryCodeFromName(rawName);
-          if (code.isNotEmpty) serverJson['countryCode'] = code;
+          if (code.isNotEmpty) {
+            serverJson['countryCode'] = code;
+          }
         }
-        serverJson['name'] = _cleanServerName(rawName);
+
+        final cleanName = _cleanServerName(rawName);
+        serverJson['name'] = cleanName;
+
         return ServerNode.fromJson(serverJson);
       }).toList();
+
       debugPrint('RemnawaveService: loaded ${nodes.length} public servers');
       return nodes;
     } catch (e) {
@@ -219,23 +229,38 @@ class RemnawaveService {
     }
   }
 
+  // ── НОВАЯ ФУНКЦИЯ: Очистка имени от флага ─────────────────────────────────
+
+  /// Удаляет флаг из начала имени сервера
+  /// Например: "🇷🇺 Russia" -> "Russia", "🇩🇪 DE-01" -> "DE-01"
   static String _cleanServerName(String name) {
     if (name.isEmpty) return name;
+
     final runes = name.runes.toList();
+
+    // Проверяем, начинается ли имя с флага (2 символа-флага)
     if (runes.length >= 2) {
       final a = runes[0];
       final b = runes[1];
+
+      // Проверяем, что это региональные индикаторы (флаги)
       if (a >= 0x1F1E6 && a <= 0x1F1FF && b >= 0x1F1E6 && b <= 0x1F1FF) {
+        // Пропускаем флаг (2 символа) и следующий пробел, если есть
         int startIndex = 2;
+
+        // Пропускаем пробелы после флага
         while (startIndex < runes.length &&
             (runes[startIndex] == 0x20 || runes[startIndex] == 0x200B)) {
           startIndex++;
         }
+
+        // Если после флага есть символы, возвращаем оставшуюся часть
         if (startIndex < runes.length) {
           return String.fromCharCodes(runes.sublist(startIndex));
         }
       }
     }
+
     return name;
   }
 
@@ -258,6 +283,8 @@ class RemnawaveService {
 
   static Future<List<ServerNode>> _loadFromCache() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Restore subscription info from cache.
     final cachedInfoRaw = prefs.getString(_prefCachedSubscriptionInfo);
     if (cachedInfoRaw != null) {
       try {
@@ -266,6 +293,8 @@ class RemnawaveService {
         );
       } catch (_) {}
     }
+
+    // Restore nodes from cache.
     final cachedNodesRaw = prefs.getString(_prefCachedNodes);
     if (cachedNodesRaw == null) return [];
     try {
@@ -284,14 +313,23 @@ class RemnawaveService {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
+  /// Parses the raw subscription body into individual config-link strings.
+  ///
+  /// Remnawave (and most panels) return configs as either:
+  ///  - Plain text: one link per line
+  ///  - Base64-encoded text: decode first, then one link per line
   static List<String> _parseSubscriptionBody(String body) {
     body = body.trim();
     if (body.isEmpty) return [];
+
+    // Attempt base64 decode first.
     try {
+      // Base64 may use standard or URL-safe alphabet; add padding if needed.
       String b64 = body.replaceAll('\n', '').replaceAll('\r', '');
       final padding = b64.length % 4;
       if (padding != 0) b64 += '=' * (4 - padding);
       final decoded = utf8.decode(base64.decode(b64));
+      // If the decoded string looks like VPN config links, use it.
       if (decoded.contains('://')) {
         debugPrint('RemnawaveService: parsed as base64 (${decoded.split('\n').length} lines)');
         return decoded
@@ -300,7 +338,10 @@ class RemnawaveService {
             .where((l) => l.isNotEmpty)
             .toList();
       }
-    } catch (_) {}
+    } catch (_) {
+      // Not base64 — fall through to plain-text parsing.
+    }
+
     debugPrint('RemnawaveService: parsed as plain text');
     return body
         .split(RegExp(r'\r?\n'))
@@ -309,10 +350,14 @@ class RemnawaveService {
         .toList();
   }
 
+  /// Parses the `Subscription-Userinfo` header into a [SubscriptionInfo].
+  ///
+  /// Standard format: `upload=131072; download=1048576; total=1073741824; expire=1893427200`
   static SubscriptionInfo? _parseSubscriptionInfo(Map<String, String> headers) {
     final raw = headers['subscription-userinfo'] ??
         headers['x-subscription-userinfo'];
     if (raw == null || raw.isEmpty) return null;
+
     final values = <String, int>{};
     for (final part in raw.split(';')) {
       final eq = part.indexOf('=');
@@ -321,10 +366,12 @@ class RemnawaveService {
       final val = int.tryParse(part.substring(eq + 1).trim());
       if (val != null) values[key] = val;
     }
+
     final upload = values['upload'] ?? 0;
     final download = values['download'] ?? 0;
     final total = values['total'] ?? 0;
     final expireEpoch = values['expire'];
+
     return SubscriptionInfo(
       uploadBytes: upload,
       downloadBytes: download,
@@ -336,44 +383,68 @@ class RemnawaveService {
   }
 
   static ({String name, String? description}) _parseFragment(
-      String fragment, String fallbackHost) {
-    if (fragment.isEmpty) return (name: fallbackHost, description: null);
+      String fragment,
+      String fallbackHost,
+      ) {
+    if (fragment.isEmpty) {
+      return (name: fallbackHost, description: null);
+    }
+
     final parts = fragment.split('?');
+
     final rawName = parts.first.trim();
     final name = Uri.decodeComponent(rawName);
+
     String? description;
+
     if (parts.length > 1) {
       final queryPart = parts.sublist(1).join('?');
+
       try {
         final params = Uri.splitQueryString(queryPart);
+
         final encoded = params['serverDescription'];
         if (encoded != null && encoded.isNotEmpty) {
           description = utf8.decode(base64.decode(encoded));
         }
-      } catch (_) {}
+      } catch (_) {
+        // игнорируем кривой base64 или кривой query
+      }
     }
+
     return (name: name, description: description);
   }
 
+  /// Parses a single VPN config link into a [ServerNode].
+  /// Supported schemes: vless, vmess, trojan, ss, hysteria2, hy2, tuic, wg.
+  /// Returns `null` for unrecognised links.
   static ServerNode? _parseConfigLink(String link) {
     try {
       link = link.trim();
       if (link.isEmpty) return null;
+
       final uri = Uri.parse(link);
       final scheme = uri.scheme.toLowerCase();
+
       const knownSchemes = {
         'vless', 'vmess', 'trojan', 'ss',
         'hysteria2', 'hy2', 'hysteria',
         'tuic', 'wireguard', 'wg',
       };
+
       if (!knownSchemes.contains(scheme)) return null;
+
       final host = uri.host;
       if (host.isEmpty) return null;
+
       final parsed = _parseFragment(uri.fragment, host);
+
       final rawName = parsed.name;
       final cleanName = _cleanServerName(rawName);
+
       final description = parsed.description;
       final countryCode = _countryCodeFromName(rawName);
+
       return ServerNode(
         uuid: link,
         name: cleanName,
@@ -391,7 +462,11 @@ class RemnawaveService {
     }
   }
 
+  /// Extracts a 2-letter ISO country code from a server name heuristically.
+  ///
+  /// Handles patterns like "🇷🇺 Russia", "DE-01", "Netherlands" etc.
   static String _countryCodeFromName(String name) {
+    // Check for flag emoji (regional indicator symbols U+1F1E6–U+1F1FF).
     final runes = name.runes.toList();
     if (runes.length >= 2) {
       final a = runes[0];
@@ -402,6 +477,8 @@ class RemnawaveService {
         return '$letter1$letter2';
       }
     }
+
+    // Common country name → code mapping.
     const map = {
       'russia': 'RU', 'russian': 'RU', 'россия': 'RU',
       'germany': 'DE', 'german': 'DE', 'deutschland': 'DE',
@@ -414,12 +491,16 @@ class RemnawaveService {
       'turkey': 'TR', 'india': 'IN', 'japan': 'JP', 'singapore': 'SG',
       'australia': 'AU', 'brazil': 'BR', 'ukraine': 'UA', 'latvia': 'LV',
     };
+
     final lower = name.toLowerCase();
     for (final entry in map.entries) {
       if (lower.contains(entry.key)) return entry.value;
     }
+
+    // 2-letter prefix pattern: "DE-01", "RU_Server", "US01" etc.
     final prefixMatch = RegExp(r'^([A-Z]{2})[-_\s\d]').firstMatch(name.toUpperCase());
     if (prefixMatch != null) return prefixMatch.group(1)!;
+
     return '';
   }
 }
