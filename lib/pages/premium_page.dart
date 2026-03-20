@@ -61,6 +61,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
   int  _pollAttempt        = 0;
   bool _pollingForPayment  = false;
   bool _pendingPaymentPoll = false;
+  bool _showSuccessOverlay = false; // success animation
   static const int      _maxPollAttempts = 30;
   static const Duration _pollInterval    = Duration(seconds: 4);
 
@@ -205,7 +206,13 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
           periodId: periodId, trafficValue: _selectedTraffic, devices: _selectedDevices);
       if (!mounted) return;
       if (r == null)                          { _snack('Ошибка соединения с сервером', error: true); }
-      else if (r.isSuccess)                   { _snack('Подписка активирована!', error: false); await MeService.refresh(); await _loadOptions(); }
+      else if (r.isSuccess) {
+        setState(() => _showSuccessOverlay = true);
+        await MeService.refresh();
+        await _loadOptions();
+        await Future.delayed(const Duration(milliseconds: 2800));
+        if (mounted) setState(() => _showSuccessOverlay = false);
+      }
       else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
       else                                    { _snack(r.message ?? 'Ошибка при покупке', error: true); }
     } catch (e) { if (mounted) _snack('Ошибка: $e', error: true); }
@@ -219,7 +226,14 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
           periodId: periodId, trafficAdd: trafficAdd, devicesAdd: devicesAdd);
       if (!mounted) return;
       if (r == null)                          { _snack('Ошибка соединения с сервером', error: true); }
-      else if (r.isSuccess)                   { _snack('Подписка улучшена!', error: false); await MeService.refresh(); globalRefreshNotifier.notifyListeners(); await _loadOptions(); }
+      else if (r.isSuccess) {
+        setState(() => _showSuccessOverlay = true);
+        await MeService.refresh();
+        globalRefreshNotifier.notifyListeners();
+        await _loadOptions();
+        await Future.delayed(const Duration(milliseconds: 2800));
+        if (mounted) setState(() => _showSuccessOverlay = false);
+      }
       else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
       else                                    { _snack(r.message ?? 'Ошибка при улучшении', error: true); }
     } catch (e) { if (mounted) _snack('Ошибка: $e', error: true); }
@@ -255,81 +269,85 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
 
     return Scaffold(
       backgroundColor: _DS.surface0,
-      body: RefreshIndicator(
-        color: _DS.violet, backgroundColor: _DS.surface2,
-        onRefresh: _loadOptions,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(child: _Header(hasActiveSub: hasActivePaidSub)),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 120),
-              sliver: SliverList(delegate: SliverChildListDelegate([
+      body: Stack(children: [
+        RefreshIndicator(
+            color: _DS.violet, backgroundColor: _DS.surface2,
+            onRefresh: _loadOptions,
+            child: CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(child: _Header(hasActiveSub: hasActivePaidSub)),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 120),
+                  sliver: SliverList(delegate: SliverChildListDelegate([
 
-                if (!auth.isLoggedIn) ...[
-                  _BenefitsGrid(),
-                  const SizedBox(height: 16),
-                  _NotLoggedInCard(onLoginTap: () => showAuthBottomSheet(context)),
-
-                ] else if (_pollingForPayment) ...[
-                  const SizedBox(height: 40),
-                  const _PaymentPollingCard(),
-
-                ] else if (_loadingOptions && _options == null) ...[
-                  const SizedBox(height: 120),
-                  const Center(child: CircularProgressIndicator(color: _DS.violet, strokeWidth: 2.5)),
-
-                ] else if (_options != null) ...[
-                  _BalanceCard(balanceRub: _options!.balanceRub, currency: _options!.currency),
-                  const SizedBox(height: 20),
-
-                  if (hasActivePaidSub) ...[
-                    _UpgradeSection(
-                      sub: sub,
-                      options: _options!,
-                      onUpgrade: _onUpgradePressed,
-                      loading: _purchasing,
-                    ),
-                  ] else ...[
-                    if (sub == null || sub.isTrial) ...[
+                    if (!auth.isLoggedIn) ...[
                       _BenefitsGrid(),
+                      const SizedBox(height: 16),
+                      _NotLoggedInCard(onLoginTap: () => showAuthBottomSheet(context)),
+
+                    ] else if (_pollingForPayment) ...[
+                      const SizedBox(height: 40),
+                      const _PaymentPollingCard(),
+
+                    ] else if (_loadingOptions && _options == null) ...[
+                      const SizedBox(height: 120),
+                      const Center(child: CircularProgressIndicator(color: _DS.violet, strokeWidth: 2.5)),
+
+                    ] else if (_options != null) ...[
+                      _BalanceCard(balanceRub: _options!.balanceRub, currency: _options!.currency),
                       const SizedBox(height: 20),
+
+                      if (hasActivePaidSub) ...[
+                        _UpgradeSection(
+                          sub: sub,
+                          options: _options!,
+                          onUpgrade: _onUpgradePressed,
+                          loading: _purchasing,
+                        ),
+                      ] else ...[
+                        if (sub == null || sub.isTrial) ...[
+                          _BenefitsGrid(),
+                          const SizedBox(height: 20),
+                        ],
+                        _SectionLabel(sub?.isTrial == true ? 'Переход на платную подписку' : 'Настройте тариф'),
+                        const SizedBox(height: 12),
+                        _SubscriptionBuilderCard(
+                          options: _options!,
+                          selectedPeriodId: _selectedPeriodId,
+                          selectedTraffic: _selectedTraffic,
+                          selectedDevices: _selectedDevices,
+                          onPeriodSelected: _onPeriodSelected,
+                          onTrafficSelected: _onTrafficSelected,
+                          onDevicesSelected: _onDevicesSelected,
+                        ),
+                        const SizedBox(height: 12),
+                        _PricePreviewCard(
+                            calc: _calc, loading: _loadingCalc,
+                            balanceKopeks: _options!.balanceKopeks),
+                        const SizedBox(height: 14),
+                        _BuyButton(
+                            loading: _purchasing || _loadingCalc,
+                            onPressed: _onBuyPressed,
+                            totalKopeks: _calc?.totalKopeks,
+                            hasEnoughBalance: _options!.balanceKopeks >= (_calc?.totalKopeks ?? 0)),
+                        const SizedBox(height: 10),
+                        const _PaymentDisclaimer(),
+                      ],
+
+                    ] else ...[
+                      const SizedBox(height: 60),
+                      _ErrorCard(onRetry: _loadOptions),
                     ],
-                    _SectionLabel(sub?.isTrial == true ? 'Переход на платную подписку' : 'Настройте тариф'),
-                    const SizedBox(height: 12),
-                    _SubscriptionBuilderCard(
-                      options: _options!,
-                      selectedPeriodId: _selectedPeriodId,
-                      selectedTraffic: _selectedTraffic,
-                      selectedDevices: _selectedDevices,
-                      onPeriodSelected: _onPeriodSelected,
-                      onTrafficSelected: _onTrafficSelected,
-                      onDevicesSelected: _onDevicesSelected,
-                    ),
-                    const SizedBox(height: 12),
-                    _PricePreviewCard(
-                        calc: _calc, loading: _loadingCalc,
-                        balanceKopeks: _options!.balanceKopeks),
-                    const SizedBox(height: 14),
-                    _BuyButton(
-                        loading: _purchasing || _loadingCalc,
-                        onPressed: _onBuyPressed,
-                        totalKopeks: _calc?.totalKopeks,
-                        hasEnoughBalance: _options!.balanceKopeks >= (_calc?.totalKopeks ?? 0)),
-                    const SizedBox(height: 10),
-                    const _PaymentDisclaimer(),
-                  ],
 
-                ] else ...[
-                  const SizedBox(height: 60),
-                  _ErrorCard(onRetry: _loadOptions),
-                ],
-
-              ])),
+                  ])),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+        ),// ── Success overlay ──────────────────────────────────────────
+            if (_showSuccessOverlay)
+        _SuccessOverlay(isUpgrade: meNotifier.value?.subscription?.isActive == true),
+      ]),
     );
   }
 }
@@ -578,8 +596,8 @@ class _SubscriptionBuilderCard extends StatelessWidget {
     return _Card(padding: EdgeInsets.zero, child: Column(
         crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-      // Period
-      Padding(padding: const EdgeInsets.fromLTRB(18, 18, 18, 16), child:
+      // ── Period ─────────────────────────────────────────────────────
+      Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 14), child:
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         _RowLabel(icon: Icons.calendar_month_rounded, label: 'Срок подписки'),
         const SizedBox(height: 12),
@@ -588,47 +606,97 @@ class _SubscriptionBuilderCard extends StatelessWidget {
             onSelected: onPeriodSelected),
       ])),
 
-      // Traffic
-      if (hasTraffic) ...[
+      // ── Traffic + Devices in one compact row ───────────────────────
+      if (hasTraffic || hasDevices) ...[
         const Divider(height: 1, color: _DS.border),
-        Padding(padding: const EdgeInsets.fromLTRB(18, 16, 18, 16), child:
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _RowLabel(icon: Icons.data_usage_rounded, label: 'Трафик'),
-          const SizedBox(height: 4),
-          const Text('Объём данных в месяц',
-              style: TextStyle(color: _DS.textMuted, fontSize: 11)),
-          const SizedBox(height: 12),
-          _OptionChips<int>(
-              options: period.traffic!.options.map((t) => _OItem<int>(
-                value: t.value,
-                label: t.value == 0 ? '∞ ГБ' : '${t.value} ГБ',
-                hot: t.isDefault,
-              )).toList(),
-              selected: selectedTraffic,
-              onSelected: onTrafficSelected,
-              accent: _DS.sky),
-        ])),
-      ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Traffic
+              if (hasTraffic)
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _RowLabel(icon: Icons.data_usage_rounded, label: 'Трафик'),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6, runSpacing: 6,
+                      children: period.traffic!.options.map((t) {
+                        final isSel = t.value == selectedTraffic;
+                        final label = t.value == 0 ? '∞' : '${t.value} ГБ';
+                        return GestureDetector(
+                          onTap: () => onTrafficSelected(t.value),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 160),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                                color: isSel
+                                    ? _DS.sky.withValues(alpha: 0.15)
+                                    : _DS.surface2,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color: isSel
+                                        ? _DS.sky
+                                        : _DS.border,
+                                    width: isSel ? 1.5 : 1)),
+                            child: Text(label, style: TextStyle(
+                                color: isSel ? _DS.sky : _DS.textSecondary,
+                                fontSize: 12,
+                                fontWeight: isSel
+                                    ? FontWeight.w700 : FontWeight.w500)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                )),
 
-      // Devices
-      if (hasDevices) ...[
-        const Divider(height: 1, color: _DS.border),
-        Padding(padding: const EdgeInsets.fromLTRB(18, 16, 18, 16), child:
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          _RowLabel(icon: Icons.devices_rounded, label: 'Количество устройств'),
-          const SizedBox(height: 4),
-          const Text('Одновременных подключений',
-              style: TextStyle(color: _DS.textMuted, fontSize: 11)),
-          const SizedBox(height: 12),
-          _OptionChips<int>(
-              options: period.devices!.options.map((d) => _OItem<int>(
-                value: d, label: '$d устр.',
-                hot: d == (period.devices!.defaultValue ?? period.devices!.minimum),
-              )).toList(),
-              selected: selectedDevices,
-              onSelected: onDevicesSelected,
-              accent: _DS.violet),
-        ])),
+              if (hasTraffic && hasDevices)
+                const SizedBox(width: 12),
+
+              // Devices
+              if (hasDevices)
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _RowLabel(icon: Icons.devices_rounded, label: 'Устройства'),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 6, runSpacing: 6,
+                      children: period.devices!.options.map((d) {
+                        final isSel = d == selectedDevices;
+                        return GestureDetector(
+                          onTap: () => onDevicesSelected(d),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 160),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 7),
+                            decoration: BoxDecoration(
+                                color: isSel
+                                    ? _DS.violet.withValues(alpha: 0.15)
+                                    : _DS.surface2,
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                    color: isSel ? _DS.violet : _DS.border,
+                                    width: isSel ? 1.5 : 1)),
+                            child: Text('$d', style: TextStyle(
+                                color: isSel
+                                    ? _DS.violet : _DS.textSecondary,
+                                fontSize: 12,
+                                fontWeight: isSel
+                                    ? FontWeight.w700 : FontWeight.w500)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                )),
+            ],
+          ),
+        ),
       ],
     ]));
   }
@@ -841,46 +909,101 @@ class _PricePreviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final total      = calc?.totalKopeks ?? 0;
-    final totalRub   = calc?.totalRub    ?? 0.0;
-    final fromBal    = total > 0 && balanceKopeks >= total;
+    final total    = calc?.totalKopeks ?? 0;
+    final totalRub = calc?.totalRub    ?? 0.0;
+    final fromBal  = total > 0 && balanceKopeks >= total;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
       decoration: BoxDecoration(
-          gradient: LinearGradient(
-              colors: [_DS.violet.withValues(alpha: 0.1), _DS.surface1],
-              begin: Alignment.topLeft, end: Alignment.bottomRight),
-          borderRadius: BorderRadius.circular(_DS.radius),
-          border: Border.all(color: _DS.violet.withValues(alpha: 0.28))),
-      child: loading
-          ? const Center(child: SizedBox(height: 32, width: 32,
-          child: CircularProgressIndicator(strokeWidth: 2, color: _DS.violet)))
-          : Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('К ОПЛАТЕ', style: TextStyle(color: _DS.textMuted, fontSize: 10,
-              fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-          const SizedBox(height: 4),
-          AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              transitionBuilder: (c, a) => FadeTransition(opacity: a, child: c),
-              child: Text(key: ValueKey(total),
-                  '${totalRub.toStringAsFixed(2)} ₽',
-                  style: const TextStyle(color: _DS.textPrimary, fontSize: 38,
-                      fontWeight: FontWeight.w800, letterSpacing: -1.5, height: 1))),
-        ])),
-        if (total > 0)
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            _PayPill(
-                label: fromBal ? 'С баланса' : 'Онлайн-оплата',
-                color: fromBal ? _DS.emerald : _DS.amber,
-                icon: fromBal ? Icons.check_circle_outline : Icons.credit_card_rounded),
-            if (fromBal) ...[
-              const SizedBox(height: 5),
-              Text('Баланс: ${(balanceKopeks / 100).toStringAsFixed(2)} ₽',
-                  style: const TextStyle(color: _DS.textMuted, fontSize: 10)),
+        gradient: const LinearGradient(
+            colors: [Color(0xFF1A1830), Color(0xFF13121E)],
+            begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(_DS.radius),
+        border: Border.all(color: _DS.violet.withValues(alpha: 0.22)),
+        boxShadow: [BoxShadow(
+            color: _DS.violet.withValues(alpha: 0.10),
+            blurRadius: 28, spreadRadius: -4, offset: const Offset(0, 6))],
+      ),
+      child: Stack(children: [
+        Positioned(
+          top: -15, right: -5,
+          child: Container(
+            width: 90, height: 90,
+            decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(colors: [
+                  _DS.violet.withValues(alpha: 0.15),
+                  Colors.transparent,
+                ])),
+          ),
+        ),
+        loading
+            ? const Center(child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: SizedBox(width: 28, height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2, color: _DS.violet))))
+            : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                      color: _DS.violet.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _DS.violet.withValues(alpha: 0.28))),
+                  child: const Text('К ОПЛАТЕ', style: TextStyle(
+                      color: _DS.violet, fontSize: 9,
+                      fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                ),
+              ]),
+              const SizedBox(height: 10),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (c, a) => FadeTransition(
+                    opacity: a,
+                    child: SlideTransition(
+                        position: Tween(
+                            begin: const Offset(0, 0.1),
+                            end: Offset.zero).animate(a),
+                        child: c)),
+                child: Row(
+                  key: ValueKey(total),
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                        totalRub.toStringAsFixed(0),
+                        style: const TextStyle(
+                            color: _DS.textPrimary, fontSize: 48,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -2, height: 1)),
+                    const Padding(
+                        padding: EdgeInsets.only(bottom: 7, left: 4),
+                        child: Text('₽', style: TextStyle(
+                            color: _DS.textSecondary, fontSize: 20,
+                            fontWeight: FontWeight.w600))),
+                  ],
+                ),
+              ),
             ],
-          ]),
+          )),
+          if (total > 0)
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              _PayPill(
+                  label: fromBal ? 'С баланса' : 'Онлайн-оплата',
+                  color: fromBal ? _DS.emerald : _DS.amber,
+                  icon: fromBal ? Icons.check_circle_outline : Icons.credit_card_rounded),
+              if (fromBal) ...[
+                const SizedBox(height: 5),
+                Text('${(balanceKopeks / 100).toStringAsFixed(0)} ₽ на счёте',
+                    style: const TextStyle(color: _DS.textMuted, fontSize: 10)),
+              ],
+            ]),
+        ]),
       ]),
     );
   }
@@ -1239,70 +1362,105 @@ class _RenewTab extends StatelessWidget {
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-      // ── Single card: header + period rows + button ───────────────────
-      _Card(padding: EdgeInsets.zero, child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-
-          // Header with selected price
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-            child: Row(children: [
+      // ── Hero price card ─────────────────────────────────────────────
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 22),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+              colors: [Color(0xFF1A1830), Color(0xFF13121E)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(_DS.radius),
+          border: Border.all(color: _DS.violet.withValues(alpha: 0.22)),
+          boxShadow: [
+            BoxShadow(
+                color: _DS.violet.withValues(alpha: 0.12),
+                blurRadius: 32, spreadRadius: -4,
+                offset: const Offset(0, 8)),
+          ],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Text('ПРОДЛЕНИЕ ПОДПИСКИ', style: TextStyle(
+                color: _DS.textMuted, fontSize: 10,
+                fontWeight: FontWeight.w600, letterSpacing: 1.4)),
+            const Spacer(),
+            if (sel != null && sel.discountPercent > 0)
               Container(
-                  width: 38, height: 38,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                          colors: [_DS.violet, _DS.violetDim],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight),
-                      borderRadius: BorderRadius.circular(10),
-                      boxShadow: [BoxShadow(
-                          color: _DS.violet.withValues(alpha: 0.30),
-                          blurRadius: 8, offset: const Offset(0, 3))]),
-                  child: const Icon(Icons.refresh_rounded,
-                      color: Colors.white, size: 18)),
-              const SizedBox(width: 12),
-              const Expanded(child: Text('Продление подписки',
-                  style: TextStyle(color: _DS.textPrimary, fontSize: 15,
-                      fontWeight: FontWeight.w700))),
-              // Live price pill — updates as user picks period
-              if (sel != null)
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: Container(
-                    key: ValueKey(sel.id),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                        color: _DS.violet.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                            color: _DS.violet.withValues(alpha: 0.35))),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                            '${(sel.basePriceKopeks / 100).toStringAsFixed(0)} ₽',
+                      color: _DS.amber.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _DS.amber.withValues(alpha: 0.3))),
+                  child: Text('−${sel.discountPercent}%',
+                      style: const TextStyle(color: _DS.amber, fontSize: 11,
+                          fontWeight: FontWeight.w700))),
+          ]),
+          const SizedBox(height: 14),
+          // Big price
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, anim) => FadeTransition(
+                opacity: anim,
+                child: SlideTransition(
+                    position: Tween(
+                        begin: const Offset(0, 0.15),
+                        end: Offset.zero).animate(anim),
+                    child: child)),
+            child: sel == null
+                ? const Text('—', key: ValueKey('none'),
+                style: TextStyle(color: _DS.textPrimary,
+                    fontSize: 52, fontWeight: FontWeight.w800))
+                : Row(
+                key: ValueKey(sel.id),
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                      '${(sel.basePriceKopeks / 100).toStringAsFixed(0)}',
+                      style: const TextStyle(color: _DS.textPrimary,
+                          fontSize: 52, fontWeight: FontWeight.w800,
+                          letterSpacing: -2, height: 1)),
+                  const Padding(
+                      padding: EdgeInsets.only(bottom: 8, left: 4),
+                      child: Text('₽',
+                          style: TextStyle(color: _DS.textSecondary,
+                              fontSize: 22, fontWeight: FontWeight.w600))),
+                  if (sel.discountPercent > 0) ...[
+                    const Spacer(),
+                    Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                            '${((sel.basePriceKopeks / 100) / (1 - sel.discountPercent / 100)).toStringAsFixed(0)} ₽',
                             style: const TextStyle(
-                                color: _DS.violet, fontSize: 15,
-                                fontWeight: FontWeight.w800)),
-                        if (sel.discountPercent > 0)
-                          Text(
-                              '${((sel.basePriceKopeks / 100) / (1 - sel.discountPercent / 100)).toStringAsFixed(0)} ₽',
-                              style: const TextStyle(
-                                  color: _DS.textMuted, fontSize: 10,
-                                  decoration: TextDecoration.lineThrough)),
-                      ],
-                    ),
-                  ),
-                ),
-            ]),
+                                color: _DS.textMuted, fontSize: 18,
+                                fontWeight: FontWeight.w500,
+                                decoration: TextDecoration.lineThrough))),
+                  ],
+                ]),
           ),
+          const SizedBox(height: 10),
+          Row(children: [
+            const Icon(Icons.calendar_month_outlined,
+                size: 13, color: _DS.textMuted),
+            const SizedBox(width: 6),
+            Text(
+                sel != null ? 'на ${sel.label}' : 'Выберите период ниже',
+                style: const TextStyle(
+                    color: _DS.textMuted, fontSize: 13)),
+          ]),
+        ]),
+      ),
 
-          const Divider(height: 1, color: _DS.border),
+      const SizedBox(height: 12),
 
-          // Period rows — inline, no wrapping card
+      // ── Period selector card ────────────────────────────────────────
+      Container(
+        decoration: BoxDecoration(
+            color: _DS.surface1,
+            borderRadius: BorderRadius.circular(_DS.radius),
+            border: Border.all(color: _DS.border)),
+        child: Column(children: [
           ...options.periods.asMap().entries.map((e) {
             final i      = e.key;
             final period = e.value;
@@ -1320,17 +1478,23 @@ class _RenewTab extends StatelessWidget {
               GestureDetector(
                 onTap: () => onPeriodSelected(period.id),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
+                  duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 13),
+                      horizontal: 16, vertical: 15),
                   decoration: BoxDecoration(
                       color: isSelected
                           ? _DS.violet.withValues(alpha: 0.08)
-                          : Colors.transparent),
+                          : Colors.transparent,
+                      borderRadius: i == 0
+                          ? const BorderRadius.vertical(
+                          top: Radius.circular(20))
+                          : isLast
+                          ? const BorderRadius.vertical(
+                          bottom: Radius.circular(20))
+                          : BorderRadius.zero),
                   child: Row(children: [
-                    // Radio
                     AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
+                        duration: const Duration(milliseconds: 200),
                         width: 20, height: 20,
                         decoration: BoxDecoration(
                             shape: BoxShape.circle,
@@ -1340,17 +1504,16 @@ class _RenewTab extends StatelessWidget {
                             color: isSelected
                                 ? _DS.surface0 : Colors.transparent)),
                     const SizedBox(width: 12),
-                    // Label
                     Expanded(child: Row(children: [
                       Text(period.label, style: TextStyle(
                           color: isSelected
                               ? _DS.textPrimary : _DS.textSecondary,
-                          fontSize: 14, fontWeight: FontWeight.w600)),
+                          fontSize: 15, fontWeight: FontWeight.w600)),
                       if (isBest) ...[
                         const SizedBox(width: 8),
                         Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                                horizontal: 7, vertical: 2),
                             decoration: BoxDecoration(
                                 color: _DS.emerald.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(20),
@@ -1361,14 +1524,14 @@ class _RenewTab extends StatelessWidget {
                                 fontWeight: FontWeight.w700))),
                       ],
                     ])),
-                    // Price
                     Column(crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text('${priceRub.toStringAsFixed(0)} ₽',
                               style: TextStyle(
                                   color: isSelected
                                       ? _DS.violet : _DS.textPrimary,
-                                  fontSize: 15, fontWeight: FontWeight.w700)),
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700)),
                           if (period.discountPercent > 0)
                             Text(
                                 '${(priceRub / (1 - period.discountPercent / 100)).toStringAsFixed(0)} ₽',
@@ -1382,19 +1545,17 @@ class _RenewTab extends StatelessWidget {
               if (!isLast) const Divider(height: 1, color: _DS.border),
             ]);
           }),
+        ]),
+      ),
 
-          const Divider(height: 1, color: _DS.border),
+      const SizedBox(height: 14),
 
-          Padding(
-            padding: const EdgeInsets.all(14),
-            child: _BuyButton(
-                loading: loading,
-                onPressed: selectedPeriodId != null ? onConfirm : null,
-                totalKopeks: sel?.basePriceKopeks,
-                hasEnoughBalance: true),
-          ),
-        ],
-      )),
+      // ── CTA button ──────────────────────────────────────────────────
+      _BuyButton(
+          loading: loading,
+          onPressed: selectedPeriodId != null ? onConfirm : null,
+          totalKopeks: sel?.basePriceKopeks,
+          hasEnoughBalance: true),
     ]);
   }
 }
@@ -1885,6 +2046,123 @@ class _PaymentDisclaimer extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // Base card
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Success overlay — shown after successful purchase/upgrade
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SuccessOverlay extends StatefulWidget {
+  final bool isUpgrade;
+  const _SuccessOverlay({required this.isUpgrade});
+
+  @override
+  State<_SuccessOverlay> createState() => _SuccessOverlayState();
+}
+
+class _SuccessOverlayState extends State<_SuccessOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _fadeIn;
+  late final Animation<double> _scaleIcon;
+  late final Animation<double> _fadeText;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
+
+    _fadeIn = CurvedAnimation(
+      parent: _ctrl,
+      curve: const Interval(0.0, 0.3, curve: Curves.easeOut),
+    );
+    _scaleIcon = CurvedAnimation(
+      parent: _ctrl,
+      curve: const Interval(0.1, 0.55, curve: Curves.elasticOut),
+    );
+    _fadeText = CurvedAnimation(
+      parent: _ctrl,
+      curve: const Interval(0.45, 0.75, curve: Curves.easeOut),
+    );
+
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fadeIn,
+      child: Container(
+        color: _DS.surface0.withValues(alpha: 0.97),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // ── Animated icon ──────────────────────────────────────
+              ScaleTransition(
+                scale: _scaleIcon,
+                child: Container(
+                  width: 100, height: 100,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                        colors: [_DS.violet, _DS.violetDim],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight),
+                    boxShadow: [
+                      BoxShadow(
+                          color: _DS.violet.withValues(alpha: 0.5),
+                          blurRadius: 40, spreadRadius: 0,
+                          offset: const Offset(0, 8)),
+                      BoxShadow(
+                          color: _DS.violet.withValues(alpha: 0.25),
+                          blurRadius: 80, spreadRadius: 10),
+                    ],
+                  ),
+                  child: const Icon(Icons.check_rounded,
+                      color: Colors.white, size: 52),
+                ),
+              ),
+
+              const SizedBox(height: 28),
+
+              // ── Text ───────────────────────────────────────────────
+              FadeTransition(
+                opacity: _fadeText,
+                child: Column(children: [
+                  Text(
+                    widget.isUpgrade ? 'Готово!' : 'Подписка активна',
+                    style: const TextStyle(
+                        color: _DS.textPrimary,
+                        fontSize: 28, fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.isUpgrade
+                        ? 'Изменения применены'
+                        : 'Добро пожаловать в Premium',
+                    style: const TextStyle(
+                        color: _DS.textSecondary, fontSize: 16),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 class _Card extends StatelessWidget {
   final Widget child;
