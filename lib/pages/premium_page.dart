@@ -210,11 +210,69 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
         setState(() => _showSuccessOverlay = true);
         await MeService.refresh();
         await _loadOptions();
-        await Future.delayed(const Duration(milliseconds: 2800));
+        await Future.delayed(const Duration(milliseconds: 1800));
         if (mounted) setState(() => _showSuccessOverlay = false);
       }
       else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
       else                                    { _snack(r.message ?? 'Ошибка при покупке', error: true); }
+    } catch (e) { if (mounted) _snack('Ошибка: $e', error: true); }
+    if (mounted) setState(() => _purchasing = false);
+  }
+
+  /// Renewal: extend subscription for a new period — uses /buy with current settings.
+  Future<void> _onRenewPressed(String periodId) async {
+    setState(() => _purchasing = true);
+    try {
+      // For renewal: use traffic/devices from the PERIOD options, not from /me.
+      // /buy validates traffic_value against period.traffic.options — passing the
+      // current subscription limit would fail if it doesn't match a valid option.
+      final opts = _options;
+      final period = opts?.periods.firstWhere(
+              (p) => p.id == periodId, orElse: () => opts!.periods.first);
+
+      // Traffic: use current selection if valid for this period, else default
+      int? trafficValue;
+      final trafficCfg = period?.traffic;
+      if (trafficCfg != null && trafficCfg.options.isNotEmpty) {
+        final currentGb = meNotifier.value?.subscription?.trafficLimitGb;
+        final matchesOption = trafficCfg.options.any((o) => o.value == currentGb);
+        if (currentGb != null && matchesOption) {
+          trafficValue = currentGb;
+        } else {
+          // Fall back to default option for this period
+          trafficValue = trafficCfg.options
+              .firstWhere((o) => o.isDefault, orElse: () => trafficCfg.options.first)
+              .value;
+        }
+      }
+
+      // Devices: keep current limit if within bounds, else use period default
+      int? devices;
+      final devicesCfg = period?.devices;
+      if (devicesCfg != null) {
+        final currentDevices = meNotifier.value?.subscription?.deviceLimit ?? 1;
+        final validOptions = devicesCfg.options;
+        if (validOptions.contains(currentDevices)) {
+          devices = currentDevices;
+        } else {
+          devices = devicesCfg.defaultValue ?? devicesCfg.minimum;
+        }
+      }
+
+      final r = await SubscriptionApiService.buySubscription(
+          periodId: periodId, trafficValue: trafficValue, devices: devices);
+      if (!mounted) return;
+      if (r == null)                          { _snack('Ошибка соединения с сервером', error: true); }
+      else if (r.isSuccess) {
+        setState(() => _showSuccessOverlay = true);
+        await MeService.refresh();
+        globalRefreshNotifier.notifyListeners();
+        await _loadOptions();
+        await Future.delayed(const Duration(milliseconds: 1800));
+        if (mounted) setState(() => _showSuccessOverlay = false);
+      }
+      else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
+      else                                    { _snack(r.message ?? 'Ошибка при продлении', error: true); }
     } catch (e) { if (mounted) _snack('Ошибка: $e', error: true); }
     if (mounted) setState(() => _purchasing = false);
   }
@@ -231,7 +289,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
         await MeService.refresh();
         globalRefreshNotifier.notifyListeners();
         await _loadOptions();
-        await Future.delayed(const Duration(milliseconds: 2800));
+        await Future.delayed(const Duration(milliseconds: 1800));
         if (mounted) setState(() => _showSuccessOverlay = false);
       }
       else if (r.requiresPayment && r.paymentUrl != null) { await _openPaymentUrl(r.paymentUrl!); }
@@ -303,6 +361,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
                           sub: sub,
                           options: _options!,
                           onUpgrade: _onUpgradePressed,
+                          onRenew: _onRenewPressed,
                           loading: _purchasing,
                         ),
                       ] else ...[
@@ -346,7 +405,7 @@ class _PremiumPageState extends State<PremiumPage> with WidgetsBindingObserver {
             ),
         ),// ── Success overlay ──────────────────────────────────────────
             if (_showSuccessOverlay)
-        _SuccessOverlay(isUpgrade: meNotifier.value?.subscription?.isActive == true),
+        _SuccessOverlay(isUpgrade: meNotifier.value?.subscription?.isActive == true, onDismiss: () => setState(() => _showSuccessOverlay = false)),
       ]),
     );
   }
@@ -926,83 +985,70 @@ class _PricePreviewCard extends StatelessWidget {
             color: _DS.violet.withValues(alpha: 0.10),
             blurRadius: 28, spreadRadius: -4, offset: const Offset(0, 6))],
       ),
-      child: Stack(children: [
-        Positioned(
-          top: -15, right: -5,
-          child: Container(
-            width: 90, height: 90,
-            decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(colors: [
-                  _DS.violet.withValues(alpha: 0.15),
-                  Colors.transparent,
-                ])),
-          ),
-        ),
-        loading
-            ? const Center(child: Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: SizedBox(width: 28, height: 28,
-                child: CircularProgressIndicator(strokeWidth: 2, color: _DS.violet))))
-            : Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                      color: _DS.violet.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: _DS.violet.withValues(alpha: 0.28))),
-                  child: const Text('К ОПЛАТЕ', style: TextStyle(
-                      color: _DS.violet, fontSize: 9,
-                      fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-                ),
-              ]),
-              const SizedBox(height: 10),
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                transitionBuilder: (c, a) => FadeTransition(
-                    opacity: a,
-                    child: SlideTransition(
-                        position: Tween(
-                            begin: const Offset(0, 0.1),
-                            end: Offset.zero).animate(a),
-                        child: c)),
-                child: Row(
-                  key: ValueKey(total),
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                        totalRub.toStringAsFixed(0),
-                        style: const TextStyle(
-                            color: _DS.textPrimary, fontSize: 48,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -2, height: 1)),
-                    const Padding(
-                        padding: EdgeInsets.only(bottom: 7, left: 4),
-                        child: Text('₽', style: TextStyle(
-                            color: _DS.textSecondary, fontSize: 20,
-                            fontWeight: FontWeight.w600))),
-                  ],
-                ),
+      child: loading
+          ? const Center(child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: SizedBox(width: 28, height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2, color: _DS.violet))))
+          : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Label ─────────────────────────────────────────────
+        const Text('К ОПЛАТЕ', style: TextStyle(
+            color: _DS.textMuted, fontSize: 10,
+            fontWeight: FontWeight.w600, letterSpacing: 1.4)),
+        const SizedBox(height: 10),
+        // ── Price + method ────────────────────────────────────
+        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          Expanded(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 280),
+              transitionBuilder: (c, a) => FadeTransition(
+                  opacity: a,
+                  child: SlideTransition(
+                      position: Tween(
+                          begin: const Offset(0, 0.08),
+                          end: Offset.zero).animate(a),
+                      child: c)),
+              child: Row(
+                key: ValueKey(total),
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                      total == 0 ? '0' : totalRub.toStringAsFixed(0),
+                      style: const TextStyle(
+                          color: _DS.textPrimary, fontSize: 44,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -1.5, height: 1)),
+                  const SizedBox(width: 4),
+                  const Text('₽', style: TextStyle(
+                      color: _DS.textSecondary, fontSize: 22,
+                      fontWeight: FontWeight.w500,
+                      height: 1)),
+                ],
               ),
-            ],
-          )),
+            ),
+          ),
           if (total > 0)
-            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              _PayPill(
-                  label: fromBal ? 'С баланса' : 'Онлайн-оплата',
-                  color: fromBal ? _DS.emerald : _DS.amber,
-                  icon: fromBal ? Icons.check_circle_outline : Icons.credit_card_rounded),
-              if (fromBal) ...[
-                const SizedBox(height: 5),
-                Text('${(balanceKopeks / 100).toStringAsFixed(0)} ₽ на счёте',
-                    style: const TextStyle(color: _DS.textMuted, fontSize: 10)),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _PayPill(
+                    label: fromBal ? 'С баланса' : 'Онлайн-оплата',
+                    color: fromBal ? _DS.emerald : _DS.amber,
+                    icon: fromBal
+                        ? Icons.check_circle_outline
+                        : Icons.credit_card_rounded),
+                if (fromBal) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                      '${(balanceKopeks / 100).toStringAsFixed(0)} ₽ на счёте',
+                      style: const TextStyle(
+                          color: _DS.textMuted, fontSize: 11)),
+                ],
               ],
-            ]),
+            ),
         ]),
       ]),
     );
@@ -1083,9 +1129,10 @@ class _UpgradeSection extends StatefulWidget {
   final MeSubscription sub;
   final SubscriptionOptions options;
   final Future<void> Function(String?, {int? trafficAdd, int? devicesAdd}) onUpgrade;
+  final Future<void> Function(String) onRenew; // renewal uses /buy, not /upgrade
   final bool loading;
   const _UpgradeSection({required this.sub, required this.options,
-    required this.onUpgrade, required this.loading});
+    required this.onUpgrade, required this.onRenew, required this.loading});
 
   @override
   State<_UpgradeSection> createState() => _UpgradeSectionState();
@@ -1213,7 +1260,7 @@ class _UpgradeSectionState extends State<_UpgradeSection>
                 options: widget.options, selectedPeriodId: _renewPeriodId,
                 onPeriodSelected: (id) => setState(() => _renewPeriodId = id),
                 loading: widget.loading,
-                onConfirm: () => widget.onUpgrade(_renewPeriodId!)),
+                onConfirm: () => widget.onRenew(_renewPeriodId!)),
             _AddTrafficTab(
                 packages: _topupPackages,
                 selectedGb: _selectedTrafficValue,
@@ -1344,7 +1391,7 @@ class _UpgradeTabBar extends StatelessWidget {
 
 // ── Renew tab ─────────────────────────────────────────────────────────────────
 
-class _RenewTab extends StatelessWidget {
+class _RenewTab extends StatefulWidget {
   final SubscriptionOptions options;
   final String? selectedPeriodId;
   final ValueChanged<String> onPeriodSelected;
@@ -1354,33 +1401,107 @@ class _RenewTab extends StatelessWidget {
     required this.onPeriodSelected, required this.loading, required this.onConfirm});
 
   @override
+  State<_RenewTab> createState() => _RenewTabState();
+}
+
+class _RenewTabState extends State<_RenewTab>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _glowCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _glowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 4),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _glowCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final sel = selectedPeriodId != null
-        ? options.periods.firstWhere((p) => p.id == selectedPeriodId,
-        orElse: () => options.periods.first)
+    final sel = widget.selectedPeriodId != null
+        ? widget.options.periods.firstWhere(
+            (p) => p.id == widget.selectedPeriodId,
+        orElse: () => widget.options.periods.first)
         : null;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-      // ── Hero price card ─────────────────────────────────────────────
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(20, 22, 20, 22),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-              colors: [Color(0xFF1A1830), Color(0xFF13121E)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight),
-          borderRadius: BorderRadius.circular(_DS.radius),
-          border: Border.all(color: _DS.violet.withValues(alpha: 0.22)),
-          boxShadow: [
-            BoxShadow(
-                color: _DS.violet.withValues(alpha: 0.12),
-                blurRadius: 32, spreadRadius: -4,
-                offset: const Offset(0, 8)),
-          ],
-        ),
+      // ── Hero card with animated border glow ───────────────────────
+      AnimatedBuilder(
+        animation: _glowCtrl,
+        builder: (_, child) {
+          // Sweep angle drives a soft colour rotation:
+          // violet → sky → violet
+          final t = _glowCtrl.value;
+
+          // Sweep angle: snake goes around the card
+          // t=0: top-left, t=0.25: top-right, t=0.5: bottom-right, t=0.75: bottom-left
+          // Platinum-violet palette: deep violet → soft silver-violet → deep violet
+          final Color glowColor;
+          final Color shadowColor;
+          if (t < 0.25) {
+            // top edge: deep violet → silver violet
+            final p = t / 0.25;
+            glowColor = Color.lerp(
+                const Color(0xFF7C6FF7), const Color(0xFFB8B0FF), p)!;
+            shadowColor = Color.lerp(
+                const Color(0xFF7C6FF7), const Color(0xFF9D97E8), p)!;
+          } else if (t < 0.5) {
+            // right edge: silver violet → muted platinum
+            final p = (t - 0.25) / 0.25;
+            glowColor = Color.lerp(
+                const Color(0xFFB8B0FF), const Color(0xFFD4D0F8), p)!;
+            shadowColor = Color.lerp(
+                const Color(0xFF9D97E8), const Color(0xFF7C6FF7), p)!;
+          } else if (t < 0.75) {
+            // bottom edge: platinum → violet
+            final p = (t - 0.5) / 0.25;
+            glowColor = Color.lerp(
+                const Color(0xFFD4D0F8), const Color(0xFF9D8FFF), p)!;
+            shadowColor = Color.lerp(
+                const Color(0xFF7C6FF7), const Color(0xFF9D8FFF), p)!;
+          } else {
+            // left edge: back to deep violet
+            final p = (t - 0.75) / 0.25;
+            glowColor = Color.lerp(
+                const Color(0xFF9D8FFF), const Color(0xFF7C6FF7), p)!;
+            shadowColor = Color.lerp(
+                const Color(0xFF9D8FFF), const Color(0xFF7C6FF7), p)!;
+          }
+
+          // Snake highlight: a brighter spot that moves with the sweep
+          // Implemented as a gradient border simulation with custom painter
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFF1A1830), Color(0xFF13121E)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight),
+              borderRadius: BorderRadius.circular(_DS.radius),
+              border: Border.all(
+                  color: glowColor.withValues(alpha: 0.60),
+                  width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                    color: shadowColor.withValues(alpha: 0.20),
+                    blurRadius: 20, spreadRadius: -4,
+                    offset: const Offset(0, 4)),
+              ],
+            ),
+            child: child,
+          );
+        },
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // ── Header row ──────────────────────────────────────────
           Row(children: [
             const Text('ПРОДЛЕНИЕ ПОДПИСКИ', style: TextStyle(
                 color: _DS.textMuted, fontSize: 10,
@@ -1398,7 +1519,8 @@ class _RenewTab extends StatelessWidget {
                           fontWeight: FontWeight.w700))),
           ]),
           const SizedBox(height: 14),
-          // Big price
+
+          // ── Big price with slide animation ───────────────────────
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
             transitionBuilder: (child, anim) => FadeTransition(
@@ -1423,9 +1545,9 @@ class _RenewTab extends StatelessWidget {
                           letterSpacing: -2, height: 1)),
                   const Padding(
                       padding: EdgeInsets.only(bottom: 8, left: 4),
-                      child: Text('₽',
-                          style: TextStyle(color: _DS.textSecondary,
-                              fontSize: 22, fontWeight: FontWeight.w600))),
+                      child: Text('₽', style: TextStyle(
+                          color: _DS.textSecondary,
+                          fontSize: 22, fontWeight: FontWeight.w600))),
                   if (sel.discountPercent > 0) ...[
                     const Spacer(),
                     Padding(
@@ -1439,44 +1561,102 @@ class _RenewTab extends StatelessWidget {
                   ],
                 ]),
           ),
-          const SizedBox(height: 10),
+
+          const SizedBox(height: 16),
+
+          // ── Divider ──────────────────────────────────────────────
+          Divider(height: 1,
+              color: Colors.white.withValues(alpha: 0.06)),
+          const SizedBox(height: 16),
+
+          // ── Details row: period + per-month price ────────────────
           Row(children: [
-            const Icon(Icons.calendar_month_outlined,
-                size: 13, color: _DS.textMuted),
-            const SizedBox(width: 6),
-            Text(
-                sel != null ? 'на ${sel.label}' : 'Выберите период ниже',
-                style: const TextStyle(
-                    color: _DS.textMuted, fontSize: 13)),
+            // Period
+            Expanded(child: Row(children: [
+              Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(8)),
+                  child: const Icon(Icons.calendar_month_outlined,
+                      size: 15, color: _DS.textSecondary)),
+              const SizedBox(width: 10),
+              Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Период', style: TextStyle(
+                      color: _DS.textMuted, fontSize: 10,
+                      fontWeight: FontWeight.w500)),
+                  Text(
+                      sel != null ? sel.label : '—',
+                      style: const TextStyle(
+                          color: _DS.textPrimary, fontSize: 13,
+                          fontWeight: FontWeight.w600)),
+                ],
+              )),
+            ])),
+
+            // Second stat: saving or payment method
+            Expanded(child: Row(children: [
+              Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.06),
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Icon(
+                      sel != null && sel.discountPercent > 0
+                          ? Icons.local_offer_outlined
+                          : Icons.wallet_outlined,
+                      size: 15, color: _DS.textSecondary)),
+              const SizedBox(width: 10),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                    sel != null && sel.discountPercent > 0
+                        ? 'Скидка' : 'Оплата',
+                    style: const TextStyle(
+                        color: _DS.textMuted, fontSize: 10,
+                        fontWeight: FontWeight.w500)),
+                Text(
+                    sel == null
+                        ? '—'
+                        : sel.discountPercent > 0
+                        ? '−${sel.discountPercent}%'
+                        : 'С баланса',
+                    style: TextStyle(
+                        color: sel != null && sel.discountPercent > 0
+                            ? _DS.amber : _DS.textPrimary,
+                        fontSize: 13, fontWeight: FontWeight.w600)),
+              ]),
+            ])),
           ]),
         ]),
       ),
 
       const SizedBox(height: 12),
 
-      // ── Period selector card ────────────────────────────────────────
+      // ── Period selector ───────────────────────────────────────────
       Container(
         decoration: BoxDecoration(
             color: _DS.surface1,
             borderRadius: BorderRadius.circular(_DS.radius),
             border: Border.all(color: _DS.border)),
         child: Column(children: [
-          ...options.periods.asMap().entries.map((e) {
+          ...widget.options.periods.asMap().entries.map((e) {
             final i      = e.key;
             final period = e.value;
-            final isSelected = period.id == selectedPeriodId;
-            final isBest = options.periods
+            final isSelected = period.id == widget.selectedPeriodId;
+            final isBest = widget.options.periods
                 .where((p) => p.discountPercent > 0)
                 .fold<PeriodOption?>(null, (best, p) =>
             best == null || p.discountPercent > best.discountPercent
                 ? p : best)
                 ?.id == period.id;
             final priceRub = period.basePriceKopeks / 100;
-            final isLast = i == options.periods.length - 1;
+            final isLast = i == widget.options.periods.length - 1;
 
             return Column(mainAxisSize: MainAxisSize.min, children: [
               GestureDetector(
-                onTap: () => onPeriodSelected(period.id),
+                onTap: () => widget.onPeriodSelected(period.id),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   padding: const EdgeInsets.symmetric(
@@ -1528,10 +1708,8 @@ class _RenewTab extends StatelessWidget {
                         children: [
                           Text('${priceRub.toStringAsFixed(0)} ₽',
                               style: TextStyle(
-                                  color: isSelected
-                                      ? _DS.violet : _DS.textPrimary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700)),
+                                  color: isSelected ? _DS.violet : _DS.textPrimary,
+                                  fontSize: 15, fontWeight: FontWeight.w700)),
                           if (period.discountPercent > 0)
                             Text(
                                 '${(priceRub / (1 - period.discountPercent / 100)).toStringAsFixed(0)} ₽',
@@ -1550,10 +1728,9 @@ class _RenewTab extends StatelessWidget {
 
       const SizedBox(height: 14),
 
-      // ── CTA button ──────────────────────────────────────────────────
       _BuyButton(
-          loading: loading,
-          onPressed: selectedPeriodId != null ? onConfirm : null,
+          loading: widget.loading,
+          onPressed: widget.selectedPeriodId != null ? widget.onConfirm : null,
           totalKopeks: sel?.basePriceKopeks,
           hasEnoughBalance: true),
     ]);
@@ -2053,7 +2230,8 @@ class _PaymentDisclaimer extends StatelessWidget {
 
 class _SuccessOverlay extends StatefulWidget {
   final bool isUpgrade;
-  const _SuccessOverlay({required this.isUpgrade});
+  final VoidCallback? onDismiss;
+  const _SuccessOverlay({required this.isUpgrade, this.onDismiss});
 
   @override
   State<_SuccessOverlay> createState() => _SuccessOverlayState();
@@ -2098,68 +2276,71 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fadeIn,
-      child: Container(
-        color: _DS.surface0.withValues(alpha: 0.97),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // ── Animated icon ──────────────────────────────────────
-              ScaleTransition(
-                scale: _scaleIcon,
-                child: Container(
-                  width: 100, height: 100,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: const LinearGradient(
-                        colors: [_DS.violet, _DS.violetDim],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight),
-                    boxShadow: [
-                      BoxShadow(
-                          color: _DS.violet.withValues(alpha: 0.5),
-                          blurRadius: 40, spreadRadius: 0,
-                          offset: const Offset(0, 8)),
-                      BoxShadow(
-                          color: _DS.violet.withValues(alpha: 0.25),
-                          blurRadius: 80, spreadRadius: 10),
-                    ],
+    return GestureDetector(
+        onTap: widget.onDismiss,
+        behavior: HitTestBehavior.opaque,
+        child: FadeTransition(
+          opacity: _fadeIn,
+          child: Container(
+            color: _DS.surface0.withValues(alpha: 0.97),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ── Animated icon ──────────────────────────────────────
+                  ScaleTransition(
+                    scale: _scaleIcon,
+                    child: Container(
+                      width: 100, height: 100,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                            colors: [_DS.violet, _DS.violetDim],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight),
+                        boxShadow: [
+                          BoxShadow(
+                              color: _DS.violet.withValues(alpha: 0.5),
+                              blurRadius: 40, spreadRadius: 0,
+                              offset: const Offset(0, 8)),
+                          BoxShadow(
+                              color: _DS.violet.withValues(alpha: 0.25),
+                              blurRadius: 80, spreadRadius: 10),
+                        ],
+                      ),
+                      child: const Icon(Icons.check_rounded,
+                          color: Colors.white, size: 52),
+                    ),
                   ),
-                  child: const Icon(Icons.check_rounded,
-                      color: Colors.white, size: 52),
-                ),
-              ),
 
-              const SizedBox(height: 28),
+                  const SizedBox(height: 28),
 
-              // ── Text ───────────────────────────────────────────────
-              FadeTransition(
-                opacity: _fadeText,
-                child: Column(children: [
-                  Text(
-                    widget.isUpgrade ? 'Готово!' : 'Подписка активна',
-                    style: const TextStyle(
-                        color: _DS.textPrimary,
-                        fontSize: 28, fontWeight: FontWeight.w800,
-                        letterSpacing: -0.5),
+                  // ── Text ───────────────────────────────────────────────
+                  FadeTransition(
+                    opacity: _fadeText,
+                    child: Column(children: [
+                      Text(
+                        widget.isUpgrade ? 'Готово!' : 'Подписка активна',
+                        style: const TextStyle(
+                            color: _DS.textPrimary,
+                            fontSize: 28, fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        widget.isUpgrade
+                            ? 'Изменения применены'
+                            : 'Добро пожаловать в Premium',
+                        style: const TextStyle(
+                            color: _DS.textSecondary, fontSize: 16),
+                      ),
+                    ]),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    widget.isUpgrade
-                        ? 'Изменения применены'
-                        : 'Добро пожаловать в Premium',
-                    style: const TextStyle(
-                        color: _DS.textSecondary, fontSize: 16),
-                  ),
-                ]),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
-    );
+        ));
   }
 }
 
