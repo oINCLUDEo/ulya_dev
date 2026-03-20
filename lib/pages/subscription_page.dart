@@ -853,6 +853,10 @@ class _SubscriptionDetailsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isActive = sub.isActive && !sub.isExpired;
+    final remnaInfo = RemnawaveService.lastSubscriptionInfo;
+    final trafficDisplay = remnaInfo != null && remnaInfo.totalBytes > 0
+        ? remnaInfo.formattedTotal
+        : (sub.trafficLimitGb == 0 ? '∞ ГБ' : '${sub.trafficLimitGb} ГБ');
 
     return _Card(
       child: Column(
@@ -882,14 +886,12 @@ class _SubscriptionDetailsCard extends StatelessWidget {
             value: sub.formattedExpiry,
             valueColor: sub.isExpired ? _DS.rose : null,
           ),
-          if (sub.trafficLimitGb > 0) ...[
-            _Divider(),
-            _DetailRow(
-              icon: Icons.compare_arrows_rounded,
-              label: 'Лимит трафика',
-              value: '${sub.trafficLimitGb} ГБ',
-            ),
-          ],
+          _Divider(),
+          _DetailRow(
+            icon: Icons.compare_arrows_rounded,
+            label: 'Лимит трафика',
+            value: trafficDisplay,
+          ),
           const SizedBox(height: 16),
 
           // Status pill
