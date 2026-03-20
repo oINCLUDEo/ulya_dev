@@ -377,8 +377,8 @@ class _InfoBanner extends StatelessWidget {
         const SizedBox(width: 10),
         const Expanded(
           child: Text(
-            'Обычно отвечаем в течение нескольких часов. '
-                'Для срочных вопросов напишите в Telegram.',
+            'Обычно отвечаем в течение 5-20 минут. '
+                'Поддержка работает с 10:30 до 22:00 по МСК.',
             style: TextStyle(
                 color: DS.textSecondary, fontSize: 12, height: 1.45),
           ),
