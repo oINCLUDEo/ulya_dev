@@ -1147,33 +1147,50 @@ class _UpgradeSectionState extends State<_UpgradeSection>
   int?    _selectedTrafficValue; // selected topup package gb (= traffic_add increment)
   int?    _addDevices;
 
-  // Цены для каждого варианта: ключ=инкремент, значение=kopeks
-  Map<int, int?> _devicesPrices = {}; // null = загружается, int = загружено
+  // Real server prices (with proration/multipliers applied)
+  Map<int, int?> _trafficPrices = {}; // {gb: kopeks}, null = loading
+  Map<int, int?> _devicesPrices = {}; // {increment: kopeks}, null = loading
+  Map<String, int?> _renewPrices = {}; // {period_id: kopeks}, null = loading
 
-  /// Traffic top-up packages from backend (traffic_topup_packages).
-  /// gb = increment to send as traffic_add, priceKopeks = fixed price.
-  List<TrafficTopupPackage> get _topupPackages {
-    final pkgs = widget.options.trafficTopupPackages;
-    debugPrint('[TOPUP] trafficTopupEnabled=${widget.options.trafficTopupEnabled}');
-    debugPrint('[TOPUP] trafficTopupPackages count=${pkgs.length}');
-    for (final p in pkgs) {
-      debugPrint('[TOPUP]   package: gb=${p.gb} price=${p.priceKopeks}');
+  /// Traffic top-up packages from /options.
+  List<TrafficTopupPackage> get _topupPackages =>
+      widget.options.trafficTopupPackages;
+
+  /// Returns the (trafficValue, devices) to pass to /calc or /buy for a given
+  /// period — uses the user's current limits if they are valid options,
+  /// otherwise falls back to the period's default values.
+  ({int? traffic, int? devices}) _resolveParamsForPeriod(String periodId) {
+    final period = widget.options.periods.firstWhere(
+          (p) => p.id == periodId,
+      orElse: () => widget.options.periods.first,
+    );
+
+    int? traffic;
+    final tCfg = period.traffic;
+    if (tCfg != null && tCfg.options.isNotEmpty) {
+      final currentGb = meNotifier.value?.subscription?.trafficLimitGb;
+      final valid = tCfg.options.any((o) => o.value == currentGb);
+      traffic = (currentGb != null && valid)
+          ? currentGb
+          : (tCfg.options.firstWhere(
+              (o) => o.isDefault, orElse: () => tCfg.options.first).value);
     }
-    debugPrint('[TOPUP] availableTopupGb=${widget.options.availableTopupGb}');
-    return pkgs;
+
+    int? devices;
+    final dCfg = period.devices;
+    if (dCfg != null) {
+      final cur = meNotifier.value?.subscription?.deviceLimit ?? 1;
+      devices = dCfg.options.contains(cur)
+          ? cur
+          : (dCfg.defaultValue ?? dCfg.minimum);
+    }
+
+    return (traffic: traffic, devices: devices);
   }
 
-  /// Price for the currently selected topup package.
-  int? get _trafficPriceKopeks {
-    if (_selectedTrafficValue == null) return null;
-    try {
-      return _topupPackages
-          .firstWhere((p) => p.gb == _selectedTrafficValue)
-          .priceKopeks;
-    } catch (_) {
-      return null;
-    }
-  }
+  /// Real price of the selected traffic package (fetched from /upgrade/calc).
+  int? get _trafficPriceKopeks =>
+      _selectedTrafficValue != null ? _trafficPrices[_selectedTrafficValue] : null;
 
   /// Device add options: convert absolute backend values to increments.
   List<int> get _devicesOpts {
@@ -1210,11 +1227,48 @@ class _UpgradeSectionState extends State<_UpgradeSection>
     // Default: first available topup package
     _selectedTrafficValue = _topupPackages.firstOrNull?.gb;
     _addDevices = _devicesOpts.firstOrNull;
-    // Pre-mark all options as loading, then fetch prices
+
+    // Pre-fetch REAL prices via /calc — includes all discounts/multipliers
+    // so what user sees == what backend actually charges
+
+    // Renewal prices per period
+    _renewPrices = { for (final p in widget.options.periods) p.id: null };
+    for (final p in widget.options.periods) { _calcRenewPrice(p.id); }
+
+    // Traffic topup prices
+    final pkgs = _topupPackages;
+    _trafficPrices = { for (final p in pkgs) p.gb: null };
+    for (final p in pkgs) { _calcTrafficPrice(p.gb); }
+
     _devicesPrices = { for (final d in _devicesOpts) d: null };
-    for (final d in _devicesOpts) {
-      _calcDevicesPrice(d);
-    }
+    for (final d in _devicesOpts) { _calcDevicesPrice(d); }
+  }
+
+  Future<void> _calcRenewPrice(String periodId) async {
+    if (mounted) setState(() {
+      _renewPrices = Map.from(_renewPrices)..[periodId] = null;
+    });
+    final params = _resolveParamsForPeriod(periodId);
+    final result = await SubscriptionApiService.calcPrice(
+      periodId: periodId,
+      trafficValue: params.traffic,
+      devices: params.devices,
+    );
+    if (!mounted) return;
+    setState(() {
+      _renewPrices = Map.from(_renewPrices)..[periodId] = result?.totalKopeks ?? 0;
+    });
+  }
+
+  Future<void> _calcTrafficPrice(int gb) async {
+    if (mounted) setState(() {
+      _trafficPrices = Map.from(_trafficPrices)..[gb] = null;
+    });
+    final result = await SubscriptionApiService.calcUpgradePrice(trafficAdd: gb);
+    if (!mounted) return;
+    setState(() {
+      _trafficPrices = Map.from(_trafficPrices)..[gb] = result?.amountKopeks ?? 0;
+    });
   }
 
   Future<void> _calcDevicesPrice(int? devicesAdd) async {
@@ -1257,19 +1311,21 @@ class _UpgradeSectionState extends State<_UpgradeSection>
           key: ValueKey(_tab),
           child: [
             _RenewTab(
-                options: widget.options, selectedPeriodId: _renewPeriodId,
+                options: widget.options,
+                selectedPeriodId: _renewPeriodId,
+                renewPrices: _renewPrices,
                 onPeriodSelected: (id) => setState(() => _renewPeriodId = id),
                 loading: widget.loading,
                 onConfirm: () => widget.onRenew(_renewPeriodId!)),
             _AddTrafficTab(
                 packages: _topupPackages,
                 selectedGb: _selectedTrafficValue,
+                allPrices: _trafficPrices,
                 onSelected: (gb) => setState(() => _selectedTrafficValue = gb),
                 loading: widget.loading,
-                amountKopeks: _trafficPriceKopeks,
-                onConfirm: _selectedTrafficValue == null
+                onConfirm: (_selectedTrafficValue == null ||
+                    _trafficPrices[_selectedTrafficValue] == null)
                     ? null
-                // gb IS the increment — send directly as traffic_add
                     : () => widget.onUpgrade(null,
                     trafficAdd: _selectedTrafficValue)),
             _AddDevicesTab(
@@ -1394,11 +1450,18 @@ class _UpgradeTabBar extends StatelessWidget {
 class _RenewTab extends StatefulWidget {
   final SubscriptionOptions options;
   final String? selectedPeriodId;
+  final Map<String, int?> renewPrices; // real prices: {period_id: kopeks}
   final ValueChanged<String> onPeriodSelected;
   final bool loading;
   final VoidCallback onConfirm;
-  const _RenewTab({required this.options, required this.selectedPeriodId,
-    required this.onPeriodSelected, required this.loading, required this.onConfirm});
+  const _RenewTab({
+    required this.options,
+    required this.selectedPeriodId,
+    required this.renewPrices,
+    required this.onPeriodSelected,
+    required this.loading,
+    required this.onConfirm,
+  });
 
   @override
   State<_RenewTab> createState() => _RenewTabState();
@@ -1520,47 +1583,68 @@ class _RenewTabState extends State<_RenewTab>
           ]),
           const SizedBox(height: 14),
 
-          // ── Big price with slide animation ───────────────────────
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            transitionBuilder: (child, anim) => FadeTransition(
-                opacity: anim,
-                child: SlideTransition(
-                    position: Tween(
-                        begin: const Offset(0, 0.15),
-                        end: Offset.zero).animate(anim),
-                    child: child)),
-            child: sel == null
-                ? const Text('—', key: ValueKey('none'),
-                style: TextStyle(color: _DS.textPrimary,
-                    fontSize: 52, fontWeight: FontWeight.w800))
-                : Row(
-                key: ValueKey(sel.id),
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                      '${(sel.basePriceKopeks / 100).toStringAsFixed(0)}',
-                      style: const TextStyle(color: _DS.textPrimary,
-                          fontSize: 52, fontWeight: FontWeight.w800,
-                          letterSpacing: -2, height: 1)),
-                  const Padding(
-                      padding: EdgeInsets.only(bottom: 8, left: 4),
-                      child: Text('₽', style: TextStyle(
-                          color: _DS.textSecondary,
-                          fontSize: 22, fontWeight: FontWeight.w600))),
-                  if (sel.discountPercent > 0) ...[
-                    const Spacer(),
-                    Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Text(
-                            '${((sel.basePriceKopeks / 100) / (1 - sel.discountPercent / 100)).toStringAsFixed(0)} ₽',
-                            style: const TextStyle(
-                                color: _DS.textMuted, fontSize: 18,
-                                fontWeight: FontWeight.w500,
-                                decoration: TextDecoration.lineThrough))),
-                  ],
-                ]),
-          ),
+          // ── Big price — real price from /calc ────────────────────
+          Builder(builder: (ctx) {
+            final realKopeks = sel != null
+                ? widget.renewPrices[sel.id] : null;
+            final displayKopeks = realKopeks ?? sel?.basePriceKopeks ?? 0;
+            final isLoading = sel != null &&
+                widget.renewPrices.containsKey(sel.id) &&
+                realKopeks == null;
+
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (child, anim) => FadeTransition(
+                  opacity: anim,
+                  child: SlideTransition(
+                      position: Tween(
+                          begin: const Offset(0, 0.15),
+                          end: Offset.zero).animate(anim),
+                      child: child)),
+              child: isLoading
+                  ? const SizedBox(
+                  key: ValueKey('loading'),
+                  height: 52,
+                  child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(width: 26, height: 26,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: _DS.violet))))
+                  : sel == null
+                  ? const Text('—', key: ValueKey('none'),
+                  style: TextStyle(color: _DS.textPrimary,
+                      fontSize: 52, fontWeight: FontWeight.w800))
+                  : Row(
+                  key: ValueKey('${sel.id}_${realKopeks}'),
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                        '${(displayKopeks / 100).toStringAsFixed(0)}',
+                        style: const TextStyle(
+                            color: _DS.textPrimary,
+                            fontSize: 52, fontWeight: FontWeight.w800,
+                            letterSpacing: -2, height: 1)),
+                    const Padding(
+                        padding: EdgeInsets.only(bottom: 8, left: 4),
+                        child: Text('₽', style: TextStyle(
+                            color: _DS.textSecondary,
+                            fontSize: 22, fontWeight: FontWeight.w600))),
+                    // Strikethrough = what user would pay WITHOUT discount
+                    // = realKopeks scaled back up by the discount factor
+                    if (realKopeks != null && sel.discountPercent > 0) ...[
+                      const Spacer(),
+                      Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Text(
+                              '${(realKopeks / 100 / (1 - sel.discountPercent / 100)).toStringAsFixed(0)} ₽',
+                              style: const TextStyle(
+                                  color: _DS.textMuted, fontSize: 18,
+                                  fontWeight: FontWeight.w500,
+                                  decoration: TextDecoration.lineThrough))),
+                    ],
+                  ]),
+            );
+          }),
 
           const SizedBox(height: 16),
 
@@ -1704,19 +1788,37 @@ class _RenewTabState extends State<_RenewTab>
                                 fontWeight: FontWeight.w700))),
                       ],
                     ])),
-                    Column(crossAxisAlignment: CrossAxisAlignment.end,
+                    Builder(builder: (_) {
+                      final realKopeks = widget.renewPrices[period.id];
+                      final displayRub = realKopeks != null
+                          ? realKopeks / 100 : priceRub;
+                      final isLoadingPrice =
+                          widget.renewPrices.containsKey(period.id) &&
+                              realKopeks == null;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text('${priceRub.toStringAsFixed(0)} ₽',
+                          isLoadingPrice
+                              ? const SizedBox(width: 14, height: 14,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 1.5, color: _DS.violet))
+                              : Text('${displayRub.toStringAsFixed(0)} ₽',
                               style: TextStyle(
-                                  color: isSelected ? _DS.violet : _DS.textPrimary,
-                                  fontSize: 15, fontWeight: FontWeight.w700)),
-                          if (period.discountPercent > 0)
+                                  color: isSelected
+                                      ? _DS.violet : _DS.textPrimary,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700)),
+                          // Strikethrough = realKopeks scaled up by discount factor
+                          if (!isLoadingPrice && realKopeks != null &&
+                              period.discountPercent > 0)
                             Text(
-                                '${(priceRub / (1 - period.discountPercent / 100)).toStringAsFixed(0)} ₽',
+                                '${(realKopeks / 100 / (1 - period.discountPercent / 100)).toStringAsFixed(0)} ₽',
                                 style: const TextStyle(
                                     color: _DS.textMuted, fontSize: 10,
                                     decoration: TextDecoration.lineThrough)),
-                        ]),
+                        ],
+                      );
+                    }),
                   ]),
                 ),
               ),
@@ -1730,8 +1832,13 @@ class _RenewTabState extends State<_RenewTab>
 
       _BuyButton(
           loading: widget.loading,
-          onPressed: widget.selectedPeriodId != null ? widget.onConfirm : null,
-          totalKopeks: sel?.basePriceKopeks,
+          onPressed: (widget.selectedPeriodId == null ||
+              (sel != null && widget.renewPrices[sel.id] == null))
+              ? null
+              : widget.onConfirm,
+          totalKopeks: sel != null
+              ? (widget.renewPrices[sel.id] ?? sel.basePriceKopeks)
+              : null,
           hasEnoughBalance: true),
     ]);
   }
@@ -1747,19 +1854,19 @@ class _RenewTabState extends State<_RenewTab>
 
 class _AddTrafficTab extends StatelessWidget {
   final List<TrafficTopupPackage> packages;
-  final int? selectedGb;       // selected package gb value
+  final int? selectedGb;
+  final Map<int, int?> allPrices; // real server prices: {gb: kopeks}, null=loading
   final ValueChanged<int> onSelected;
   final bool loading;
   final VoidCallback? onConfirm;
-  final int? amountKopeks;
 
   const _AddTrafficTab({
     required this.packages,
     required this.selectedGb,
+    required this.allPrices,
     required this.onSelected,
     required this.loading,
     required this.onConfirm,
-    this.amountKopeks,
   });
 
   @override
@@ -1810,7 +1917,18 @@ class _AddTrafficTab extends StatelessWidget {
           final pkg = e.value;
           final sel = pkg.gb == selectedGb;
           final isLast = i == packages.length - 1;
-          final hasDiscount = pkg.discountPercent > 0;
+
+          // Real price from server (includes proration / discounts)
+          final priceEntry = allPrices[pkg.gb];
+          final String priceLabel;
+          if (!allPrices.containsKey(pkg.gb) || priceEntry == null) {
+            priceLabel = '…';
+          } else if (priceEntry == 0) {
+            priceLabel = 'Бесплатно';
+          } else {
+            priceLabel = '${(priceEntry / 100).toStringAsFixed(0)} ₽';
+          }
+          final priceReady = priceEntry != null;
 
           return Column(mainAxisSize: MainAxisSize.min, children: [
             GestureDetector(
@@ -1836,69 +1954,36 @@ class _AddTrafficTab extends StatelessWidget {
                           color: sel ? _DS.surface0 : Colors.transparent)),
                   const SizedBox(width: 12),
 
-                  // GB label + discount badge
-                  Expanded(child: Row(children: [
-                    Text('+${pkg.gb} ГБ', style: TextStyle(
-                        color: sel ? _DS.textPrimary : _DS.textSecondary,
-                        fontSize: 15, fontWeight: FontWeight.w600)),
-                    if (hasDiscount) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                              color: _DS.amber.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                  color: _DS.amber.withValues(alpha: 0.3))),
-                          child: Text('−${pkg.discountPercent}%',
-                              style: const TextStyle(
-                                  color: _DS.amber, fontSize: 9,
-                                  fontWeight: FontWeight.w700))),
-                    ],
-                  ])),
+                  // GB label
+                  Expanded(child: Text('+${pkg.gb} ГБ', style: TextStyle(
+                      color: sel ? _DS.textPrimary : _DS.textSecondary,
+                      fontSize: 15, fontWeight: FontWeight.w600))),
 
-                  // Price chip
-                  Container(
+                  // Price chip — real server price for ALL rows
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
                     padding: const EdgeInsets.symmetric(
                         horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                        gradient: sel
+                        gradient: sel && priceReady && (priceEntry ?? 0) > 0
                             ? const LinearGradient(
                             colors: [_DS.sky, Color(0xFF0EA5E9)],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight)
                             : null,
-                        color: sel ? null : _DS.surface2,
+                        color: sel && priceReady && (priceEntry ?? 1) == 0
+                            ? _DS.emerald.withValues(alpha: 0.12)
+                            : _DS.surface2,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                            color: sel
+                            color: sel && priceReady
                                 ? _DS.sky.withValues(alpha: 0.4)
                                 : _DS.border)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                            pkg.priceLabel.isNotEmpty
-                                ? pkg.priceLabel
-                                : '${(pkg.priceKopeks / 100).toStringAsFixed(0)} ₽',
-                            style: TextStyle(
-                                color: sel ? Colors.white : _DS.textMuted,
-                                fontSize: 11, fontWeight: FontWeight.w700)),
-                        if (hasDiscount &&
-                            pkg.originalPriceKopeks != null) ...[
-                          Text(
-                              '${(pkg.originalPriceKopeks! / 100).toStringAsFixed(0)} ₽',
-                              style: TextStyle(
-                                  color: sel
-                                      ? Colors.white60
-                                      : _DS.textMuted.withValues(alpha: 0.6),
-                                  fontSize: 9,
-                                  decoration: TextDecoration.lineThrough)),
-                        ],
-                      ],
-                    ),
+                    child: Text(priceLabel, style: TextStyle(
+                        color: sel && priceReady
+                            ? ((priceEntry ?? 0) > 0 ? Colors.white : _DS.emerald)
+                            : _DS.textMuted,
+                        fontSize: 11, fontWeight: FontWeight.w700)),
                   ),
                 ]),
               ),
@@ -1915,7 +2000,7 @@ class _AddTrafficTab extends StatelessWidget {
           child: _BuyButton(
             loading: loading,
             onPressed: onConfirm,
-            totalKopeks: amountKopeks,
+            totalKopeks: selectedGb != null ? allPrices[selectedGb] : null,
             hasEnoughBalance: true,
           ),
         ),
