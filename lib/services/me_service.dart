@@ -65,6 +65,8 @@ class MeService {
         meNotifier.value = me;
         await _saveToCache(me);
         appLogger.info('MeService', '/me refreshed — subscription: ${me.hasSubscription}');
+        // Post subscription expiry warning if needed
+        _checkAndPostExpiryWarning(me);
         // Fetch and post backend-driven in-app notifications
         unawaited(_fetchAndPostNotifications(auth.telegramId!));
         return me;
@@ -185,6 +187,61 @@ class MeService {
       }
     } on Exception catch (e) {
       debugPrint('MeService: _fetchAndPostNotifications error: $e');
+    }
+  }
+
+  // ── Subscription expiry warning ──────────────────────────────────────────
+
+  /// Posts a persistent in-app warning when the subscription is expired or
+  /// about to expire (within [_expiryWarnDays] days).  Uses a session-scoped
+  /// flag so the banner only appears once per session; the user can dismiss it.
+  static const int _expiryWarnDays = 3;
+  static bool _expiryWarningPosted = false;
+
+  static void _checkAndPostExpiryWarning(MeResponse me) {
+    final sub = me.subscription;
+    if (sub == null) return;
+
+    if (sub.isExpired) {
+      if (!_expiryWarningPosted) {
+        _expiryWarningPosted = true;
+        notificationService.post(const InAppNotification(
+          id: 'sub_expired',
+          title: 'Подписка истекла',
+          body: 'Подписка истекла — продлите, чтобы продолжить использовать VPN.',
+          type: InAppNotifType.persistent,
+          severity: InAppNotifSeverity.error,
+        ));
+      }
+      return;
+    }
+
+    if (sub.isActive) {
+      final expireDate = sub.expireDate;
+      if (expireDate == null) return;
+      final daysLeft = expireDate.difference(DateTime.now()).inDays;
+      if (daysLeft <= _expiryWarnDays && !_expiryWarningPosted) {
+        _expiryWarningPosted = true;
+        final label = daysLeft <= 0 ? 'менее 1 дня' : '$daysLeft ${_dayWord(daysLeft)}';
+        notificationService.post(InAppNotification(
+          id: 'sub_expiring_soon',
+          title: 'Подписка скоро истекает',
+          body: 'Ваша подписка истекает через $label.',
+          type: InAppNotifType.persistent,
+          severity: InAppNotifSeverity.warning,
+        ));
+      }
+    }
+  }
+
+  static String _dayWord(int n) {
+    if (n % 100 >= 11 && n % 100 <= 19) return 'дней';
+    switch (n % 10) {
+      case 1: return 'день';
+      case 2:
+      case 3:
+      case 4: return 'дня';
+      default: return 'дней';
     }
   }
 }

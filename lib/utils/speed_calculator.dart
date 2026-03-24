@@ -37,16 +37,19 @@ class SpeedCalculator {
 
     if (seconds <= 0) return;
 
-    final uploadDelta = totalUploadBytes - _prevUpload;
-    final downloadDelta = totalDownloadBytes - _prevDownload;
+    // Clamp to 0: negative delta means the plugin reset its counters (e.g.
+    // on VPN reconnect).  Without this clamp the EMA goes negative and the
+    // speed display shows values like "-12.3 MB/s".
+    final uploadDelta = (totalUploadBytes - _prevUpload).clamp(0, double.maxFinite.toInt());
+    final downloadDelta = (totalDownloadBytes - _prevDownload).clamp(0, double.maxFinite.toInt());
 
     final rawUpload = uploadDelta / seconds;
     final rawDownload = downloadDelta / seconds;
 
     // EMA smoothing (чтобы не дёргалось)
-    uploadSpeed = (rawUpload * smoothing) + (uploadSpeed * (1 - smoothing));
+    uploadSpeed = ((rawUpload * smoothing) + (uploadSpeed * (1 - smoothing))).clamp(0, double.infinity);
     downloadSpeed =
-        (rawDownload * smoothing) + (downloadSpeed * (1 - smoothing));
+        ((rawDownload * smoothing) + (downloadSpeed * (1 - smoothing))).clamp(0, double.infinity);
 
     _prevUpload = totalUploadBytes;
     _prevDownload = totalDownloadBytes;

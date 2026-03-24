@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -147,15 +148,9 @@ class _HomePageState extends State<HomePage>
       notificationIconResourceType: 'mipmap',
       notificationIconResourceName: 'ic_launcher',
     );
-    _statusSub = _v2ray.onStatusChanged.listen((s) {
-      if (!mounted) return;
-      if (s.state.toUpperCase() == 'CONNECTED') {
-        _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
-      } else {
-        _speedCalc.reset();
-      }
-      setState(() => _status = s);
-    });
+    // Use the same subscription setup as _resubscribeVpnStatus so that
+    // _persistTileState is always called on state changes.
+    _resubscribeVpnStatus();
     if (mounted) setState(() => _initialized = true);
     _loadNodes();
   }
@@ -417,6 +412,7 @@ class _HomePageState extends State<HomePage>
   }
 
   String _fmtBytes(int b) {
+    if (b < 0) b = 0;
     if (b < 1024) return '${b}B';
     if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)}KB';
     if (b < 1024 * 1024 * 1024) return '${(b / (1024 * 1024)).toStringAsFixed(1)}MB';
@@ -892,26 +888,23 @@ class _NoPlanPrompt extends StatelessWidget {
       const Text('У вас нет активной подписки.',
           style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
       const SizedBox(height: 12),
-      Center(
-        child: GestureDetector(
-          onTap: onGoToPremium,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [DS.violet, DS.violetDim],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(DS.radiusSm),
+      GestureDetector(
+        onTap: onGoToPremium,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [DS.violet, DS.violetDim],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            child: const Text('Получить подписку',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700)),
+            borderRadius: BorderRadius.circular(DS.radiusSm),
           ),
+          child: const Text('Получить подписку',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700)),
         ),
       ),
     ],
