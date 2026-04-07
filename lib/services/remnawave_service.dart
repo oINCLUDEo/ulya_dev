@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_config.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
+import '../models/vless_server.dart';
 
 /// Service that fetches and parses the user's personal subscription URL.
 ///
@@ -25,11 +26,26 @@ import '../models/subscription_info.dart';
 ///   `User-Agent: Happ/1.5.1/Android`
 ///   `X-HWID: <stable-device-id>`
 class RemnawaveService {
-  static const _prefSubscriptionUrl = 'subscription_url';
-  static const _prefHwid = 'device_hwid';
-  static const _prefCachedNodes = 'cached_nodes';
+  static const _prefSubscriptionUrl        = 'subscription_url';
+  static const _prefHwid                   = 'device_hwid';
+  static const _prefCachedNodes            = 'cached_nodes';
   static const _prefCachedSubscriptionInfo = 'cached_subscription_info';
-  static const _prefSelectedNodeUUID = 'selected_node_uuid';
+  static const _prefSelectedNodeUUID       = 'selected_node_uuid';
+
+  /// SOCKS5 inbound injected into every mobile Xray config.
+  ///
+  /// Sniffing is intentionally DISABLED to match [FlutterV2RayURL.getFullConfiguration].
+  /// With sniffing enabled, xray resolves every sniffer-extracted hostname via its
+  /// internal DNS before routing.  When includeSelfInVpn=true those DNS packets also
+  /// traverse the TUN → xray re-entry path, adding round-trip latency per connection.
+  static const _socksInbound = {
+    'tag':      'in_proxy',
+    'port':     10807,
+    'protocol': 'socks',
+    'listen':   '127.0.0.1',
+    'settings': {'auth': 'noauth', 'udp': true, 'userLevel': 8},
+    'sniffing': {'enabled': false},
+  };
 
   // ── Cached subscription info ──────────────────────────────────────────────
 
@@ -124,10 +140,10 @@ class RemnawaveService {
     }
 
     return {
-      'User-Agent': 'Happ/1.5.1/Ulya/1.1.0',
-      'X-HWID': hwid,
-      'X-Ver-OS': osVersion,
-      'X-Device-OS': platform,
+      'User-Agent':     'Happ/1.5.1/Ulya/1.1.0',
+      'X-HWID':         hwid,
+      'X-Ver-OS':       osVersion,
+      'X-Device-OS':    platform,
       'X-Device-Model': deviceModel,
     };
   }
@@ -207,7 +223,8 @@ class RemnawaveService {
 
         final rawName = serverJson['name']?.toString() ?? '';
 
-        if ((serverJson['countryCode'] == null || serverJson['countryCode'].toString().isEmpty) &&
+        if ((serverJson['countryCode'] == null ||
+                serverJson['countryCode'].toString().isEmpty) &&
             rawName.isNotEmpty) {
           final code = _countryCodeFromName(rawName);
           if (code.isNotEmpty) {
@@ -229,32 +246,71 @@ class RemnawaveService {
     }
   }
 
-  // ── НОВАЯ ФУНКЦИЯ: Очистка имени от флага ─────────────────────────────────
+  // ── Public VLESS parser ───────────────────────────────────────────────────
 
-  /// Удаляет флаг из начала имени сервера
-  /// Например: "🇷🇺 Russia" -> "Russia", "🇩🇪 DE-01" -> "DE-01"
+  /// Decodes a base64-encoded subscription body and returns a list of
+  /// [VlessServer] objects for every valid `vless://` line.
+  ///
+  /// Algorithm:
+  ///   1. base64_decode the body (handles URL-safe alphabet + missing padding)
+  ///   2. split by `\n`
+  ///   3. filter empty lines and lines not starting with `vless://`
+  ///   4. parse URI → extract query params → URL-decode fragment as displayName
+  ///
+  /// Edge cases handled:
+  ///   - Non-base64 input falls back to plain-text split
+  ///   - Malformed URIs are silently skipped
+  ///   - Duplicate links (same uuid+host+port) are deduplicated
+  static List<VlessServer> parseVlessLinks(String rawBody) {
+    final lines = _parseSubscriptionBody(rawBody);
+
+    final seen = <String>{};
+    final result = <VlessServer>[];
+
+    for (final line in lines) {
+      if (!line.startsWith('vless://')) continue;
+
+      Uri uri;
+      try {
+        uri = Uri.parse(line);
+      } catch (_) {
+        continue;
+      }
+
+      final vs = VlessServer.fromUri(uri);
+      if (vs == null) continue;
+
+      // Deduplicate by uuid+host+port.
+      final key = '${vs.uuid}@${vs.host}:${vs.port}';
+      if (seen.contains(key)) continue;
+      seen.add(key);
+
+      result.add(vs);
+    }
+
+    debugPrint('RemnawaveService.parseVlessLinks: ${result.length} servers');
+    return result;
+  }
+
+  // ── Private helpers ───────────────────────────────────────────────────────
+
+  /// Removes the flag emoji from the beginning of a server name.
+  /// E.g.: "🇷🇺 Russia" → "Russia", "🇩🇪 DE-01" → "DE-01".
   static String _cleanServerName(String name) {
     if (name.isEmpty) return name;
 
     final runes = name.runes.toList();
 
-    // Проверяем, начинается ли имя с флага (2 символа-флага)
     if (runes.length >= 2) {
       final a = runes[0];
       final b = runes[1];
 
-      // Проверяем, что это региональные индикаторы (флаги)
       if (a >= 0x1F1E6 && a <= 0x1F1FF && b >= 0x1F1E6 && b <= 0x1F1FF) {
-        // Пропускаем флаг (2 символа) и следующий пробел, если есть
         int startIndex = 2;
-
-        // Пропускаем пробелы после флага
         while (startIndex < runes.length &&
             (runes[startIndex] == 0x20 || runes[startIndex] == 0x200B)) {
           startIndex++;
         }
-
-        // Если после флага есть символы, возвращаем оставшуюся часть
         if (startIndex < runes.length) {
           return String.fromCharCodes(runes.sublist(startIndex));
         }
@@ -311,27 +367,53 @@ class RemnawaveService {
     }
   }
 
-  // ── Private helpers ───────────────────────────────────────────────────────
+  // ── Subscription body ─────────────────────────────────────────────────────
 
   /// Parses the raw subscription body into individual config-link strings.
   ///
-  /// Remnawave (and most panels) return configs as either:
-  ///  - Plain text: one link per line
-  ///  - Base64-encoded text: decode first, then one link per line
+  /// Remnawave (and most panels) return configs in one of three formats:
+  ///  1. JSON array of full Xray configs: `[{"dns":...,"outbounds":[...]},...]`
+  ///  2. Base64-encoded text: one vless/vmess/trojan link per line
+  ///  3. Plain text: one link per line
   static List<String> _parseSubscriptionBody(String body) {
     body = body.trim();
     if (body.isEmpty) return [];
 
-    // Attempt base64 decode first.
+    // ── Format 1: JSON array of full Xray configs ──────────────────────────
+    if (body.startsWith('[')) {
+      try {
+        final list = jsonDecode(body) as List<dynamic>;
+        if (list.isNotEmpty && list[0] is Map) {
+          debugPrint(
+              'RemnawaveService: parsed as JSON array (${list.length} configs)');
+          return list
+              .whereType<Map<String, dynamic>>()
+              .map(jsonEncode)
+              .toList();
+        }
+      } catch (_) {
+        // Not a valid JSON array — fall through.
+      }
+    }
+
+    // ── Format 2: Single JSON object ──────────────────────────────────────
+    if (body.startsWith('{')) {
+      try {
+        final obj = jsonDecode(body) as Map<String, dynamic>;
+        debugPrint('RemnawaveService: parsed as single JSON config');
+        return [jsonEncode(obj)];
+      } catch (_) {}
+    }
+
+    // ── Format 3: Base64-encoded links ────────────────────────────────────
     try {
-      // Base64 may use standard or URL-safe alphabet; add padding if needed.
       String b64 = body.replaceAll('\n', '').replaceAll('\r', '');
       final padding = b64.length % 4;
       if (padding != 0) b64 += '=' * (4 - padding);
       final decoded = utf8.decode(base64.decode(b64));
-      // If the decoded string looks like VPN config links, use it.
       if (decoded.contains('://')) {
-        debugPrint('RemnawaveService: parsed as base64 (${decoded.split('\n').length} lines)');
+        debugPrint(
+            'RemnawaveService: parsed as base64 (${decoded.split('\n').length} lines)');
         return decoded
             .split(RegExp(r'\r?\n'))
             .map((l) => l.trim())
@@ -342,6 +424,7 @@ class RemnawaveService {
       // Not base64 — fall through to plain-text parsing.
     }
 
+    // ── Format 4: Plain text links ────────────────────────────────────────
     debugPrint('RemnawaveService: parsed as plain text');
     return body
         .split(RegExp(r'\r?\n'))
@@ -349,6 +432,8 @@ class RemnawaveService {
         .where((l) => l.isNotEmpty)
         .toList();
   }
+
+  // ── Subscription info header ──────────────────────────────────────────────
 
   /// Parses the `Subscription-Userinfo` header into a [SubscriptionInfo].
   ///
@@ -382,10 +467,12 @@ class RemnawaveService {
     );
   }
 
+  // ── Fragment parser ───────────────────────────────────────────────────────
+
   static ({String name, String? description}) _parseFragment(
-      String fragment,
-      String fallbackHost,
-      ) {
+    String fragment,
+    String fallbackHost,
+  ) {
     if (fragment.isEmpty) {
       return (name: fallbackHost, description: null);
     }
@@ -408,20 +495,34 @@ class RemnawaveService {
           description = utf8.decode(base64.decode(encoded));
         }
       } catch (_) {
-        // игнорируем кривой base64 или кривой query
+        // ignore malformed base64 or query
       }
     }
 
     return (name: name, description: description);
   }
 
+  // ── Config link parser ────────────────────────────────────────────────────
+
   /// Parses a single VPN config link into a [ServerNode].
-  /// Supported schemes: vless, vmess, trojan, ss, hysteria2, hy2, tuic, wg.
-  /// Returns `null` for unrecognised links.
+  ///
+  /// Handles two input formats:
+  ///   - JSON string (full Xray config): `{"outbounds":[...],"remarks":"..."}`
+  ///   - URI string: `vless://`, `vmess://`, `trojan://`, `ss://`, etc.
+  ///
+  /// For `vless://` links the [ServerNode.vlessServer] field is populated with
+  /// fully-typed parameters (flow, sni, fp, pbk, etc.) ready for Stage 4.
+  ///
+  /// Returns `null` for unrecognised or malformed links.
   static ServerNode? _parseConfigLink(String link) {
     try {
       link = link.trim();
       if (link.isEmpty) return null;
+
+      // ── Full Xray JSON config ──────────────────────────────────────────
+      if (link.startsWith('{')) {
+        return _parseXrayJsonConfig(link);
+      }
 
       final uri = Uri.parse(link);
       final scheme = uri.scheme.toLowerCase();
@@ -441,26 +542,226 @@ class RemnawaveService {
 
       final rawName = parsed.name;
       final cleanName = _cleanServerName(rawName);
-
       final description = parsed.description;
       final countryCode = _countryCodeFromName(rawName);
 
+      // For VLESS links — extract all typed params into VlessServer.
+      VlessServer? vlessServer;
+      if (scheme == 'vless') {
+        vlessServer = VlessServer.fromUri(uri);
+        // Override displayName with the cleaned name so it matches the UI label.
+        if (vlessServer != null) {
+          vlessServer = VlessServer(
+            uuid:        vlessServer.uuid,
+            host:        vlessServer.host,
+            port:        vlessServer.port,
+            displayName: cleanName,
+            flow:        vlessServer.flow,
+            sni:         vlessServer.sni,
+            fp:          vlessServer.fp,
+            pbk:         vlessServer.pbk,
+            network:     vlessServer.network,
+            security:    vlessServer.security,
+            sid:         vlessServer.sid,
+            path:        vlessServer.path,
+            wsHost:      vlessServer.wsHost,
+            encryption:  vlessServer.encryption,
+          );
+        }
+      }
+
       return ServerNode(
-        uuid: link,
-        name: cleanName,
-        address: host,
+        uuid:        link,   // raw link as UUID — required by plugin for connect
+        name:        cleanName,
+        address:     host,
+        serverPort:  uri.hasPort ? uri.port : 443,
         countryCode: countryCode,
         isConnected: true,
-        isDisabled: false,
-        link: link,
-        protocol: scheme,
+        isDisabled:  false,
+        link:        link,
+        protocol:    scheme,
         description: description,
+        vlessServer: vlessServer,
       );
     } catch (e) {
       debugPrint('RemnawaveService: failed to parse link: $e');
       return null;
     }
   }
+
+  // ── Full Xray JSON config parser ──────────────────────────────────────────
+
+  /// Parses a full Xray JSON config string (as returned by Remnawave when the
+  /// subscription format is a JSON array instead of vless:// links).
+  ///
+  /// VPN compatibility strategy
+  /// ──────────────────────────
+  /// Remnawave generates *desktop* Xray configs: complex geo-routing, custom DNS
+  /// policies, inbounds on desktop ports, etc.  On mobile (tun2socks mode) this
+  /// causes silent failures: xray starts but routes traffic incorrectly.
+  ///
+  /// For **regular servers** we build a *clean mobile config* — identical in
+  /// structure to what `FlutterV2RayURL.getFullConfiguration()` produces:
+  ///   - Only the proxy outbound from Remnawave (all stream/TLS settings kept)
+  ///   - freedom + blackhole utility outbounds
+  ///   - Simple DNS: ["8.8.8.8", "1.1.1.1"]
+  ///   - Empty routing (XrayCoreManager injects API rule)
+  ///   - No inbounds (XrayCoreManager injects SOCKS 10807 + HTTP 10808)
+  ///
+  /// For **virtual/balanced hosts** the routing.balancers + rules are preserved
+  /// (they contain the load-balancing logic), but inbounds are stripped and
+  /// DNS is simplified.
+  static ServerNode? _parseXrayJsonConfig(String jsonStr) {
+    try {
+      final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+
+      // ── Remarks — try multiple field names ────────────────────────────────
+      // Remnawave puts the server name in `remarks` (standard xray field).
+      // Log all top-level string fields on first call to help diagnose issues.
+      final rawRemarks =
+          (json['remarks']     as String?) ??
+          (json['description'] as String?) ??
+          (json['name']        as String?) ?? '';
+      // serverDescription is the category label set by Remnawave (e.g. "Белые списки").
+      // Remnawave stores it inside a nested `meta` object: meta.serverDescription.
+      final meta = json['meta'] as Map<String, dynamic>?;
+      final serverDescription = (meta?['serverDescription'] as String?)
+          ?? (json['serverDescription'] as String?); // fallback for older format
+      debugPrint('RemnawaveService.parseJSON: remarks="$rawRemarks" '
+          'serverDescription="$serverDescription" '
+          'allKeys=${json.keys.toList()}');
+
+      // ── Collect all outbounds ─────────────────────────────────────────────
+      final allOutbounds = json['outbounds'] as List<dynamic>? ?? [];
+      const skipProtocols = {'freedom', 'blackhole', 'dns', 'loopback'};
+
+      final proxyOutbounds = allOutbounds
+          .whereType<Map<String, dynamic>>()
+          .where((ob) => !skipProtocols.contains(
+              (ob['protocol'] as String? ?? '').toLowerCase()))
+          .toList();
+
+      // ── Detect virtual / balanced host ────────────────────────────────────
+      final routing   = json['routing'] as Map<String, dynamic>?;
+      final balancers = routing?['balancers'] as List<dynamic>?;
+      final isVirtual = (balancers != null && balancers.isNotEmpty)
+          || proxyOutbounds.length > 1;
+
+      if (isVirtual) {
+        // Keep full routing (balancers + rules) but strip inbounds and use
+        // clean DNS.  Pre-include the SOCKS inbound with sniffing DISABLED so
+        // XrayCoreManager does NOT inject its own (which has sniffing=true).
+        // With sniffing=true xray would do DNS resolution for every connection
+        // via its internal resolver, whose traffic also goes through TUN when
+        // includeSelfInVpn=true — causing latency-inducing re-entry loops.
+        final mobileJson = jsonEncode({
+          'log':      {'loglevel': 'warning'},
+          'dns':      {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
+          'inbounds': [_socksInbound],
+          'outbounds': allOutbounds,  // keep all — balancer references them
+          'routing':  {
+            'domainStrategy': routing?['domainStrategy'] ?? 'IPIfNonMatch',
+            'domainMatcher':  'hybrid',
+            'rules':    routing?['rules']    ?? [],
+            'balancers': balancers ?? [],
+          },
+        });
+
+        final name = rawRemarks.isNotEmpty ? _cleanServerName(rawRemarks) : 'Авто-выбор';
+        return ServerNode(
+          uuid:        mobileJson,
+          name:        name,
+          address:     '',
+          serverPort:  443,
+          countryCode: '',
+          isConnected: true,
+          isDisabled:  false,
+          link:        mobileJson,
+          protocol:    'auto',
+          description: serverDescription ?? rawRemarks,
+        );
+      }
+
+      // ── Regular single-server config ──────────────────────────────────────
+      if (proxyOutbounds.isEmpty) return null;
+      final proxyOutbound = proxyOutbounds.first;
+      final protocol = (proxyOutbound['protocol'] as String? ?? 'vless').toLowerCase();
+      final settings = proxyOutbound['settings'] as Map<String, dynamic>? ?? {};
+
+      String host = '';
+      int    port = 443;
+
+      switch (protocol) {
+        case 'vless':
+        case 'vmess':
+          final vnext = settings['vnext'] as List<dynamic>?;
+          if (vnext != null && vnext.isNotEmpty) {
+            final s = vnext[0] as Map<String, dynamic>;
+            host = (s['address'] as String?) ?? '';
+            port = (s['port']    as int?)    ?? 443;
+          }
+        case 'trojan':
+        case 'shadowsocks':
+          final servers = settings['servers'] as List<dynamic>?;
+          if (servers != null && servers.isNotEmpty) {
+            final s = servers[0] as Map<String, dynamic>;
+            host = (s['address'] as String?) ?? '';
+            port = (s['port']    as int?)    ?? 443;
+          }
+        default:
+          debugPrint('RemnawaveService.parseJSON: unsupported protocol "$protocol"');
+          return null;
+      }
+
+      if (host.isEmpty) return null;
+
+      // ── Build clean mobile config ─────────────────────────────────────────
+      // Mirror FlutterV2RayURL.getFullConfiguration() structure.
+      // Pre-include SOCKS inbound with sniffing=false so XrayCoreManager does
+      // NOT inject its own (which has sniffing=true and causes DNS re-entry
+      // loops when includeSelfInVpn=true).
+      final mobileJson = jsonEncode({
+        'log':     {'loglevel': 'warning'},
+        'dns':     {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
+        'inbounds': [_socksInbound],
+        'outbounds': [
+          proxyOutbound,
+          {'tag': 'direct',    'protocol': 'freedom'},
+          {'tag': 'block',     'protocol': 'blackhole'},
+        ],
+        'routing': {
+          'domainStrategy': 'IPIfNonMatch',
+          'domainMatcher':  'hybrid',
+          'rules': [
+            // Route bittorrent directly (not through VPN) — matches Happ behaviour.
+            {'type': 'field', 'protocol': ['bittorrent'], 'outboundTag': 'direct'},
+          ],
+        },
+      });
+
+      final nameRaw = rawRemarks.isNotEmpty ? rawRemarks : host;
+      final name    = _cleanServerName(nameRaw);
+      final country = _countryCodeFromName(nameRaw);
+
+      return ServerNode(
+        uuid:        mobileJson,
+        name:        name,
+        address:     host,
+        serverPort:  port,
+        countryCode: country,
+        isConnected: true,
+        isDisabled:  false,
+        link:        mobileJson,
+        protocol:    protocol,
+        description: serverDescription ?? rawRemarks,
+      );
+    } catch (e) {
+      debugPrint('RemnawaveService: failed to parse JSON config: $e');
+      return null;
+    }
+  }
+
+  // ── Country code heuristic ────────────────────────────────────────────────
 
   /// Extracts a 2-letter ISO country code from a server name heuristically.
   ///
@@ -498,7 +799,8 @@ class RemnawaveService {
     }
 
     // 2-letter prefix pattern: "DE-01", "RU_Server", "US01" etc.
-    final prefixMatch = RegExp(r'^([A-Z]{2})[-_\s\d]').firstMatch(name.toUpperCase());
+    final prefixMatch =
+        RegExp(r'^([A-Z]{2})[-_\s\d]').firstMatch(name.toUpperCase());
     if (prefixMatch != null) return prefixMatch.group(1)!;
 
     return '';

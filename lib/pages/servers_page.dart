@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
@@ -34,6 +36,7 @@ class _ServersPageState extends State<ServersPage> {
   bool _loading = true;
   bool _isPublicCatalog = false;
 
+  bool _autoExpanded     = true;
   bool _bypassExpanded   = true;
   bool _unlimitedExpanded = true;
   bool _otherExpanded    = true;
@@ -91,16 +94,25 @@ class _ServersPageState extends State<ServersPage> {
 
   // ── Grouping ───────────────────────────────────────────────────────────────
   Map<String, List<ServerNode>> _grouped() {
-    final map = {'bypass': <ServerNode>[], 'unlimited': <ServerNode>[], 'other': <ServerNode>[]};
+    final map = {
+      'auto':      <ServerNode>[],
+      'bypass':    <ServerNode>[],
+      'unlimited': <ServerNode>[],
+      'other':     <ServerNode>[],
+    };
     for (final n in _nodes) {
-      final d = (n.description ?? '').toLowerCase();
-      if (d.contains('белые')) {
+      if (n.protocol == 'auto') {
+        map['auto']!.add(n);
+        continue;
+      }
+      // Category is determined ONLY by the serverDescription field (description).
+      // Remnawave sets this field explicitly, e.g. "Белые списки".
+      final hay = (n.description ?? '').toLowerCase();
+      if (_isBypass(hay)) {
         map['bypass']!.add(n);
-      }
-      else if (d.contains('безлимит')) {
+      } else if (_isUnlimited(hay)) {
         map['unlimited']!.add(n);
-      }
-      else {
+      } else {
         map['other']!.add(n);
       }
     }
@@ -114,6 +126,20 @@ class _ServersPageState extends State<ServersPage> {
     return map;
   }
 
+  // ── Category keywords ─────────────────────────────────────────────────────
+  static bool _isBypass(String hay) =>
+      hay.contains('белые') ||   // "Белые списки"
+      hay.contains('обход') ||   // "Обход LTE", "Обход ограничений"
+      hay.contains('bypass') ||
+      hay.contains('лте') ||     // LTE / мобильные обходные
+      hay.contains('lte') ||
+      // YT·TG·Игры = сервер с белыми списками (Россия)
+      (hay.contains('yt') && hay.contains('tg'));
+
+  static bool _isUnlimited(String hay) =>
+      hay.contains('безлимит') ||
+      hay.contains('unlimited');
+
   // ── Ping ───────────────────────────────────────────────────────────────────
   Future<int?> _tcpPingRaw(String host, int port) async {
     final sw = Stopwatch()..start();
@@ -124,15 +150,15 @@ class _ServersPageState extends State<ServersPage> {
   }
 
   Future<void> _tcpPingNode(ServerNode node) async {
+    // Virtual/balanced hosts have no single address to ping.
+    if (node.protocol == 'auto') return;
     if (node.link == null) return;
+    final host = node.address;
+    if (host.isEmpty) return;
+    final port = node.serverPort > 0 ? node.serverPort : 443;
     setState(() => _pings[node.uuid] = -2);
-    try {
-      final uri = Uri.parse(node.link!);
-      final ms = await _tcpPingRaw(uri.host, uri.hasPort ? uri.port : 443);
-      if (mounted) setState(() => _pings[node.uuid] = ms ?? -1);
-    } catch (_) {
-      if (mounted) setState(() => _pings[node.uuid] = -1);
-    }
+    final ms = await _tcpPingRaw(host, port);
+    if (mounted) setState(() => _pings[node.uuid] = ms ?? -1);
   }
 
   Future<void> _tcpPingAll() async {
@@ -195,6 +221,11 @@ class _ServersPageState extends State<ServersPage> {
         )),
       ));
     }
+
+    addSection(title: 'Авто-выбор', subtitle: 'Автоматическая балансировка между серверами',
+        nodes: groups['auto']!, color: const Color(0xFF818CF8),
+        icon: Icons.auto_awesome_rounded, expanded: _autoExpanded,
+        onToggle: () => setState(() => _autoExpanded = !_autoExpanded));
 
     addSection(title: 'Обход ограничений', subtitle: 'Для доступа к заблокированным сайтам',
         nodes: groups['bypass']!, color: DS.violet,
@@ -479,16 +510,28 @@ class _NodeTile extends StatelessWidget {
       child: Material(color: Colors.transparent,
         child: InkWell(
           onTap: onSelect,
+          onLongPress: node.link != null ? () => _showConfigDialog(context, node) : null,
           borderRadius: BorderRadius.circular(DS.radius),
           splashColor: accentColor.withValues(alpha: 0.08),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
             child: Row(children: [
-              // Flag
-              CountryFlag.fromCountryCode(
-                node.countryCode,
-                theme: ImageTheme(width: 36, height: 28, shape: RoundedRectangle(8)),
-              ),
+              // Flag / virtual host icon
+              if (node.protocol == 'auto' || node.countryCode.isEmpty)
+                Container(
+                  width: 36, height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF818CF8).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Icon(Icons.auto_awesome_rounded,
+                      size: 16, color: Color(0xFF818CF8)),
+                )
+              else
+                CountryFlag.fromCountryCode(
+                  node.countryCode,
+                  theme: ImageTheme(width: 36, height: 28, shape: RoundedRectangle(8)),
+                ),
               const SizedBox(width: 12),
               // Info
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -536,6 +579,55 @@ class _NodeTile extends StatelessWidget {
     );
   }
 
+  /// Long-press debug view: shows the raw Xray JSON for this server.
+  void _showConfigDialog(BuildContext context, ServerNode node) {
+    final raw = node.link ?? '(no link)';
+
+    // Pretty-print if JSON, otherwise show as-is.
+    String pretty;
+    try {
+      final parsed = jsonDecode(raw);
+      pretty = const JsonEncoder.withIndent('  ').convert(parsed);
+    } catch (_) {
+      pretty = raw;
+    }
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: DS.surface1,
+        title: Text(node.name,
+            style: const TextStyle(fontSize: 14, color: DS.textPrimary)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              pretty,
+              style: const TextStyle(
+                  fontFamily: 'monospace', fontSize: 10, color: DS.textSecondary),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: pretty));
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Конфиг скопирован')),
+              );
+            },
+            child: const Text('Копировать'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Color _pingColor(int? p) {
     if (p == null) return DS.textMuted;
     if (p == -2) return DS.amber;
@@ -554,14 +646,20 @@ class _ProtoBadge extends StatelessWidget {
 
   Color _color() {
     switch (protocol.toLowerCase()) {
-      case 'vmess': return DS.violet;
-      case 'vless': return const Color(0xFF22D3EE);
-      case 'trojan': return DS.amber;
-      case 'ss': return DS.emerald;
+      case 'auto':    return const Color(0xFF818CF8);
+      case 'vmess':   return DS.violet;
+      case 'vless':   return const Color(0xFF22D3EE);
+      case 'trojan':  return DS.amber;
+      case 'ss':      return DS.emerald;
       case 'hysteria2': case 'hy2': case 'hysteria': return DS.rose;
-      case 'tuic': return const Color(0xFFF0ABFC);
-      default: return DS.textMuted;
+      case 'tuic':    return const Color(0xFFF0ABFC);
+      default:        return DS.textMuted;
     }
+  }
+
+  String get _label {
+    if (protocol.toLowerCase() == 'auto') return 'AUTO';
+    return protocol.toUpperCase();
   }
 
   @override
@@ -571,7 +669,7 @@ class _ProtoBadge extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
           color: c.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(5)),
-      child: Text(protocol.toUpperCase(), style: TextStyle(
+      child: Text(_label, style: TextStyle(
           color: c, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
     );
   }

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -222,12 +221,23 @@ class _HomePageState extends State<HomePage>
     setState(() => _isConnecting = true);
     appLogger.info('HomePage', 'connecting to ${node.name} (${node.countryCode})');
     try {
-      final parser = FlutterV2ray.parseFromURL(node.link!);
+      // Support both full Xray JSON configs (Remnawave JSON-array subscription)
+      // and legacy vless:// / vmess:// / trojan:// URI links.
+      final rawLink = node.link!.trim();
+      final String vpnConfig;
+      if (rawLink.startsWith('{')) {
+        vpnConfig = rawLink;
+      } else {
+        vpnConfig = FlutterV2ray.parseFromURL(rawLink).getFullConfiguration();
+      }
+      appLogger.info('HomePage',
+          'connecting: type=${rawLink.startsWith('{') ? 'JSON' : 'URI'} '
+          'addr=${node.address}:${node.serverPort}');
+
       await _v2ray.startVless(
         remark: node.name,
-        config: parser.getFullConfiguration(),
+        config: vpnConfig,
         notificationDisconnectButtonName: 'Отключить',
-        proxyOnly: false,
       );
     } catch (e) {
       appLogger.error('HomePage', 'connection error: $e');
@@ -588,7 +598,6 @@ class _HomePageState extends State<HomePage>
                     ),
                   )
                 else
-                // Если нет выбранного сервера или кода страны, показываем иконку глобуса
                   Container(
                     width: 36,
                     height: 28,

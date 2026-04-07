@@ -230,10 +230,9 @@ packages:
   flutter_v2ray_plus:
     dependency: "direct main"
     description:
-      name: flutter_v2ray_plus
-      sha256: "3e645701b76578e7b1dd285b869a988baee3f9a234448737da9829c63f3d3d11"
-      url: "https://pub.dev"
-    source: hosted
+      path: "packages/flutter_v2ray_plus"
+      relative: true
+    source: path
     version: "1.1.3"
   flutter_web_plugins:
     dependency: transitive
