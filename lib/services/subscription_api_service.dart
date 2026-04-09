@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../config/app_config.dart';
 import 'auth_state.dart';
@@ -353,15 +355,58 @@ class SubscriptionApiService {
     };
   }
 
+  /// Returns an HTTP client that routes through the local xray HTTP proxy
+  /// (port 10808) when the VPN is active, so subscription API calls reach
+  /// the backend even when the app package is excluded from the VPN tunnel.
+  static http.Client _makeClient() {
+    if (vpnConnectedNotifier.value) {
+      return IOClient(
+        HttpClient()..findProxy = (uri) => 'PROXY 127.0.0.1:10808',
+      );
+    }
+    return http.Client();
+  }
+
+  static Future<http.Response> _get(Uri uri) async {
+    final c = _makeClient();
+    try {
+      return await c
+          .get(uri, headers: _headers())
+          .timeout(const Duration(seconds: 15));
+    } finally {
+      c.close();
+    }
+  }
+
+  static Future<http.Response> _post(Uri uri, String body,
+      {Duration timeout = const Duration(seconds: 20)}) async {
+    final c = _makeClient();
+    try {
+      return await c
+          .post(uri, headers: _headers(), body: body)
+          .timeout(timeout);
+    } finally {
+      c.close();
+    }
+  }
+
+  static Future<http.Response> _put(Uri uri, String body) async {
+    final c = _makeClient();
+    try {
+      return await c
+          .put(uri, headers: _headers(), body: body)
+          .timeout(const Duration(seconds: 15));
+    } finally {
+      c.close();
+    }
+  }
+
   /// GET /mobile/v1/subscription/options
   static Future<SubscriptionOptions?> getOptions() async {
     try {
-      final resp = await http
-          .get(
+      final resp = await _get(
         Uri.parse('$_base/mobile/v1/subscription/options'),
-        headers: _headers(),
-      )
-          .timeout(const Duration(seconds: 15));
+      );
       if (resp.statusCode == 200) {
         return SubscriptionOptions.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
@@ -388,13 +433,11 @@ class SubscriptionApiService {
       if (devices != null) body['devices'] = devices;
       if (servers != null) body['servers'] = servers;
 
-      final resp = await http
-          .post(
+      final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/calc'),
-        headers: _headers(),
-        body: jsonEncode(body),
-      )
-          .timeout(const Duration(seconds: 15));
+        jsonEncode(body),
+        timeout: const Duration(seconds: 15),
+      );
       if (resp.statusCode == 200) {
         return CalcResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
@@ -421,13 +464,10 @@ class SubscriptionApiService {
       if (devices != null) body['devices'] = devices;
       if (servers != null) body['servers'] = servers;
 
-      final resp = await http
-          .post(
+      final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/buy'),
-        headers: _headers(),
-        body: jsonEncode(body),
-      )
-          .timeout(const Duration(seconds: 20));
+        jsonEncode(body),
+      );
       if (resp.statusCode == 200) {
         return BuyResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
@@ -463,13 +503,10 @@ class SubscriptionApiService {
       if (devicesAdd != null) body['devices_add'] = devicesAdd;
       if (servers != null) body['servers'] = servers;
 
-      final resp = await http
-          .post(
+      final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/upgrade'),
-        headers: _headers(),
-        body: jsonEncode(body),
-      )
-          .timeout(const Duration(seconds: 20));
+        jsonEncode(body),
+      );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
         return BuyResult(
@@ -509,13 +546,11 @@ class SubscriptionApiService {
       if (devicesAdd != null) body['devices_add'] = devicesAdd;
       if (servers != null) body['servers'] = servers;
 
-      final resp = await http
-          .post(
+      final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/upgrade/calc'),
-        headers: _headers(),
-        body: jsonEncode(body),
-      )
-          .timeout(const Duration(seconds: 15));
+        jsonEncode(body),
+        timeout: const Duration(seconds: 15),
+      );
       if (resp.statusCode == 200) {
         return UpgradeCalcResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
@@ -532,12 +567,7 @@ class SubscriptionApiService {
   /// GET /mobile/v1/balance
   static Future<BalanceInfo?> getBalance() async {
     try {
-      final resp = await http
-          .get(
-        Uri.parse('$_base/mobile/v1/balance'),
-        headers: _headers(),
-      )
-          .timeout(const Duration(seconds: 15));
+      final resp = await _get(Uri.parse('$_base/mobile/v1/balance'));
       if (resp.statusCode == 200) {
         return BalanceInfo.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
@@ -554,13 +584,10 @@ class SubscriptionApiService {
   /// POST /mobile/v1/balance/topup
   static Future<TopupResult?> topupBalance({required int amountKopeks}) async {
     try {
-      final resp = await http
-          .post(
+      final resp = await _post(
         Uri.parse('$_base/mobile/v1/balance/topup'),
-        headers: _headers(),
-        body: jsonEncode({'amount_kopeks': amountKopeks}),
-      )
-          .timeout(const Duration(seconds: 20));
+        jsonEncode({'amount_kopeks': amountKopeks}),
+      );
       if (resp.statusCode == 200) {
         return TopupResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
@@ -582,13 +609,10 @@ class SubscriptionApiService {
   /// PUT /mobile/v1/subscription/autopay
   static Future<bool?> setAutopay({required bool enabled}) async {
     try {
-      final resp = await http
-          .put(
+      final resp = await _put(
         Uri.parse('$_base/mobile/v1/subscription/autopay'),
-        headers: _headers(),
-        body: jsonEncode({'enabled': enabled}),
-      )
-          .timeout(const Duration(seconds: 15));
+        jsonEncode({'enabled': enabled}),
+      );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
         return json['autopay_enabled'] as bool? ?? enabled;

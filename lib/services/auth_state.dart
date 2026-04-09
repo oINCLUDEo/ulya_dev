@@ -75,6 +75,13 @@ const _keyUsername = 'auth_username';
 final ValueNotifier<AuthState> authStateNotifier =
     ValueNotifier<AuthState>(const AuthState());
 
+/// Global notifier for VPN connection state.
+///
+/// Updated by [HomePage] whenever the xray VPN status changes.
+/// Used by services (e.g. [SubscriptionApiService], [MeService]) to decide
+/// whether to route their HTTP calls through the local xray HTTP proxy.
+final ValueNotifier<bool> vpnConnectedNotifier = ValueNotifier<bool>(false);
+
 // ── Persistence helpers ───────────────────────────────────────────────────────
 
 /// Persist [state] to SharedPreferences.

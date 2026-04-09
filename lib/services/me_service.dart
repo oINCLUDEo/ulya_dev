@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_config.dart';
@@ -32,6 +34,15 @@ class MeService {
   static String get _url => '${AppConfig.backendBaseUrl}/mobile/v1/me';
   static const _prefCachedMe = 'cached_me_response';
 
+  static http.Client _makeClient() {
+    if (vpnConnectedNotifier.value) {
+      return IOClient(
+        HttpClient()..findProxy = (uri) => 'PROXY 127.0.0.1:10808',
+      );
+    }
+    return http.Client();
+  }
+
   /// Fetch the /me endpoint and update [meNotifier].
   ///
   /// Does nothing when the user is not logged in.
@@ -41,14 +52,14 @@ class MeService {
     if (!auth.isLoggedIn || auth.telegramId == null) return null;
 
     try {
-      final response = await http
+      final client = _makeClient();
+      final response = await client
           .get(
         Uri.parse(_url),
-        headers: {
-          'X-Telegram-Id': auth.telegramId.toString(),
-        },
+        headers: {'X-Telegram-Id': auth.telegramId.toString()},
       )
           .timeout(const Duration(seconds: 15));
+      client.close();
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -172,9 +183,11 @@ class MeService {
   static Future<void> _fetchAndPostNotifications(int telegramId) async {
     try {
       final url = '${AppConfig.backendBaseUrl}/mobile/v1/notifications';
-      final resp = await http
+      final client = _makeClient();
+      final resp = await client
           .get(Uri.parse(url), headers: {'X-Telegram-Id': telegramId.toString()})
           .timeout(const Duration(seconds: 10));
+      client.close();
       if (resp.statusCode != 200) return;
       final body = jsonDecode(resp.body) as Map<String, dynamic>;
       final items = body['notifications'] as List<dynamic>? ?? [];

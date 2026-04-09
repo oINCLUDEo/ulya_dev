@@ -97,7 +97,9 @@ class _HomePageState extends State<HomePage>
     _statusSub?.cancel();
     _statusSub = _v2ray.onStatusChanged.listen((s) {
       if (!mounted) return;
-      if (s.state.toUpperCase() == 'CONNECTED') {
+      final connected = s.state.toUpperCase() == 'CONNECTED';
+      vpnConnectedNotifier.value = connected;
+      if (connected) {
         _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
       } else {
         _speedCalc.reset();
