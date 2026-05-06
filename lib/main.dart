@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import 'pages/home_page.dart';
 import 'pages/premium_page.dart';
@@ -25,6 +26,13 @@ class DS {
   static const violet        = Color(0xFF7C6FF7);
   static const violetDim     = Color(0xFF4A44AA);
   static const violetGlow    = Color(0x337C6FF7);
+  static const indigoLight   = Color(0xFF818CF8);   // auto-server / virtual host
+  static const cyan          = Color(0xFF22D3EE);   // vless protocol / unlimited group
+  static const orchid        = Color(0xFFF0ABFC);   // tuic protocol
+  // Itten complementary to violet — used for premium/subscription active status.
+  // Gold signals "active membership"; emerald signals "data/traffic ok".
+  static const gold          = Color(0xFFD4A84B);
+  static const goldDim       = Color(0xFFB8922E);
   static const emerald       = Color(0xFF34D399);
   static const amber         = Color(0xFFFBBF24);
   static const rose          = Color(0xFFF87171);
@@ -330,10 +338,7 @@ class _GlassNavBar extends StatelessWidget {
                 selected: currentIndex == 2,
                 onTap: () => onTabSelected(2),
               ),
-              _NavItem(
-                icon: Icons.diamond_outlined,
-                activeIcon: Icons.diamond_rounded,
-                label: 'Premium',
+              _PremiumNavItem(
                 selected: currentIndex == 3,
                 onTap: () => onTabSelected(3),
               ),
@@ -442,6 +447,103 @@ class _HomeNavItemState extends State<_HomeNavItem>
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
                   color: widget.selected ? DS.textPrimary : DS.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Premium nav item — special gold-glow diamond button
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PremiumNavItem extends StatefulWidget {
+  final bool selected;
+  final VoidCallback onTap;
+  const _PremiumNavItem({required this.selected, required this.onTap});
+
+  @override
+  State<_PremiumNavItem> createState() => _PremiumNavItemState();
+}
+
+class _PremiumNavItemState extends State<_PremiumNavItem>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  static const _gold = Color(0xFFD4A84B);
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+      lowerBound: 1.0,
+      upperBound: 1.10,
+      value: widget.selected ? 1.10 : 1.0,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _PremiumNavItem old) {
+    super.didUpdateWidget(old);
+    widget.selected ? _ctrl.forward() : _ctrl.reverse();
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: widget.onTap,
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (_, child) => Transform.scale(scale: _ctrl.value, child: child),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Icon with permanent subtle glow
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: widget.selected
+                      ? _gold.withValues(alpha: 0.18)
+                      : _gold.withValues(alpha: 0.06),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _gold.withValues(
+                          alpha: widget.selected ? 0.55 : 0.22),
+                      blurRadius: widget.selected ? 16 : 8,
+                      spreadRadius: widget.selected ? 1 : 0,
+                    ),
+                  ],
+                ),
+                child: PhosphorIcon(
+                  widget.selected
+                      ? PhosphorIconsFill.sparkle
+                      : PhosphorIconsRegular.sparkle,
+                  size: 22,
+                  color: widget.selected ? _gold : _gold.withValues(alpha: 0.65),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                'Premium',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: widget.selected
+                      ? _gold
+                      : DS.textMuted,
                 ),
               ),
             ],

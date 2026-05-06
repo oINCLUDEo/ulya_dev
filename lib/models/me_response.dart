@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 /// Model for the GET /mobile/v1/me response.
 class MeResponse {
   const MeResponse({
@@ -57,6 +59,7 @@ class MeSubscription {
     this.subscriptionUrl,
     required this.deviceLimit,
     this.autopayEnabled = false,
+    this.planName,
   });
 
   final String status;
@@ -74,6 +77,11 @@ class MeSubscription {
   final String? subscriptionUrl;
   final int deviceLimit;
   final bool autopayEnabled;
+
+  /// Human-readable tariff / plan name (e.g. "Стандартный", "Семейный").
+  /// Parsed from the API subscription object; null when the server does not
+  /// return this field.
+  final String? planName;
 
   bool get isActive => status == 'active';
 
@@ -97,6 +105,17 @@ class MeSubscription {
   }
 
   factory MeSubscription.fromJson(Map<String, dynamic> json) {
+    // Log subscription JSON keys once to help identify the plan-name field.
+    debugPrint('MeSubscription.fromJson keys: ${json.keys.toList()}');
+
+    // Try several common field names for the tariff / plan label.
+    final rawPlan =
+        (json['plan_name']         as String?) ??
+        (json['name']              as String?) ??
+        (json['subscription_name'] as String?) ??
+        (json['plan']              as String?) ??
+        (json['tariff_name']       as String?);
+
     return MeSubscription(
       status: json['status'] as String? ?? 'unknown',
       isTrial: json['is_trial'] as bool? ?? false,
@@ -106,6 +125,7 @@ class MeSubscription {
       subscriptionUrl: json['subscription_url'] as String?,
       deviceLimit: (json['device_limit'] as num?)?.toInt() ?? 1,
       autopayEnabled: json['autopay_enabled'] as bool? ?? false,
+      planName: (rawPlan?.isNotEmpty == true) ? rawPlan : null,
     );
   }
 }

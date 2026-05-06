@@ -24,6 +24,7 @@ dependencies:
   device_info_plus: ^12.3.0
   url_launcher: ^6.3.2
   country_flags: ^4.1.2
+  phosphor_flutter: ^2.1.0
 
 dev_dependencies:
   flutter_test:

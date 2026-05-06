@@ -341,6 +341,107 @@ class UpgradeCalcResult {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tariff catalog models
+// ─────────────────────────────────────────────────────────────────────────────
+
+class TariffPeriod {
+  final String id;       // "days:30"
+  final int days;
+  final int months;
+  final String label;   // "1 месяц"
+  final int priceKopeks;
+  final int? originalPriceKopeks;
+  final int discountPercent;
+
+  const TariffPeriod({
+    required this.id,
+    required this.days,
+    required this.months,
+    required this.label,
+    required this.priceKopeks,
+    this.originalPriceKopeks,
+    this.discountPercent = 0,
+  });
+
+  double get priceRub => priceKopeks / 100;
+  double? get originalPriceRub =>
+      originalPriceKopeks != null ? originalPriceKopeks! / 100 : null;
+  double? get pricePerMonthRub =>
+      months > 1 ? priceRub / months : null;
+
+  factory TariffPeriod.fromJson(Map<String, dynamic> json) {
+    final baseKopeks = (json['price_kopeks'] as num?)?.toInt() ?? 0;
+    final origKopeks = (json['original_price_kopeks'] as num?)?.toInt();
+    final discPct = (json['discount_percent'] as num?)?.toInt() ?? 0;
+    return TariffPeriod(
+      id: json['id'] as String? ?? '',
+      days: (json['days'] as num?)?.toInt() ?? 30,
+      months: (json['months'] as num?)?.toInt() ?? 1,
+      label: json['label'] as String? ?? '',
+      priceKopeks: baseKopeks,
+      originalPriceKopeks: (origKopeks != null && origKopeks != baseKopeks)
+          ? origKopeks
+          : null,
+      discountPercent: discPct,
+    );
+  }
+}
+
+class TariffInfo {
+  final int id;
+  final String name;
+  final String? description;
+  final int trafficLimitGb;   // 0 = unlimited
+  final int deviceLimit;
+  final int tierLevel;
+  final List<TariffPeriod> periods;
+
+  const TariffInfo({
+    required this.id,
+    required this.name,
+    this.description,
+    required this.trafficLimitGb,
+    required this.deviceLimit,
+    required this.tierLevel,
+    required this.periods,
+  });
+
+  /// Cheapest period (lowest total price — usually 1 month).
+  TariffPeriod? get cheapestPeriod => periods.isEmpty
+      ? null
+      : periods.reduce((a, b) => a.priceKopeks < b.priceKopeks ? a : b);
+
+  /// Best-value period (highest discount %).
+  TariffPeriod? get bestValuePeriod {
+    if (periods.isEmpty) return null;
+    final withDiscount = periods.where((p) => p.discountPercent > 0).toList();
+    if (withDiscount.isEmpty) return null;
+    return withDiscount
+        .reduce((a, b) => a.discountPercent > b.discountPercent ? a : b);
+  }
+
+  String get trafficLabel =>
+      trafficLimitGb == 0 ? '∞ ГБ' : '$trafficLimitGb ГБ';
+  String get deviceLabel => '$deviceLimit устр.';
+
+  factory TariffInfo.fromJson(Map<String, dynamic> json) {
+    final rawPeriods = json['periods'] as List<dynamic>? ?? [];
+    return TariffInfo(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String?,
+      trafficLimitGb: (json['traffic_limit_gb'] as num?)?.toInt() ?? 0,
+      deviceLimit: (json['device_limit'] as num?)?.toInt() ?? 1,
+      tierLevel: (json['tier_level'] as num?)?.toInt() ?? 1,
+      periods: rawPeriods
+          .whereType<Map<String, dynamic>>()
+          .map(TariffPeriod.fromJson)
+          .toList(),
+    );
+  }
+}
+
 /// Service for the mobile subscription API.
 class SubscriptionApiService {
   SubscriptionApiService._();
@@ -603,6 +704,132 @@ class SubscriptionApiService {
     } on Exception catch (e) {
       debugPrint('SubscriptionApiService.topupBalance error: $e');
       return TopupResult(status: 'error', message: e.toString());
+    }
+  }
+
+  /// GET /mobile/v1/tariffs
+  static Future<List<TariffInfo>?> getTariffs() async {
+    try {
+      final resp = await _get(Uri.parse('$_base/mobile/v1/tariffs'));
+      debugPrint('SubscriptionApiService.getTariffs: status=${resp.statusCode}');
+      debugPrint('SubscriptionApiService.getTariffs: body=${resp.body}');
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        final raw = json['tariffs'] as List<dynamic>? ?? [];
+        final result = raw
+            .whereType<Map<String, dynamic>>()
+            .map(TariffInfo.fromJson)
+            .toList();
+        debugPrint('SubscriptionApiService.getTariffs: parsed ${result.length} tariffs');
+        return result;
+      }
+      return null;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.getTariffs error: $e');
+      return null;
+    }
+  }
+
+  /// POST /mobile/v1/subscription/buy-tariff
+  static Future<BuyResult?> buyTariff({
+    required int tariffId,
+    required int periodDays,
+  }) async {
+    try {
+      final body = {'tariff_id': tariffId, 'period_days': periodDays};
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/buy-tariff'),
+        jsonEncode(body),
+      );
+      if (resp.statusCode == 200) {
+        return BuyResult.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      debugPrint('SubscriptionApiService.buyTariff: ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        // detail can be a string or a dict (insufficient_funds case)
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+        if (detail is Map) {
+          return BuyResult(
+            status: 'error',
+            message: detail['message'] as String? ?? 'Ошибка покупки тарифа',
+          );
+        }
+      } catch (_) {}
+      return BuyResult(status: 'error', message: 'Ошибка покупки тарифа');
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.buyTariff error: $e');
+      return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
+  /// POST /mobile/v1/subscription/change-tariff/calc
+  /// Returns the prorated cost to switch to a different tariff.
+  /// Returns 0 when the server considers the change free (downgrade).
+  static Future<UpgradeCalcResult?> calcChangeTariffPrice({
+    required int tariffId,
+    required int periodDays,
+  }) async {
+    try {
+      final body = {'tariff_id': tariffId, 'period_days': periodDays};
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/change-tariff/calc'),
+        jsonEncode(body),
+        timeout: const Duration(seconds: 15),
+      );
+      if (resp.statusCode == 200) {
+        return UpgradeCalcResult.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      debugPrint(
+          'SubscriptionApiService.calcChangeTariffPrice: ${resp.statusCode} ${resp.body}');
+      return null;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.calcChangeTariffPrice error: $e');
+      return null;
+    }
+  }
+
+  /// POST /mobile/v1/subscription/change-tariff
+  /// Switches the active subscription to a different tariff with server-side
+  /// proration. For downgrades the server typically returns status='success'
+  /// with amount_kopeks=0.
+  static Future<BuyResult?> changeTariff({
+    required int tariffId,
+    required int periodDays,
+  }) async {
+    try {
+      final body = {'tariff_id': tariffId, 'period_days': periodDays};
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/change-tariff'),
+        jsonEncode(body),
+      );
+      if (resp.statusCode == 200) {
+        return BuyResult.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      debugPrint(
+          'SubscriptionApiService.changeTariff: ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+        if (detail is Map) {
+          return BuyResult(
+            status: 'error',
+            message: detail['message'] as String? ?? 'Ошибка смены тарифа',
+          );
+        }
+      } catch (_) {}
+      return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.changeTariff error: $e');
+      return BuyResult(status: 'error', message: e.toString());
     }
   }
 

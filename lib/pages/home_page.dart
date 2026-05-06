@@ -39,7 +39,8 @@ class _HomePageState extends State<HomePage>
   // ── Nodes ──────────────────────────────────────────────────────────────────
   List<ServerNode> _nodes = [];
   ServerNode? _selectedNode;
-  bool _isLoadingNodes = false;
+  bool _isLoadingNodes  = false;
+  bool _pendingLoad     = false;   // set when a load is requested while one is running
   bool _isPublicCatalog = false;
   SubscriptionInfo? _subscriptionInfo;
   String _lastKnownSubUrl = '';
@@ -145,6 +146,10 @@ class _HomePageState extends State<HomePage>
 
   // ── Init ───────────────────────────────────────────────────────────────────
   Future<void> _init() async {
+    // Pre-populate /me from cache so subscription card renders immediately,
+    // before any network call completes.
+    await MeService.loadFromCache();
+
     await _v2ray.initializeVless(
       notificationIconResourceType: 'mipmap',
       notificationIconResourceName: 'ic_launcher',
@@ -164,6 +169,9 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _loadNodes() async {
     if (!mounted) return;
+    // Guard: if already loading, mark as pending so we run once more after.
+    if (_isLoadingNodes) { _pendingLoad = true; return; }
+    _pendingLoad = false;
     setState(() => _isLoadingNodes = true);
     final subUrl = await RemnawaveService.getSubscriptionUrl();
     final List<ServerNode> nodes;
@@ -196,6 +204,11 @@ class _HomePageState extends State<HomePage>
         selectedServerNotifier.value = _selectedNode;
       }
     });
+    // If a load was requested while we were busy, run it now once.
+    if (_pendingLoad && mounted) {
+      _pendingLoad = false;
+      _loadNodes();
+    }
   }
 
   // ── Connection ─────────────────────────────────────────────────────────────
@@ -249,6 +262,30 @@ class _HomePageState extends State<HomePage>
     }
   }
 
+  // ── Server picker helpers ──────────────────────────────────────────────────
+
+  /// Splits nodes into auto/manual and sorts each group.
+  /// Manual nodes: primary sort = country code (keeps same-country servers
+  /// together), secondary = availability, tertiary = name.
+  /// Auto nodes: alphabetical by name.
+  ({List<ServerNode> auto, List<ServerNode> manual})
+      _splitAndSort(List<ServerNode> nodes) {
+    final auto   = nodes.where((n) => n.protocol == 'auto').toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
+    final manual = nodes.where((n) => n.protocol != 'auto').toList()
+      ..sort((a, b) {
+        // Keep countries grouped — ping is NOT a cross-country key.
+        final cc = a.countryCode.compareTo(b.countryCode);
+        if (cc != 0) return cc;
+        // Within same country: available first, then name.
+        final aOk = a.isAvailable ? 0 : 1;
+        final bOk = b.isAvailable ? 0 : 1;
+        if (aOk != bOk) return aOk.compareTo(bOk);
+        return a.name.compareTo(b.name);
+      });
+    return (auto: auto, manual: manual);
+  }
+
   void _showServerPicker() {
     String? selectedCat;
     showModalBottomSheet<void>(
@@ -259,6 +296,7 @@ class _HomePageState extends State<HomePage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
+        // Detect which manual categories exist (for filter chips)
         bool hasBypass = false, hasUnlimited = false;
         for (final n in _nodes) {
           final d = (n.description ?? '').toLowerCase();
@@ -267,16 +305,143 @@ class _HomePageState extends State<HomePage>
         }
         final showCats = !_isPublicCatalog && (hasBypass || hasUnlimited);
 
-        List<ServerNode> visible() {
-          if (selectedCat == null) return _nodes;
-          return _nodes.where((n) {
+        // Split and sort
+        final (:auto, :manual) = _splitAndSort(_nodes);
+
+        // Apply category filter to manual nodes only.
+        // Auto-select is hidden while a sub-category filter is active.
+        final List<ServerNode> filteredManual;
+        if (selectedCat == null) {
+          filteredManual = manual;
+        } else {
+          filteredManual = manual.where((n) {
             final d = (n.description ?? '').toLowerCase();
-            if (selectedCat == 'bypass') return d.contains('белые');
+            if (selectedCat == 'bypass')   return d.contains('белые');
             if (selectedCat == 'unlimited') return d.contains('безлимит');
             return !d.contains('белые') && !d.contains('безлимит');
           }).toList();
         }
 
+        final showAuto = selectedCat == null && auto.isNotEmpty && !_isPublicCatalog;
+        final int autoCount     = showAuto ? auto.length : 0;
+        final int dividerCount  = (showAuto && filteredManual.isNotEmpty) ? 1 : 0;
+        final int total         = autoCount + dividerCount + filteredManual.length;
+
+        // ── Tile builder ──────────────────────────────────────────────────────
+        Widget buildTile(ServerNode node, {required bool isAutoNode}) {
+          final isSel    = _selectedNode?.uuid == node.uuid;
+          final locked   = _isPublicCatalog || node.isDisabled || node.link == null;
+          final nameColor = isSel ? DS.violet : DS.textPrimary;
+
+          return Material(
+            color: isSel
+                ? (isAutoNode
+                    ? DS.indigoLight.withValues(alpha: 0.09)
+                    : DS.violet.withValues(alpha: 0.08))
+                : Colors.transparent,
+            child: InkWell(
+              onTap: () async {
+                if (locked) {
+                  Navigator.pop(ctx);
+                  if (context.mounted) {
+                    authStateNotifier.value.isLoggedIn
+                        ? widget.onGoToPremium?.call()
+                        : await showAuthBottomSheet(context);
+                  }
+                  return;
+                }
+                setState(() => _selectedNode = node);
+                selectedServerNotifier.value = node;
+                final p = await SharedPreferences.getInstance();
+                await p.setString('selected_node_uuid', node.uuid);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              splashColor: (isAutoNode ? DS.indigoLight : DS.violet)
+                  .withValues(alpha: 0.08),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+                child: Row(children: [
+                  // Flag or auto icon
+                  if (isAutoNode || node.countryCode.isEmpty)
+                    Container(
+                      width: 36, height: 28,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF1E1B4B), Color(0xFF1A1760)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                            color: DS.indigoLight.withValues(alpha: 0.40)),
+                      ),
+                      child: const Icon(Icons.bolt_rounded,
+                          size: 18, color: DS.indigoLight),
+                    )
+                  else
+                    CountryFlag.fromCountryCode(
+                      node.countryCode,
+                      theme: ImageTheme(
+                          width: 36, height: 28, shape: RoundedRectangle(8)),
+                    ),
+                  const SizedBox(width: 14),
+                  // Name + protocol
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(node.name,
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              color: nameColor),
+                          overflow: TextOverflow.ellipsis),
+                      if ((node.protocol ?? '').isNotEmpty)
+                        Text(
+                          isAutoNode ? 'Авто-выбор' : node.protocol!.toUpperCase(),
+                          style: TextStyle(
+                              color: isAutoNode
+                                  ? DS.indigoLight.withValues(alpha: 0.80)
+                                  : DS.textSecondary,
+                              fontSize: 12),
+                        ),
+                    ],
+                  )),
+                  // Trailing
+                  if (isSel)
+                    Icon(Icons.check_circle_rounded,
+                        color: isAutoNode ? DS.indigoLight : DS.violet,
+                        size: 20)
+                  else if (locked)
+                    const Icon(Icons.lock_outline_rounded,
+                        size: 16, color: DS.textMuted),
+                ]),
+              ),
+            ),
+          );
+        }
+
+        // ── Section divider row ───────────────────────────────────────────────
+        Widget buildManualDivider() => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+          child: Row(children: [
+            Expanded(child: Container(height: 1, color: DS.border)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'СЕРВЕРЫ',
+                style: TextStyle(
+                  color: DS.textMuted.withValues(alpha: 0.70),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.4,
+                ),
+              ),
+            ),
+            Expanded(child: Container(height: 1, color: DS.border)),
+          ]),
+        );
+
+        // ─────────────────────────────────────────────────────────────────────
         return DraggableScrollableSheet(
           expand: false,
           initialChildSize: 0.6,
@@ -284,8 +449,11 @@ class _HomePageState extends State<HomePage>
           minChildSize: 0.3,
           builder: (_, scrollCtrl) => Column(children: [
             const SizedBox(height: 12),
-            Container(width: 40, height: 4,
-                decoration: BoxDecoration(color: DS.border, borderRadius: BorderRadius.circular(2))),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                  color: DS.border, borderRadius: BorderRadius.circular(2)),
+            ),
             const SizedBox(height: 16),
 
             // Sheet header
@@ -293,16 +461,22 @@ class _HomePageState extends State<HomePage>
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(children: [
                 const Expanded(child: Text('Выбрать сервер', style: TextStyle(
-                    color: DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w700))),
+                    color: DS.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700))),
                 VpnIconBtn(
                   loading: _isLoadingNodes,
                   icon: Icons.refresh_rounded,
-                  onTap: () async { setSheet(() {}); await _loadNodes(); setSheet(() {}); },
+                  onTap: () async {
+                    setSheet(() {});
+                    await _loadNodes();
+                    setSheet(() {});
+                  },
                 ),
               ]),
             ),
 
-            // Public catalog warning
+            // Public catalog banner
             if (_isPublicCatalog)
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
@@ -312,7 +486,7 @@ class _HomePageState extends State<HomePage>
                 ),
               ),
 
-            // Category chips
+            // Category filter chips (manual categories only)
             if (showCats)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
@@ -320,8 +494,10 @@ class _HomePageState extends State<HomePage>
                   scrollDirection: Axis.horizontal,
                   child: Row(children: [
                     for (final e in <(String?, String)>[
-                      (null, 'Все'), ('bypass', 'Обход'),
-                      ('unlimited', 'Безлимит'), ('other', 'Прочее'),
+                      (null, 'Все'),
+                      if (hasBypass)   ('bypass', 'Обход'),
+                      if (hasUnlimited) ('unlimited', 'Безлимит'),
+                      ('other', 'Прочее'),
                     ])
                       Padding(
                         padding: const EdgeInsets.only(right: 8),
@@ -341,72 +517,43 @@ class _HomePageState extends State<HomePage>
             // Server list
             Expanded(
               child: _nodes.isEmpty
-                  ? Center(child: _isLoadingNodes
-                  ? const CircularProgressIndicator(color: DS.violet)
-                  : const _EmptyNodes())
-                  : Builder(builder: (_) {
-                final nodes = visible();
-                if (nodes.isEmpty) {
-                  return const Center(child: Text('Нет серверов в этой категории',
-                      style: TextStyle(color: DS.textSecondary)));
-                }
-                return ListView.separated(
-                  controller: scrollCtrl,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  itemCount: nodes.length,
-                  separatorBuilder: (_, _) => Divider(height: 1, indent: 16, endIndent: 16, color: DS.border),
-                  itemBuilder: (_, i) {
-                    final node = nodes[i];
-                    final isSel = _selectedNode?.uuid == node.uuid;
-                    return Material(
-                      color: isSel ? DS.violet.withValues(alpha: 0.08) : Colors.transparent,
-                      child: InkWell(
-                        onTap: () async {
-                          if (_isPublicCatalog || node.isDisabled || node.link == null) {
-                            Navigator.pop(ctx);
-                            if (context.mounted) {
-                              if (authStateNotifier.value.isLoggedIn) {
-                                widget.onGoToPremium?.call();
-                              } else {
-                                await showAuthBottomSheet(context);
-                              }
+                  ? Center(
+                      child: _isLoadingNodes
+                          ? const CircularProgressIndicator(color: DS.violet)
+                          : const _EmptyNodes())
+                  : total == 0
+                      ? const Center(
+                          child: Text('Нет серверов в этой категории',
+                              style: TextStyle(color: DS.textSecondary)))
+                      : ListView.separated(
+                          controller: scrollCtrl,
+                          padding: const EdgeInsets.only(bottom: 16),
+                          itemCount: total,
+                          separatorBuilder: (_, i) {
+                            // No hairline separator adjacent to the section
+                            // divider row — it provides its own spacing.
+                            if (dividerCount > 0 &&
+                                (i == autoCount - 1 || i == autoCount)) {
+                              return const SizedBox.shrink();
                             }
-                            return;
-                          }
-                          setState(() => _selectedNode = node);
-                          selectedServerNotifier.value = node;
-                          final p = await SharedPreferences.getInstance();
-                          await p.setString('selected_node_uuid', node.uuid);
-                          if (ctx.mounted) Navigator.pop(ctx);
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-                          child: Row(children: [
-                            CountryFlag.fromCountryCode(
-                              node.countryCode,
-                              theme: ImageTheme(width: 36, height: 28, shape: RoundedRectangle(8)),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text(node.name, style: TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 14,
-                                  color: isSel ? DS.violet : DS.textPrimary),
-                                  overflow: TextOverflow.ellipsis),
-                              if ((node.protocol ?? '').isNotEmpty)
-                                Text(node.protocol!.toUpperCase(), style: const TextStyle(
-                                    color: DS.textSecondary, fontSize: 12)),
-                            ])),
-                            if (isSel)
-                              const Icon(Icons.check_circle_rounded, color: DS.violet, size: 20)
-                            else if (_isPublicCatalog || node.isDisabled || node.link == null)
-                              const Icon(Icons.lock_outline_rounded, size: 16, color: DS.textMuted),
-                          ]),
+                            return Divider(
+                                height: 1,
+                                indent: 16,
+                                endIndent: 16,
+                                color: DS.border);
+                          },
+                          itemBuilder: (_, i) {
+                            if (showAuto && i < autoCount) {
+                              return buildTile(auto[i], isAutoNode: true);
+                            }
+                            if (dividerCount > 0 && i == autoCount) {
+                              return buildManualDivider();
+                            }
+                            final mi = i - autoCount - dividerCount;
+                            return buildTile(filteredManual[mi],
+                                isAutoNode: false);
+                          },
                         ),
-                      ),
-                    );
-                  },
-                );
-              }),
             ),
           ]),
         );
@@ -441,6 +588,14 @@ class _HomePageState extends State<HomePage>
     if (f < 0.6) return DS.emerald;
     if (f < 0.85) return DS.amber;
     return DS.rose;
+  }
+
+  static String _formatExpiry(DateTime dt) {
+    const months = [
+      'янв.', 'фев.', 'мар.', 'апр.', 'мая', 'июн.',
+      'июл.', 'авг.', 'сен.', 'окт.', 'ноя.', 'дек.',
+    ];
+    return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
   }
 
   String _remaining(SubscriptionInfo info) {
@@ -637,35 +792,40 @@ class _HomePageState extends State<HomePage>
 
   // ── Speed card ─────────────────────────────────────────────────────────────
   Widget _buildSpeedCard() {
-    final upActive = _speedCalc.uploadSpeed > 1024;
+    final upActive   = _speedCalc.uploadSpeed > 1024;
     final downActive = _speedCalc.downloadSpeed > 1024;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: BoxDecoration(
-        color: DS.surface1,
-        borderRadius: BorderRadius.circular(DS.radius),
-        border: Border.all(color: DS.border),
+    // Dim the entire card when disconnected — makes the "live" state pop.
+    return AnimatedOpacity(
+      opacity: _isConnected ? 1.0 : 0.45,
+      duration: const Duration(milliseconds: 350),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: DS.surface1,
+          borderRadius: BorderRadius.circular(DS.radius),
+          border: Border.all(color: DS.border),
+        ),
+        child: Row(children: [
+          Expanded(child: _SpeedTile(
+            icon: Icons.arrow_upward_rounded,
+            label: 'Отдача',
+            speed: _speedCalc.uploadSpeed,
+            total: _fmtBytes(_status.uploadSpeed),
+            color: upActive ? DS.violet : DS.textMuted,
+          )),
+          Container(width: 1, height: 52, decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, DS.border, Colors.transparent]))),
+          Expanded(child: _SpeedTile(
+            icon: Icons.arrow_downward_rounded,
+            label: 'Загрузка',
+            speed: _speedCalc.downloadSpeed,
+            total: _fmtBytes(_status.download),
+            color: downActive ? DS.emerald : DS.textMuted,
+          )),
+        ]),
       ),
-      child: Row(children: [
-        Expanded(child: _SpeedTile(
-          icon: Icons.arrow_upward_rounded,
-          label: 'Отдача',
-          speed: _speedCalc.uploadSpeed,
-          total: _fmtBytes(_status.uploadSpeed),
-          color: upActive ? DS.violet : DS.textMuted,
-        )),
-        Container(width: 1, height: 52, decoration: const BoxDecoration(
-            gradient: LinearGradient(
-                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                colors: [Colors.transparent, DS.border, Colors.transparent]))),
-        Expanded(child: _SpeedTile(
-          icon: Icons.arrow_downward_rounded,
-          label: 'Загрузка',
-          speed: _speedCalc.downloadSpeed,
-          total: _fmtBytes(_status.download),
-          color: downActive ? DS.emerald : DS.textMuted,
-        )),
-      ]),
     );
   }
 
@@ -722,51 +882,111 @@ class _HomePageState extends State<HomePage>
         const SizedBox(height: 16),
 
         // Content
-        if (info == null && !_isPublicCatalog)
-          const Center(child: Text('Загрузка данных…',
-              style: TextStyle(color: DS.textSecondary, fontSize: 13)))
-        else if (_isPublicCatalog && !authState.isLoggedIn)
+        if (info == null && !_isPublicCatalog) ...[
+          // Traffic info hasn't loaded yet — show cached subscription state
+          // if available so the card is meaningful from the very first frame.
+          if (!authState.isLoggedIn)
+            _LoginPrompt()
+          else if (sub != null &&
+              (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
+            Text(
+              sub.expireDate != null
+                  ? 'Истекла ${_formatExpiry(sub.expireDate!)}'
+                  : 'Доступ приостановлен',
+              style: const TextStyle(
+                  color: DS.textSecondary, fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            _RenewButton(onTap: widget.onGoToPremium),
+          ] else if (sub != null) ...[
+            // Active subscription — traffic loading placeholder
+            Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: DS.textMuted),
+              ),
+              SizedBox(width: 8),
+              Text('Загрузка трафика…',
+                  style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+            ]),
+          ] else
+            const Center(
+                child: Text('Загрузка данных…',
+                    style:
+                        TextStyle(color: DS.textSecondary, fontSize: 13))),
+        ] else if (_isPublicCatalog && !authState.isLoggedIn)
           _LoginPrompt()
         else if (_isPublicCatalog && authState.isLoggedIn)
             _NoPlanPrompt(onGoToPremium: widget.onGoToPremium)
           else if (info != null) ...[
-              // Big traffic numbers
-              Row(crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic, children: [
-                    Text(info.formattedUsed, style: const TextStyle(
-                        color: DS.textPrimary, fontSize: 28, fontWeight: FontWeight.w800, height: 1)),
-                    const SizedBox(width: 6),
-                    Text('/ ${info.formattedTotal}',
-                        style: const TextStyle(color: DS.textMuted, fontSize: 15)),
-                  ]),
-              const SizedBox(height: 12),
+              // Expired subscription — minimal inline CTA, no extra boxes
+              if (sub != null &&
+                  (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
+                Text(
+                  sub.expireDate != null
+                      ? 'Истекла ${_formatExpiry(sub.expireDate!)}'
+                      : 'Доступ приостановлен',
+                  style: const TextStyle(
+                      color: DS.textSecondary, fontSize: 13, height: 1.4),
+                ),
+                const SizedBox(height: 14),
+                _RenewButton(onTap: widget.onGoToPremium),
 
-              // Progress bar
-              ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: Stack(children: [
-                  Container(height: 6, color: DS.surface3),
-                  FractionallySizedBox(
-                    widthFactor: info.usedFraction.clamp(0.0, 1.0),
-                    child: Container(height: 6,
-                        decoration: BoxDecoration(
-                          color: _progressColor(info.usedFraction),
-                          boxShadow: [BoxShadow(
-                              color: _progressColor(info.usedFraction).withValues(alpha: 0.5),
-                              blurRadius: 8)],
-                        )),
-                  ),
+              // Active subscription — traffic stats
+              ] else ...[
+                Row(crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic, children: [
+                  Text(info.formattedUsed, style: const TextStyle(
+                      color: DS.textPrimary, fontSize: 28,
+                      fontWeight: FontWeight.w800, height: 1)),
+                  const SizedBox(width: 6),
+                  Text('/ ${info.formattedTotal}',
+                      style: const TextStyle(color: DS.textMuted, fontSize: 15)),
                 ]),
-              ),
-              const SizedBox(height: 10),
+                const SizedBox(height: 12),
 
-              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                Text('Осталось: ${_remaining(info)}',
-                    style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
-                Text('${(info.usedFraction * 100).toStringAsFixed(1)}%', style: TextStyle(
-                    color: _progressColor(info.usedFraction),
-                    fontSize: 12, fontWeight: FontWeight.w600)),
-              ]),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Stack(children: [
+                    Container(height: 8, color: DS.surface3),
+                    FractionallySizedBox(
+                      widthFactor: info.usedFraction.clamp(0.0, 1.0),
+                      child: Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              _progressColor(info.usedFraction),
+                              Color.lerp(_progressColor(info.usedFraction),
+                                  Colors.white, 0.25)!,
+                            ],
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                          ),
+                          boxShadow: [BoxShadow(
+                              color: _progressColor(info.usedFraction)
+                                  .withValues(alpha: 0.5),
+                              blurRadius: 8)],
+                        ),
+                      ),
+                    ),
+                  ]),
+                ),
+                const SizedBox(height: 10),
+
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                  Text('Осталось: ${_remaining(info)}',
+                      style: const TextStyle(
+                          color: DS.textSecondary, fontSize: 12)),
+                  Text('${(info.usedFraction * 100).toStringAsFixed(1)}%',
+                      style: TextStyle(
+                          color: _progressColor(info.usedFraction),
+                          fontSize: 12, fontWeight: FontWeight.w600)),
+                ]),
+              ],
             ],
       ]),
     );
@@ -937,7 +1157,10 @@ class _SubBadge extends StatelessWidget {
         if (diff != null && diff.inDays < 7 && !diff.isNegative) {
           color = DS.amber; label = '${diff.inDays}д'; icon = Icons.timer_outlined;
         } else {
-          color = DS.emerald; label = 'Активна'; icon = Icons.verified_rounded;
+          // Violet = brand colour → reads as "active/ok" in this palette context.
+          // Gold works as accent only against a deep-indigo background (hero card);
+          // on neutral surface1 it looks like a warning — violet is unambiguous here.
+          color = DS.violet; label = 'Активна'; icon = Icons.verified_rounded;
         }
       }
     } else if (sub.isExpired) {
@@ -958,7 +1181,7 @@ class _ExpiryBadge extends StatelessWidget {
     final diff = expireDate.difference(DateTime.now());
     final expired = diff.isNegative;
     final soon = !expired && diff.inDays < 7;
-    final color = expired ? DS.rose : soon ? DS.amber : DS.emerald;
+    final color = expired ? DS.rose : soon ? DS.amber : DS.violet;
     final label = expired ? 'Истекла' : diff.inDays > 0 ? '${diff.inDays}д' : '< 1д';
     return _StatusPill(
         color: color, label: label,
@@ -984,6 +1207,47 @@ class _StatusPill extends StatelessWidget {
       Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
     ]),
   );
+}
+
+class _RenewButton extends StatelessWidget {
+  final VoidCallback? onTap;
+  const _RenewButton({this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [DS.violet, DS.violetDim],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            boxShadow: [
+              BoxShadow(
+                color: DS.violet.withValues(alpha: 0.30),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              )
+            ],
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.bolt_rounded, size: 16, color: Colors.white),
+              SizedBox(width: 7),
+              Text('Возобновить подписку',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
+      );
 }
 
 // ── Shared micro-widgets ──────────────────────────────────────────────────────

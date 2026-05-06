@@ -654,6 +654,25 @@ class RemnawaveService {
         // With sniffing=true xray would do DNS resolution for every connection
         // via its internal resolver, whose traffic also goes through TUN when
         // includeSelfInVpn=true — causing latency-inducing re-entry loops.
+        //
+        // Mobile rule filtering:
+        // Desktop Remnawave configs may contain geo-based routing rules
+        // (geoip:, geosite:) that require geo database files not present on
+        // mobile.  Keep only rules that reference a balancerTag (load-balancer
+        // dispatch) and add a minimal bittorrent-block rule.  All other traffic
+        // is forwarded by the balancer outbound.
+        // TODO: Уточнить нужду этих правил
+        final desktopRules =
+            (routing?['rules'] as List<dynamic>?)?.whereType<Map<String, dynamic>>().toList()
+            ?? <Map<String, dynamic>>[];
+
+        final mobileRules = <Map<String, dynamic>>[
+          // Block torrents — simple port-based rule, no geo assets needed.
+          {'type': 'field', 'network': 'tcp,udp', 'protocol': ['bittorrent'], 'outboundTag': 'blackhole'},
+          // Keep every rule that dispatches via a balancer (load-balancing logic).
+          ...desktopRules.where((r) => r.containsKey('balancerTag')),
+        ];
+
         final mobileJson = jsonEncode({
           'log':      {'loglevel': 'warning'},
           'dns':      {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
@@ -662,7 +681,7 @@ class RemnawaveService {
           'routing':  {
             'domainStrategy': routing?['domainStrategy'] ?? 'IPIfNonMatch',
             'domainMatcher':  'hybrid',
-            'rules':    routing?['rules']    ?? [],
+            'rules':    mobileRules,
             'balancers': balancers ?? [],
           },
         });

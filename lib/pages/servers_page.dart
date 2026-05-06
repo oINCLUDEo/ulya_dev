@@ -118,8 +118,20 @@ class _ServersPageState extends State<ServersPage> {
     }
     for (final k in map.keys) {
       map[k]!.sort((a, b) {
+        // 1) Available (connected + enabled) nodes first.
+        final aOk = a.isAvailable ? 0 : 1;
+        final bOk = b.isAvailable ? 0 : 1;
+        if (aOk != bOk) return aOk.compareTo(bOk);
+
+        // 2) Known-ping nodes float above not-yet-pinged; lower ping = better.
         final pa = _pings[a.uuid], pb = _pings[b.uuid];
-        if (pa != null && pa >= 0 && pb != null && pb >= 0) return pa.compareTo(pb);
+        final aHasPing = pa != null && pa >= 0;
+        final bHasPing = pb != null && pb >= 0;
+        if (aHasPing && bHasPing) return pa.compareTo(pb);
+        if (aHasPing) return -1;
+        if (bHasPing) return 1;
+
+        // 3) Alphabetical tiebreaker.
         return a.name.compareTo(b.name);
       });
     }
@@ -222,10 +234,20 @@ class _ServersPageState extends State<ServersPage> {
       ));
     }
 
-    addSection(title: 'Авто-выбор', subtitle: 'Автоматическая балансировка между серверами',
-        nodes: groups['auto']!, color: const Color(0xFF818CF8),
-        icon: Icons.auto_awesome_rounded, expanded: _autoExpanded,
+    addSection(title: 'Авто-выбор', subtitle: 'Умная балансировка — рекомендуется',
+        nodes: groups['auto']!, color: DS.indigoLight,
+        icon: Icons.bolt_rounded, expanded: _autoExpanded,
         onToggle: () => setState(() => _autoExpanded = !_autoExpanded));
+
+    // Visual break: auto-select (smart) ↔ manual server list
+    final hasManual = ['bypass', 'unlimited', 'other']
+        .any((k) => groups[k]!.isNotEmpty);
+    if (groups['auto']!.isNotEmpty && hasManual) {
+      slivers.add(const SliverPadding(
+        padding: EdgeInsets.fromLTRB(16, 18, 16, 0),
+        sliver: SliverToBoxAdapter(child: _ManualDivider()),
+      ));
+    }
 
     addSection(title: 'Обход ограничений', subtitle: 'Для доступа к заблокированным сайтам',
         nodes: groups['bypass']!, color: DS.violet,
@@ -233,7 +255,7 @@ class _ServersPageState extends State<ServersPage> {
         onToggle: () => setState(() => _bypassExpanded = !_bypassExpanded));
 
     addSection(title: 'Безлимитный трафик', subtitle: 'Без ограничений по объёму',
-        nodes: groups['unlimited']!, color: const Color(0xFF22D3EE),
+        nodes: groups['unlimited']!, color: DS.cyan,
         icon: Icons.all_inclusive_rounded, expanded: _unlimitedExpanded,
         onToggle: () => setState(() => _unlimitedExpanded = !_unlimitedExpanded));
 
@@ -521,11 +543,16 @@ class _NodeTile extends StatelessWidget {
                 Container(
                   width: 36, height: 28,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF818CF8).withValues(alpha: 0.15),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF1E1B4B), Color(0xFF1A1760)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                     borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: DS.indigoLight.withValues(alpha: 0.35)),
                   ),
-                  child: const Icon(Icons.auto_awesome_rounded,
-                      size: 16, color: Color(0xFF818CF8)),
+                  child: const Icon(Icons.bolt_rounded,
+                      size: 18, color: DS.indigoLight),
                 )
               else
                 CountryFlag.fromCountryCode(
@@ -646,13 +673,13 @@ class _ProtoBadge extends StatelessWidget {
 
   Color _color() {
     switch (protocol.toLowerCase()) {
-      case 'auto':    return const Color(0xFF818CF8);
+      case 'auto':    return DS.indigoLight;
       case 'vmess':   return DS.violet;
-      case 'vless':   return const Color(0xFF22D3EE);
+      case 'vless':   return DS.cyan;
       case 'trojan':  return DS.amber;
       case 'ss':      return DS.emerald;
       case 'hysteria2': case 'hy2': case 'hysteria': return DS.rose;
-      case 'tuic':    return const Color(0xFFF0ABFC);
+      case 'tuic':    return DS.orchid;
       default:        return DS.textMuted;
     }
   }
@@ -673,6 +700,32 @@ class _ProtoBadge extends StatelessWidget {
           color: c, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Divider between auto-select block and manual server sections
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ManualDivider extends StatelessWidget {
+  const _ManualDivider();
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+    Expanded(child: Container(height: 1, color: DS.border)),
+    Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Text(
+        'РУЧНОЙ ВЫБОР',
+        style: TextStyle(
+          color: DS.textMuted.withValues(alpha: 0.70),
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.4,
+        ),
+      ),
+    ),
+    Expanded(child: Container(height: 1, color: DS.border)),
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
