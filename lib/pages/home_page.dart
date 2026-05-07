@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/me_response.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
+import '../config/app_config.dart';
 import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
@@ -214,6 +216,17 @@ class _HomePageState extends State<HomePage>
   // ── Connection ─────────────────────────────────────────────────────────────
   Future<void> _performLogout() async => AuthService.logout();
 
+  Future<List<String>> _loadBlockedApps() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('settings_blocked_apps');
+    if (raw != null) {
+      try {
+        return List<String>.from((jsonDecode(raw) as List).whereType<String>());
+      } catch (_) {}
+    }
+    return List<String>.from(AppConfig.defaultBlockedApps);
+  }
+
   Future<void> _toggleConnection() async {
     if (_isTransitioning) return;
     if (_isConnected) {
@@ -248,10 +261,12 @@ class _HomePageState extends State<HomePage>
       appLogger.info('HomePage',
           'connecting: type=${rawLink.startsWith('{') ? 'JSON' : 'URI'} '
           'addr=${node.address}:${node.serverPort}');
+      final blockedApps = await _loadBlockedApps();
 
       await _v2ray.startVless(
         remark: node.name,
         config: vpnConfig,
+        blockedApps: blockedApps,
         notificationDisconnectButtonName: 'Отключить',
       );
     } catch (e) {
