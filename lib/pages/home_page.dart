@@ -223,7 +223,10 @@ class _HomePageState extends State<HomePage>
       try {
         return List<String>.from((jsonDecode(raw) as List).whereType<String>());
       } catch (e) {
-        appLogger.error('HomePage', 'failed to parse blocked apps setting: $e');
+        appLogger.error(
+          'HomePage',
+          'failed to parse blocked apps setting: $e, raw: $raw',
+        );
       }
     }
     return List<String>.from(AppConfig.defaultBlockedApps);
