@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -283,25 +282,15 @@ class _HomePageState extends State<HomePage>
         !n.isDisabled).toList();
     if (candidates.any((server) => server.isAvailable)) return true;
     if (candidates.isEmpty) return false;
-    final queue = Queue<ServerNode>.from(candidates);
-    var reachable = false;
-    final workers = List.generate(
-      candidates.length < _maxReachabilityWorkers
-          ? candidates.length
-          : _maxReachabilityWorkers,
-      (_) async {
-        while (!reachable && queue.isNotEmpty) {
-          final node = queue.removeFirst();
-          if (reachable) return;
-          if (await _canReachNode(node)) {
-            reachable = true;
-            return;
-          }
-        }
-      },
-    );
-    await Future.wait(workers);
-    return reachable;
+    for (var i = 0; i < candidates.length; i += _maxReachabilityWorkers) {
+      final end = (i + _maxReachabilityWorkers < candidates.length)
+          ? i + _maxReachabilityWorkers
+          : candidates.length;
+      final batch = candidates.sublist(i, end);
+      final checks = await Future.wait(batch.map(_canReachNode));
+      if (checks.any((ok) => ok)) return true;
+    }
+    return false;
   }
 
   Future<void> _toggleConnection() async {
