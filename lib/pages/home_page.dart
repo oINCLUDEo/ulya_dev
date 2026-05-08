@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
@@ -232,6 +233,48 @@ class _HomePageState extends State<HomePage>
     return List<String>.from(AppConfig.defaultBlockedApps);
   }
 
+  static bool _isBypassDescription(String? description) {
+    final hay = (description ?? '').toLowerCase();
+    return hay.contains('белые') ||
+        hay.contains('обход') ||
+        hay.contains('bypass') ||
+        hay.contains('лте') ||
+        hay.contains('lte') ||
+        (hay.contains('yt') && hay.contains('tg'));
+  }
+
+  static bool _isBypassNode(ServerNode node) => _isBypassDescription(node.description);
+
+  Future<bool> _canReachNode(ServerNode node) async {
+    final host = node.address.trim();
+    if (host.isEmpty) return false;
+    final port = node.serverPort > 0 ? node.serverPort : 443;
+    try {
+      final socket = await Socket.connect(
+        host,
+        port,
+        timeout: const Duration(seconds: 2),
+      );
+      socket.destroy();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _hasReachableNonBypassServer() async {
+    final candidates = _nodes.where((n) =>
+        n.protocol != 'auto' &&
+        !_isBypassNode(n) &&
+        n.link != null &&
+        !n.isDisabled);
+    for (final server in candidates) {
+      if (server.isAvailable) return true;
+      if (await _canReachNode(server)) return true;
+    }
+    return false;
+  }
+
   Future<void> _toggleConnection() async {
     if (_isTransitioning) return;
     if (_isConnected) {
@@ -248,6 +291,14 @@ class _HomePageState extends State<HomePage>
       } else {
         await showAuthBottomSheet(context);
       }
+      return;
+    }
+    if (_isBypassNode(node) && await _hasReachableNonBypassServer()) {
+      appLogger.info(
+        'HomePage',
+        'bypass connection blocked: reachable non-bypass server detected',
+      );
+      _snack('Сервер обхода недоступен: есть доступные обычные серверы');
       return;
     }
     if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
