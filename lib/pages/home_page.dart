@@ -34,6 +34,14 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  static const List<String> _bypassKeywords = [
+    'белые',
+    'обход',
+    'bypass',
+    'лте',
+    'lte',
+  ];
+
   // ── V2ray ──────────────────────────────────────────────────────────────────
   late final FlutterV2ray _v2ray;
   VlessStatus _status = VlessStatus();
@@ -235,11 +243,7 @@ class _HomePageState extends State<HomePage>
 
   static bool _isBypassDescription(String? description) {
     final hay = (description ?? '').toLowerCase();
-    return hay.contains('белые') ||
-        hay.contains('обход') ||
-        hay.contains('bypass') ||
-        hay.contains('лте') ||
-        hay.contains('lte') ||
+    return _bypassKeywords.any(hay.contains) ||
         (hay.contains('yt') && hay.contains('tg'));
   }
 
@@ -267,12 +271,11 @@ class _HomePageState extends State<HomePage>
         n.protocol != 'auto' &&
         !_isBypassNode(n) &&
         n.link != null &&
-        !n.isDisabled);
-    for (final server in candidates) {
-      if (server.isAvailable) return true;
-      if (await _canReachNode(server)) return true;
-    }
-    return false;
+        !n.isDisabled).toList();
+    if (candidates.any((server) => server.isAvailable)) return true;
+    if (candidates.isEmpty) return false;
+    final checks = await Future.wait(candidates.map(_canReachNode));
+    return checks.any((ok) => ok);
   }
 
   Future<void> _toggleConnection() async {
@@ -298,7 +301,7 @@ class _HomePageState extends State<HomePage>
         'HomePage',
         'bypass connection blocked: reachable non-bypass server detected',
       );
-      _snack('Сервер обхода недоступен: есть доступные обычные серверы');
+      _snack('Сервер обхода заблокирован: используйте обычные серверы');
       return;
     }
     if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
