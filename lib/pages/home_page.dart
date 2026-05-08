@@ -42,6 +42,7 @@ class _HomePageState extends State<HomePage>
     'лте',
     'lte',
   ];
+  // Multi-token signatures where all tokens must be present in description.
   static const List<List<String>> _bypassKeywordCombos = [
     ['yt', 'tg'],
   ];
@@ -256,6 +257,7 @@ class _HomePageState extends State<HomePage>
   Future<bool> _canReachNode(ServerNode node) async {
     final host = node.address.trim();
     if (host.isEmpty) return false;
+    // Default to HTTPS port if backend did not provide an explicit one.
     final port = node.serverPort > 0 ? node.serverPort : 443;
     try {
       final socket = await Socket.connect(
@@ -285,6 +287,7 @@ class _HomePageState extends State<HomePage>
       (_) async {
         while (!reachable && queue.isNotEmpty) {
           final node = queue.removeFirst();
+          if (reachable) return;
           if (await _canReachNode(node)) {
             reachable = true;
             return;
