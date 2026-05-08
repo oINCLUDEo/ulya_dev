@@ -46,6 +46,9 @@ class _HomePageState extends State<HomePage>
   static const List<List<String>> _bypassKeywordCombos = [
     ['yt', 'tg'],
   ];
+  static const int _defaultServerPort = 443;
+  static const Duration _nodeReachabilityTimeout = Duration(seconds: 1);
+  static const int _maxReachabilityWorkers = 4;
 
   // ── V2ray ──────────────────────────────────────────────────────────────────
   late final FlutterV2ray _v2ray;
@@ -239,7 +242,7 @@ class _HomePageState extends State<HomePage>
       } catch (e) {
         appLogger.error(
           'HomePage',
-          'failed to parse blocked apps setting: $e, raw: $raw',
+          'failed to parse blocked apps setting: $e',
         );
       }
     }
@@ -258,12 +261,12 @@ class _HomePageState extends State<HomePage>
     final host = node.address.trim();
     if (host.isEmpty) return false;
     // Default to HTTPS port if backend did not provide an explicit one.
-    final port = node.serverPort > 0 ? node.serverPort : 443;
+    final port = node.serverPort > 0 ? node.serverPort : _defaultServerPort;
     try {
       final socket = await Socket.connect(
         host,
         port,
-        timeout: const Duration(seconds: 1),
+        timeout: _nodeReachabilityTimeout,
       );
       socket.destroy();
       return true;
@@ -283,7 +286,9 @@ class _HomePageState extends State<HomePage>
     final queue = Queue<ServerNode>.from(candidates);
     var reachable = false;
     final workers = List.generate(
-      candidates.length < 4 ? candidates.length : 4,
+      candidates.length < _maxReachabilityWorkers
+          ? candidates.length
+          : _maxReachabilityWorkers,
       (_) async {
         while (!reachable && queue.isNotEmpty) {
           final node = queue.removeFirst();
