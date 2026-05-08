@@ -41,6 +41,9 @@ class _HomePageState extends State<HomePage>
     'лте',
     'lte',
   ];
+  static const List<List<String>> _bypassKeywordCombos = [
+    ['yt', 'tg'],
+  ];
 
   // ── V2ray ──────────────────────────────────────────────────────────────────
   late final FlutterV2ray _v2ray;
@@ -244,7 +247,7 @@ class _HomePageState extends State<HomePage>
   static bool _isBypassDescription(String? description) {
     final hay = (description ?? '').toLowerCase();
     return _bypassKeywords.any(hay.contains) ||
-        (hay.contains('yt') && hay.contains('tg'));
+        _bypassKeywordCombos.any((combo) => combo.every(hay.contains));
   }
 
   static bool _isBypassNode(ServerNode node) => _isBypassDescription(node.description);
@@ -257,7 +260,7 @@ class _HomePageState extends State<HomePage>
       final socket = await Socket.connect(
         host,
         port,
-        timeout: const Duration(seconds: 2),
+        timeout: const Duration(seconds: 1),
       );
       socket.destroy();
       return true;
