@@ -480,7 +480,15 @@ class RemnawaveService {
     void add(dynamic v) {
       final s = v?.toString().trim();
       if (s == null || s.isEmpty) return;
-      if (RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(s)) ids.add(s.toLowerCase());
+      if (RegExp(
+        r'^[0-9a-fA-F]{8}-'
+        r'[0-9a-fA-F]{4}-'
+        r'[0-9a-fA-F]{4}-'
+        r'[0-9a-fA-F]{4}-'
+        r'[0-9a-fA-F]{12}$',
+      ).hasMatch(s)) {
+        ids.add(s.toLowerCase());
+      }
     }
 
     add(cfg['uuid']);

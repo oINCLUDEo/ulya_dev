@@ -241,7 +241,7 @@ class _HomePageState extends State<HomePage>
       } on FormatException catch (e) {
         appLogger.error(
           'HomePage',
-          'failed to parse blocked apps setting: $e',
+          'failed to parse blocked apps JSON format: $e',
         );
       } catch (e) {
         appLogger.error('HomePage', 'blocked apps load error: $e');
