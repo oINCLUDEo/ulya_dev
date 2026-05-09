@@ -208,7 +208,7 @@ class _ServersPageState extends State<ServersPage> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Сервер сейчас недоступен для выбора'),
+            content: Text('Сервер временно недоступен'),
           ),
         );
         return;
