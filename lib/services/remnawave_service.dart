@@ -511,7 +511,7 @@ class RemnawaveService {
         if (template == null) continue;
         final outbound =
             jsonDecode(jsonEncode(template)) as Map<String, dynamic>;
-        outbound['tag'] = idx == 0 ? tagPrefix : '$tagPrefix-${idx + 1}';
+        outbound['tag'] = idx == 0 ? tagPrefix : '$tagPrefix-$idx';
         injected.add(outbound);
         idx++;
       }
