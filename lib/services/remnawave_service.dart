@@ -178,8 +178,13 @@ class RemnawaveService {
       _lastSubscriptionInfo = _parseSubscriptionInfo(response.headers);
 
       final lines = _parseSubscriptionBody(response.body);
+      final jsonConfigs = lines
+          .map(_tryDecodeJsonConfig)
+          .whereType<Map<String, dynamic>>()
+          .toList();
+      final proxyOutboundsByUuid = _collectProxyOutboundsByUuid(jsonConfigs);
       final nodes = lines
-          .map(_parseConfigLink)
+          .map((line) => _parseConfigLink(line, proxyOutboundsByUuid))
           .whereType<ServerNode>()
           .toList();
       debugPrint('RemnawaveService: loaded ${nodes.length} nodes');
@@ -433,6 +438,87 @@ class RemnawaveService {
         .toList();
   }
 
+  static Map<String, dynamic>? _tryDecodeJsonConfig(String raw) {
+    final trimmed = raw.trim();
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      return jsonDecode(trimmed) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<String, Map<String, dynamic>> _collectProxyOutboundsByUuid(
+      List<Map<String, dynamic>> configs) {
+    final result = <String, Map<String, dynamic>>{};
+    for (final cfg in configs) {
+      final allOutbounds = cfg['outbounds'] as List<dynamic>? ?? const [];
+      final proxy = allOutbounds
+          .whereType<Map<String, dynamic>>()
+          .firstWhere(
+            (ob) => !{'freedom', 'blackhole', 'dns', 'loopback'}.contains(
+                (ob['protocol'] as String? ?? '').toLowerCase()),
+            orElse: () => const {},
+          );
+      if (proxy.isEmpty) continue;
+      final uuids = _extractConfigUuids(cfg);
+      if (uuids.isEmpty) continue;
+      for (final id in uuids) {
+        // Deep-clone to avoid mutating shared references when re-tagging.
+        result[id] = jsonDecode(jsonEncode(proxy)) as Map<String, dynamic>;
+      }
+    }
+    return result;
+  }
+
+  static List<String> _extractConfigUuids(Map<String, dynamic> cfg) {
+    final ids = <String>{};
+
+    void add(dynamic v) {
+      final s = v?.toString().trim();
+      if (s == null || s.isEmpty) return;
+      if (RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(s)) ids.add(s.toLowerCase());
+    }
+
+    add(cfg['uuid']);
+    add(cfg['serverUuid']);
+    final meta = cfg['meta'] as Map<String, dynamic>?;
+    add(meta?['uuid']);
+    add(meta?['serverUuid']);
+
+    return ids.toList();
+  }
+
+  static List<Map<String, dynamic>> _injectRemnawaveOutbounds(
+    Map<String, dynamic> json,
+    Map<String, Map<String, dynamic>> proxyOutboundsByUuid,
+  ) {
+    final remnawave = json['remnawave'] as Map<String, dynamic>?;
+    final injectHosts = remnawave?['injectHosts'] as List<dynamic>?;
+    if (injectHosts == null || injectHosts.isEmpty) return const [];
+
+    final injected = <Map<String, dynamic>>[];
+    for (final raw in injectHosts.whereType<Map<String, dynamic>>()) {
+      final selector = raw['selector'] as Map<String, dynamic>?;
+      final values = selector?['values'] as List<dynamic>? ?? const [];
+      final tagPrefixRaw = raw['tagPrefix']?.toString().trim() ?? '';
+      final tagPrefix = tagPrefixRaw.isEmpty ? 'proxy' : tagPrefixRaw;
+      var idx = 0;
+
+      for (final value in values) {
+        final key = value.toString().trim().toLowerCase();
+        final template = proxyOutboundsByUuid[key];
+        if (template == null) continue;
+        final outbound =
+            jsonDecode(jsonEncode(template)) as Map<String, dynamic>;
+        outbound['tag'] = idx == 0 ? tagPrefix : '$tagPrefix-${idx + 1}';
+        injected.add(outbound);
+        idx++;
+      }
+    }
+    return injected;
+  }
+
   // ── Subscription info header ──────────────────────────────────────────────
 
   /// Parses the `Subscription-Userinfo` header into a [SubscriptionInfo].
@@ -514,14 +600,17 @@ class RemnawaveService {
   /// fully-typed parameters (flow, sni, fp, pbk, etc.) ready for Stage 4.
   ///
   /// Returns `null` for unrecognised or malformed links.
-  static ServerNode? _parseConfigLink(String link) {
+  static ServerNode? _parseConfigLink(
+    String link,
+    Map<String, Map<String, dynamic>> proxyOutboundsByUuid,
+  ) {
     try {
       link = link.trim();
       if (link.isEmpty) return null;
 
       // ── Full Xray JSON config ──────────────────────────────────────────
       if (link.startsWith('{')) {
-        return _parseXrayJsonConfig(link);
+        return _parseXrayJsonConfig(link, proxyOutboundsByUuid);
       }
 
       final uri = Uri.parse(link);
@@ -611,7 +700,10 @@ class RemnawaveService {
   /// For **virtual/balanced hosts** the routing.balancers + rules are preserved
   /// (they contain the load-balancing logic), but inbounds are stripped and
   /// DNS is simplified.
-  static ServerNode? _parseXrayJsonConfig(String jsonStr) {
+  static ServerNode? _parseXrayJsonConfig(
+    String jsonStr,
+    Map<String, Map<String, dynamic>> proxyOutboundsByUuid,
+  ) {
     try {
       final json = jsonDecode(jsonStr) as Map<String, dynamic>;
 
@@ -640,6 +732,14 @@ class RemnawaveService {
           .where((ob) => !skipProtocols.contains(
               (ob['protocol'] as String? ?? '').toLowerCase()))
           .toList();
+      final injectedOutbounds = proxyOutbounds.isEmpty
+          ? _injectRemnawaveOutbounds(json, proxyOutboundsByUuid)
+          : const <Map<String, dynamic>>[];
+      final mobileOutbounds = [...allOutbounds, ...injectedOutbounds];
+      final hasProxyTargets = mobileOutbounds
+          .whereType<Map<String, dynamic>>()
+          .any((ob) => !skipProtocols.contains(
+              (ob['protocol'] as String? ?? '').toLowerCase()));
 
       // ── Detect virtual / balanced host ────────────────────────────────────
       final routing   = json['routing'] as Map<String, dynamic>?;
@@ -677,7 +777,8 @@ class RemnawaveService {
           'log':      {'loglevel': 'warning'},
           'dns':      {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
           'inbounds': [_socksInbound],
-          'outbounds': allOutbounds,  // keep all — balancer references them
+          // Keep original outbounds and append remnawave-injected proxies.
+          'outbounds': mobileOutbounds,
           'routing':  {
             'domainStrategy': routing?['domainStrategy'] ?? 'IPIfNonMatch',
             'domainMatcher':  'hybrid',
@@ -694,8 +795,8 @@ class RemnawaveService {
           serverPort:  443,
           countryCode: '',
           isConnected: true,
-          isDisabled:  false,
-          link:        mobileJson,
+          isDisabled:  !hasProxyTargets,
+          link:        hasProxyTargets ? mobileJson : null,
           protocol:    'auto',
           description: serverDescription ?? rawRemarks,
         );
