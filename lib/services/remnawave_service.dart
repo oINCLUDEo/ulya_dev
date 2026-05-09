@@ -448,6 +448,9 @@ class RemnawaveService {
     }
   }
 
+  static Map<String, dynamic> _deepCloneJsonMap(Map<String, dynamic> source) =>
+      jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
+
   static Map<String, Map<String, dynamic>> _collectProxyOutboundsByUuid(
       List<Map<String, dynamic>> configs) {
     final result = <String, Map<String, dynamic>>{};
@@ -465,7 +468,7 @@ class RemnawaveService {
       if (uuids.isEmpty) continue;
       for (final id in uuids) {
         // Deep-clone to avoid mutating shared references when re-tagging.
-        result[id] = jsonDecode(jsonEncode(proxy)) as Map<String, dynamic>;
+        result[id] = _deepCloneJsonMap(proxy);
       }
     }
     return result;
@@ -509,8 +512,7 @@ class RemnawaveService {
         final key = value.toString().trim().toLowerCase();
         final template = proxyOutboundsByUuid[key];
         if (template == null) continue;
-        final outbound =
-            jsonDecode(jsonEncode(template)) as Map<String, dynamic>;
+        final outbound = _deepCloneJsonMap(template);
         outbound['tag'] = idx == 0 ? tagPrefix : '$tagPrefix-$idx';
         injected.add(outbound);
         idx++;

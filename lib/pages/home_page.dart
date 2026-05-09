@@ -238,11 +238,13 @@ class _HomePageState extends State<HomePage>
     if (raw != null) {
       try {
         return List<String>.from((jsonDecode(raw) as List).whereType<String>());
-      } catch (e) {
+      } on FormatException catch (e) {
         appLogger.error(
           'HomePage',
           'failed to parse blocked apps setting: $e',
         );
+      } catch (e) {
+        appLogger.error('HomePage', 'blocked apps load error: $e');
       }
     }
     return List<String>.from(AppConfig.defaultBlockedApps);
@@ -451,7 +453,7 @@ class _HomePageState extends State<HomePage>
                 if (bypassBlockedNow) {
                   _showUnavailableNotice(
                     title: 'Сервер недоступен сейчас',
-                    subtitle: 'Обход можно выбрать только когда обычные серверы недоступны',
+                    subtitle: 'Обход можно выбрать только, когда обычные серверы недоступны',
                   );
                   return;
                 }
