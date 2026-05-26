@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../main.dart' show DS;
 import '../models/me_response.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
@@ -39,47 +40,25 @@ String _pluralDays(int n) {
   return 'дней';
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Palette  ·  "Signal Dark"  — independent design system
-// ═══════════════════════════════════════════════════════════════════════════
+// ── Premium-page-specific constants (colours with no DS equivalent) ──────────
+// DS tokens used where possible; these are kept because they define the
+// distinct "Signal Dark" premium aesthetic (bluer/darker than the main palette).
 
-abstract final class _C {
-  // Surfaces
-  static const bg      = Color(0xFF07070F);
-  static const surface = Color(0xFF111124);
-  // Card gradient — identical to Subscription page active-state hero card
-  static const cg1     = Color(0xFF0D0B26);
-  static const cg2     = Color(0xFF0A0820);
-
-  // Brand
-  static const indigo  = Color(0xFF7C6FF7);   // softer indigo/violet
-  static const indigoB = Color(0xFF9D8FFF);
-  static const indigoD = Color(0xFF4338CA);
-  static const teal    = Color(0xFF2DD4BF);   // keep for "current" badge
-  static const gold    = Color(0xFFD4A84B);   // metallic gold (premium tier)
-  // ignore: unused_field
-  static const goldDim = Color(0xFF9A7520);   // reserved for gradients
-  static const silver  = Color(0xFF8B96AA);   // cool silver (basic tier)
-  static const rose    = Color(0xFFF43F5E);
-
-  // Legacy aliases (still used in chips / buttons)
-  static const amber   = gold;
-  static const sky     = Color(0xFF60A5FA);   // softer blue for traffic chip
-
-  // Text
-  static const t0 = Color(0xFFF0F0FF);
-  static const t1 = Color(0xFF8892AA);
-  static const t2 = Color(0xFF454565);
-
-  // Borders
-  static const b0 = Color(0xFF16162E);
-  static const b1 = Color(0xFF1E1E38);
-
-  // Radius
-  static const r12 = 12.0;
-  static const r16 = 16.0;
-  static const r22 = 22.0;
-}
+const _premSurface = Color(0xFF111124);  // blue-tinted card surface
+const _cg1         = Color(0xFF0D0B26);  // hero card gradient – dark indigo
+const _cg2         = Color(0xFF0A0820);  // hero card gradient – near-black indigo
+const _indigoB     = Color(0xFF9D8FFF);  // lighter violet for highlights
+const _indigoD     = Color(0xFF4338CA);  // darker violet for gradients/shadows
+const _teal        = Color(0xFF2DD4BF);  // teal – active/success badge accent
+const _sky         = Color(0xFF60A5FA);  // sky-blue – traffic feature chip
+const _silver      = Color(0xFF8B96AA);  // cool silver – basic tier icon
+const _t0          = Color(0xFFF0F0FF);  // warm white headings
+const _t1          = Color(0xFF8892AA);  // secondary text (blueish tint)
+const _t2          = Color(0xFF454565);  // muted text (darker than DS.textMuted)
+const _b0          = Color(0xFF16162E);  // deep divider border
+const _b1          = Color(0xFF1E1E38);  // card border
+const _r16         = 16.0;              // medium card radius
+const _r22         = 22.0;              // large card / modal radius
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  PremiumPage
@@ -752,9 +731,9 @@ class _PremiumPageState extends State<PremiumPage>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
-      backgroundColor: ok ? _C.teal : _C.rose,
+      backgroundColor: ok ? _teal : DS.rose,
       behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_C.r12)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(DS.radiusSm)),
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
     ));
   }
@@ -891,7 +870,7 @@ class _PremiumPageState extends State<PremiumPage>
         _ActionBtn(
           loading: _purchasing,
           disabled: selPeriod == null,
-          color: _C.indigo,
+          color: DS.violet,
           label: selPeriod != null
               ? 'Продолжить · ${selPeriod.priceRub.toStringAsFixed(0)} ₽'
               : isLoggedIn ? 'Продолжить' : 'Войти и продолжить',
@@ -918,7 +897,7 @@ class _PremiumPageState extends State<PremiumPage>
         padding: const EdgeInsets.symmetric(vertical: 32),
         child: Center(
           child: Text('Другие тарифы не доступны',
-              style: const TextStyle(color: _C.t2, fontSize: 14)),
+              style: const TextStyle(color: _t2, fontSize: 14)),
         ),
       );
     }
@@ -998,7 +977,7 @@ class _PremiumPageState extends State<PremiumPage>
         _ActionBtn(
           loading: _purchasing || _changeTariffCalcLoading,
           disabled: selPeriod == null,
-          color: _C.indigo,
+          color: DS.violet,
           label: _buildChangeTariffLabel(selPeriod),
           onTap: _onChangeTariffTapped,
         ),
@@ -1043,7 +1022,7 @@ class _PremiumPageState extends State<PremiumPage>
           _ActionBtn(
             loading: _purchasing,
             disabled: false,
-            color: _C.indigo,
+            color: DS.violet,
             label: 'Продлить за ${sel.priceRub.toStringAsFixed(0)} ₽',
             onTap: _onRenewCurrentTariffTapped,
           ),
@@ -1079,7 +1058,7 @@ class _PremiumPageState extends State<PremiumPage>
         _ActionBtn(
           loading: _purchasing,
           disabled: _renewPeriodId == null || selRenewKopeks == null,
-          color: _C.indigo,
+          color: DS.violet,
           label: selRenewKopeks != null
               ? 'Продлить за ${(selRenewKopeks / 100).toStringAsFixed(0)} ₽'
               : 'Продлить подписку',
@@ -1112,15 +1091,15 @@ class _PremiumPageState extends State<PremiumPage>
     // (tariff selection is fully managed inside _TariffAccordionItem)
 
     return Scaffold(
-      backgroundColor: _C.bg,
+      backgroundColor: DS.surface0,
       body: Stack(children: [
 
         // Ambient aurora background blobs
         const _Aurora(),
 
         RefreshIndicator(
-          color: _C.indigo,
-          backgroundColor: _C.surface,
+          color: DS.violet,
+          backgroundColor: _premSurface,
           onRefresh: _loadOptions,
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -1294,7 +1273,7 @@ class _PremiumPageState extends State<PremiumPage>
                       if (_loadingOptions && _options == null && !hasTariffs) ...[
                         const SizedBox(height: 80),
                         const Center(child: CircularProgressIndicator(
-                            color: _C.indigo, strokeWidth: 2.5)),
+                            color: DS.violet, strokeWidth: 2.5)),
 
                       // ── Tariff flow: radio card list ─────────────────────
                       ] else if (hasTariffs) ...[
@@ -1429,7 +1408,7 @@ class _Header extends StatelessWidget {
             Text(
               eyebrow,
               style: const TextStyle(
-                color: _C.t2, fontSize: 10,
+                color: _t2, fontSize: 10,
                 fontWeight: FontWeight.w700, letterSpacing: 2.5,
               ),
             ),
@@ -1437,7 +1416,7 @@ class _Header extends StatelessWidget {
             Text(
               title,
               style: TextStyle(
-                color: isExpired ? _C.rose : _C.t0,
+                color: isExpired ? DS.rose : _t0,
                 fontSize: 28,
                 fontWeight: FontWeight.w800,
                 letterSpacing: -0.8,
@@ -1460,20 +1439,20 @@ class _BalanceChip extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
     decoration: BoxDecoration(
-      color: _C.surface,
+      color: _premSurface,
       borderRadius: BorderRadius.circular(50),
-      border: Border.all(color: _C.b1),
+      border: Border.all(color: _b1),
     ),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Container(
         width: 7, height: 7,
-        decoration: const BoxDecoration(color: _C.teal, shape: BoxShape.circle),
+        decoration: const BoxDecoration(color: _teal, shape: BoxShape.circle),
       ),
       const SizedBox(width: 7),
       Text(
         '${rub.toStringAsFixed(0)} $currency',
         style: const TextStyle(
-            color: _C.t0, fontSize: 13, fontWeight: FontWeight.w700),
+            color: _t0, fontSize: 13, fontWeight: FontWeight.w700),
       ),
     ]),
   );
@@ -1498,9 +1477,9 @@ class _ActionToggle extends StatelessWidget {
     height: 48,
     padding: const EdgeInsets.all(4),
     decoration: BoxDecoration(
-      color: _C.surface,
+      color: _premSurface,
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: _C.b1),
+      border: Border.all(color: _b1),
     ),
     child: Row(children: [
       for (int i = 0; i < labels.length; i++)
@@ -1513,14 +1492,14 @@ class _ActionToggle extends StatelessWidget {
               decoration: BoxDecoration(
                 gradient: selected == i
                     ? const LinearGradient(
-                        colors: [_C.indigo, _C.indigoD],
+                        colors: [DS.violet, _indigoD],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight)
                     : null,
                 borderRadius: BorderRadius.circular(11),
                 boxShadow: selected == i
                     ? [BoxShadow(
-                        color: _C.indigo.withValues(alpha: 0.32),
+                        color: DS.violet.withValues(alpha: 0.32),
                         blurRadius: 14, offset: const Offset(0, 3))]
                     : null,
               ),
@@ -1528,7 +1507,7 @@ class _ActionToggle extends StatelessWidget {
                 child: Text(
                   labels[i],
                   style: TextStyle(
-                    color: selected == i ? Colors.white : _C.t1,
+                    color: selected == i ? Colors.white : _t1,
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
@@ -1640,7 +1619,7 @@ class _FeatureRow extends StatelessWidget {
     const SizedBox(width: 14),
     Expanded(
       child: Text(label, style: const TextStyle(
-          color: _C.t0, fontSize: 14, fontWeight: FontWeight.w600)),
+          color: _t0, fontSize: 14, fontWeight: FontWeight.w600)),
     ),
   ]);
 }
@@ -1682,7 +1661,7 @@ class _PeriodStrip extends StatelessWidget {
         const Text(
           'ПЕРИОД ПОДПИСКИ',
           style: TextStyle(
-            color: _C.t2, fontSize: 10,
+            color: _t2, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
@@ -1751,25 +1730,25 @@ class _PeriodPillState extends State<_PeriodPill> {
             decoration: BoxDecoration(
               gradient: widget.selected
                   ? const LinearGradient(
-                      colors: [_C.indigo, _C.indigoD],
+                      colors: [DS.violet, _indigoD],
                       begin: Alignment.topLeft, end: Alignment.bottomRight)
                   : null,
-              color: widget.selected ? null : _C.surface,
+              color: widget.selected ? null : _premSurface,
               borderRadius: BorderRadius.circular(50),
               border: Border.all(
-                color: widget.selected ? _C.indigo : _C.b1,
+                color: widget.selected ? DS.violet : _b1,
                 width: 1.5,
               ),
               boxShadow: widget.selected
                   ? [BoxShadow(
-                      color: _C.indigo.withValues(alpha: 0.35),
+                      color: DS.violet.withValues(alpha: 0.35),
                       blurRadius: 12, offset: const Offset(0, 3))]
                   : null,
             ),
             child: Text(
               widget.label,
               style: TextStyle(
-                color: widget.selected ? Colors.white : _C.t1,
+                color: widget.selected ? Colors.white : _t1,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
@@ -1782,7 +1761,7 @@ class _PeriodPillState extends State<_PeriodPill> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                 decoration: BoxDecoration(
-                  color: _C.gold,
+                  color: DS.gold,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -1835,22 +1814,22 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
       return (PhosphorIconsFill.usersThree, const Color(0xFF7C6FF7));
     }
     if (n.contains('безлимит') || n.contains('unlimit') || n.contains('безлим')) {
-      return (PhosphorIconsFill.rocketLaunch, _C.gold);
+      return (PhosphorIconsFill.rocketLaunch, DS.gold);
     }
     if (n.contains('популяр') || n.contains('popular') || n.contains('стандарт')) {
       return (PhosphorIconsFill.fire, const Color(0xFFFF6B3D));
     }
     if (n.contains('базов') || n.contains('basic') || n.contains('старт') || n.contains('lite')) {
-      return (PhosphorIconsFill.shieldCheck, _C.silver);
+      return (PhosphorIconsFill.shieldCheck, _silver);
     }
     if (n.contains('бизнес') || n.contains('business') || n.contains('корпор')) {
-      return (PhosphorIconsFill.crown, _C.gold);
+      return (PhosphorIconsFill.crown, DS.gold);
     }
     // Tier fallback
     return switch (t.tierLevel) {
-      >= 3 => (PhosphorIconsFill.crown,      _C.gold),
+      >= 3 => (PhosphorIconsFill.crown,      DS.gold),
       2    => (PhosphorIconsFill.fire,        const Color(0xFFFF6B3D)),
-      _    => (PhosphorIconsFill.shieldCheck, _C.silver),
+      _    => (PhosphorIconsFill.shieldCheck, _silver),
     };
   }
 
@@ -1877,10 +1856,10 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
           decoration: BoxDecoration(
             color: selected
                 ? accent.withValues(alpha: 0.08)
-                : _C.surface,
-            borderRadius: BorderRadius.circular(_C.r16),
+                : _premSurface,
+            borderRadius: BorderRadius.circular(_r16),
             border: Border.all(
-              color: selected ? accent.withValues(alpha: 0.75) : _C.b1,
+              color: selected ? accent.withValues(alpha: 0.75) : _b1,
               width: 1.5,           // constant — no layout shift on select
             ),
             boxShadow: selected
@@ -1894,7 +1873,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
             child: InkWell(
               onHighlightChanged: (h) => setState(() => _pressed = h),
               onTap: widget.onTap,
-              borderRadius: BorderRadius.circular(_C.r16),
+              borderRadius: BorderRadius.circular(_r16),
               splashColor: accent.withValues(alpha: 0.08),
               highlightColor: accent.withValues(alpha: 0.04),
               child: Padding(
@@ -1930,7 +1909,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                         Text(
                           _TariffRadioCard._cleanTariffName(widget.tariff.name),
                           style: TextStyle(
-                            color: selected ? _C.t0 : _C.t1,
+                            color: selected ? _t0 : _t1,
                             fontSize: 16,
                             fontWeight: FontWeight.w800,
                           ),
@@ -1943,17 +1922,17 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                               _MiniPhosphorChip(
                                   icon: PhosphorIconsFill.infinity,
                                   label: 'Безлимит',
-                                  color: _C.gold)
+                                  color: DS.gold)
                             else
                               _MiniPhosphorChip(
                                   icon: PhosphorIconsRegular.database,
                                   label: 'Обход: ${widget.tariff.trafficLimitGb} ГБ',
-                                  color: _C.sky),
+                                  color: _sky),
                             const SizedBox(height: 4),
                             _MiniPhosphorChip(
                                 icon: PhosphorIconsRegular.devices,
                                 label: widget.tariff.deviceLabel,
-                                color: _C.indigoB),
+                                color: _indigoB),
                           ],
                         ),
                       ],
@@ -1971,7 +1950,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                           Text(
                             '${price.toStringAsFixed(0)} ₽',
                             style: TextStyle(
-                              color: selected ? accent : _C.t0,
+                              color: selected ? accent : _t0,
                               fontSize: 17,
                               fontWeight: FontWeight.w900,
                             ),
@@ -1981,7 +1960,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                             monthly != null && widget.period!.days > 31
                                 ? '~${monthly.round()} ₽/мес'
                                 : '/мес',
-                            style: const TextStyle(color: _C.t2, fontSize: 11),
+                            style: const TextStyle(color: _t2, fontSize: 11),
                           ),
                         ],
                       ),
@@ -1996,7 +1975,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                       shape: BoxShape.circle,
                       color: selected ? accent : Colors.transparent,
                       border: Border.all(
-                        color: selected ? accent : _C.t2,
+                        color: selected ? accent : _t2,
                         width: 2,
                       ),
                     ),
@@ -2085,7 +2064,7 @@ class _BadgeChipState extends State<_BadgeChip>
 
   @override
   Widget build(BuildContext context) {
-    const c = _C.gold;
+    const c = DS.gold;
     // Solid dark pill — always legible regardless of card selection state
     // (gold-accent selected cards would swallow a translucent gold badge).
     return AnimatedBuilder(
@@ -2115,7 +2094,7 @@ class _BadgeChipState extends State<_BadgeChip>
         children: [
           const Text('★ ',
               style: TextStyle(
-                  color: _C.gold, fontSize: 8, height: 1.1)),
+                  color: DS.gold, fontSize: 8, height: 1.1)),
           Text(widget.label,
               style: const TextStyle(
                   color: Color(0xFFFFF8E7),   // warm white — readable on dark
@@ -2178,26 +2157,26 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
             gradient: selected
                 ? LinearGradient(
                     colors: [
-                      _C.indigo.withValues(alpha: 0.14),
-                      _C.indigoD.withValues(alpha: 0.06),
+                      DS.violet.withValues(alpha: 0.14),
+                      _indigoD.withValues(alpha: 0.06),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   )
                 : null,
-            color: selected ? null : _C.surface,
-            borderRadius: BorderRadius.circular(_C.r12),
+            color: selected ? null : _premSurface,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
             border: Border.all(
-              color: selected ? _C.indigo.withValues(alpha: 0.80) : _C.b1,
+              color: selected ? DS.violet.withValues(alpha: 0.80) : _b1,
               width: selected ? 1.5 : 1,
             ),
             boxShadow: selected
                 ? [
                     BoxShadow(
-                        color: _C.indigo.withValues(alpha: 0.20),
+                        color: DS.violet.withValues(alpha: 0.20),
                         blurRadius: 18, offset: const Offset(0, 5)),
                     BoxShadow(
-                        color: _C.indigo.withValues(alpha: 0.08),
+                        color: DS.violet.withValues(alpha: 0.08),
                         blurRadius: 40, offset: const Offset(0, 10)),
                   ]
                 : null,
@@ -2210,14 +2189,14 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
               width: 22, height: 22,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: selected ? _C.indigo : Colors.transparent,
+                color: selected ? DS.violet : Colors.transparent,
                 border: Border.all(
-                  color: selected ? _C.indigo : _C.t2,
+                  color: selected ? DS.violet : _t2,
                   width: 2,
                 ),
                 boxShadow: selected
                     ? [BoxShadow(
-                        color: _C.indigo.withValues(alpha: 0.45),
+                        color: DS.violet.withValues(alpha: 0.45),
                         blurRadius: 8)]
                     : null,
               ),
@@ -2237,7 +2216,7 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                   Text(
                     period.label,
                     style: TextStyle(
-                      color: selected ? _C.t0 : _C.t1,
+                      color: selected ? _t0 : _t1,
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                     ),
@@ -2248,8 +2227,8 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                       '~${monthlyRub.round()} ₽/мес',
                       style: TextStyle(
                         color: selected
-                            ? _C.indigoB.withValues(alpha: 0.85)
-                            : _C.t2,
+                            ? _indigoB.withValues(alpha: 0.85)
+                            : _t2,
                         fontSize: 11,
                       ),
                     ),
@@ -2271,13 +2250,13 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                           ? const LinearGradient(
                               colors: [Color(0xFF2DD4BF), Color(0xFF059669)])
                           : null,
-                      color: selected ? null : _C.teal.withValues(alpha: 0.14),
+                      color: selected ? null : _teal.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
                       '−$discount%',
                       style: TextStyle(
-                        color: selected ? Colors.white : _C.teal,
+                        color: selected ? Colors.white : _teal,
                         fontSize: 10,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 0.2,
@@ -2288,15 +2267,15 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                   Text(
                     '${origRub.toStringAsFixed(0)} ₽',
                     style: const TextStyle(
-                      color: _C.t2, fontSize: 11,
+                      color: _t2, fontSize: 11,
                       decoration: TextDecoration.lineThrough,
-                      decorationColor: _C.t2,
+                      decorationColor: _t2,
                     ),
                   ),
                 Text(
                   '${priceRub.toStringAsFixed(0)} ₽',
                   style: TextStyle(
-                    color: selected ? _C.indigoB : _C.t0,
+                    color: selected ? _indigoB : _t0,
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
                     height: 1.1,
@@ -2389,27 +2368,27 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
               decoration: BoxDecoration(
                 // Deep indigo gradient — same rich tone as Subscription hero card.
                 gradient: const LinearGradient(
-                  colors: [_C.cg1, _C.cg2],
+                  colors: [_cg1, _cg2],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                borderRadius: BorderRadius.circular(_C.r22),
+                borderRadius: BorderRadius.circular(_r22),
                 border: Border.all(
                   color: Color.lerp(
-                    _C.indigo.withValues(alpha: 0.28),
-                    _C.gold.withValues(alpha: 0.50),
+                    DS.violet.withValues(alpha: 0.28),
+                    DS.gold.withValues(alpha: 0.50),
                     g,
                   )!,
                   width: 1.5,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: _C.indigo.withValues(alpha: 0.10 + g * 0.18),
+                    color: DS.violet.withValues(alpha: 0.10 + g * 0.18),
                     blurRadius: 50 + g * 22,
                     offset: const Offset(0, 12),
                   ),
                   BoxShadow(
-                    color: _C.gold.withValues(alpha: g * 0.10),
+                    color: DS.gold.withValues(alpha: g * 0.10),
                     blurRadius: 28,
                     offset: Offset.zero,
                   ),
@@ -2448,10 +2427,10 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                               Text(
                                 '${origRub.toStringAsFixed(0)} ₽',
                                 style: const TextStyle(
-                                  color: _C.t2,
+                                  color: _t2,
                                   fontSize: 15,
                                   decoration: TextDecoration.lineThrough,
-                                  decorationColor: _C.t2,
+                                  decorationColor: _t2,
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -2459,13 +2438,13 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 3),
                                 decoration: BoxDecoration(
-                                  color: _C.amber.withValues(alpha: 0.15),
+                                  color: DS.gold.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
                                   '−${sel.discountPercent}%',
                                   style: const TextStyle(
-                                      color: _C.amber,
+                                      color: DS.gold,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w800),
                                 ),
@@ -2491,7 +2470,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                               priceRub.toStringAsFixed(0),
                               key: ValueKey(sel.id),
                               style: const TextStyle(
-                                color: _C.t0, fontSize: 68,
+                                color: _t0, fontSize: 68,
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: -3, height: 1,
                               ),
@@ -2500,7 +2479,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                           const Padding(
                             padding: EdgeInsets.only(bottom: 10, left: 4),
                             child: Text('₽', style: TextStyle(
-                                color: _C.t1,
+                                color: _t1,
                                 fontSize: 24,
                                 fontWeight: FontWeight.w700)),
                           ),
@@ -2508,7 +2487,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                         const SizedBox(height: 5),
                         Text(
                           'за период · ${sel.label.toLowerCase()}',
-                          style: const TextStyle(color: _C.t2, fontSize: 13),
+                          style: const TextStyle(color: _t2, fontSize: 13),
                         ),
                       ]),
                     ),
@@ -2518,7 +2497,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                 Container(
                     margin: const EdgeInsets.fromLTRB(22, 20, 22, 0),
                     height: 1,
-                    color: _C.b1),
+                    color: _b1),
 
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
@@ -2526,17 +2505,17 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                     _FeatureChip(
                         icon: Icons.bolt_rounded,
                         label: traffic,
-                        color: _C.sky),
+                        color: _sky),
                     const SizedBox(width: 8),
                     _FeatureChip(
                         icon: Icons.devices_rounded,
                         label: devices,
-                        color: _C.indigo),
+                        color: DS.violet),
                     const SizedBox(width: 8),
                     const _FeatureChip(
                         icon: Icons.verified_user_rounded,
                         label: 'Без логов',
-                        color: _C.teal),
+                        color: _teal),
                   ]),
                 ),
               ]),
@@ -2545,7 +2524,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
             // ── Diagonal shimmer sweep overlay ─────────────────────────────
             Positioned.fill(
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(_C.r22),
+                borderRadius: BorderRadius.circular(_r22),
                 child: IgnorePointer(
                   child: Container(
                     decoration: BoxDecoration(
@@ -2653,21 +2632,21 @@ class _PeriodChipState extends State<_PeriodChip>
           decoration: BoxDecoration(
             gradient: widget.selected
                 ? const LinearGradient(
-                    colors: [_C.indigo, _C.indigoD],
+                    colors: [DS.violet, _indigoD],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight)
                 : null,
-            color: widget.selected ? null : _C.b1,
+            color: widget.selected ? null : _b1,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: widget.selected
                   ? Colors.transparent
-                  : _C.indigo.withValues(alpha: 0.22),
+                  : DS.violet.withValues(alpha: 0.22),
               width: 1.5,
             ),
             boxShadow: widget.selected
                 ? [BoxShadow(
-                    color: _C.indigo.withValues(alpha: 0.35),
+                    color: DS.violet.withValues(alpha: 0.35),
                     blurRadius: 16,
                     offset: const Offset(0, 4))]
                 : null,
@@ -2689,28 +2668,28 @@ class _PeriodChipState extends State<_PeriodChip>
             decoration: BoxDecoration(
               gradient: widget.selected
                   ? const LinearGradient(
-                      colors: [_C.indigo, _C.indigoD],
+                      colors: [DS.violet, _indigoD],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight)
                   : null,
-              color: widget.selected ? null : _C.b1,
+              color: widget.selected ? null : _b1,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: widget.selected
                     ? Colors.transparent
-                    : _C.amber.withValues(alpha: 0.48 + g * 0.42),
+                    : DS.gold.withValues(alpha: 0.48 + g * 0.42),
                 width: 1.5,
               ),
               boxShadow: [
                 if (widget.selected)
                   BoxShadow(
-                    color: _C.indigo.withValues(alpha: 0.35),
+                    color: DS.violet.withValues(alpha: 0.35),
                     blurRadius: 16,
                     offset: const Offset(0, 4),
                   )
                 else
                   BoxShadow(
-                    color: _C.amber.withValues(alpha: 0.14 + g * 0.28),
+                    color: DS.gold.withValues(alpha: 0.14 + g * 0.28),
                     blurRadius: 10 + g * 14,
                     offset: const Offset(0, 2),
                   ),
@@ -2729,7 +2708,7 @@ class _PeriodChipState extends State<_PeriodChip>
       style: TextStyle(
         color: widget.selected
             ? Colors.white.withValues(alpha: 0.8)
-            : _C.amber,
+            : DS.gold,
         fontSize: 8,
         fontWeight: FontWeight.w800,
         letterSpacing: 0.5,
@@ -2740,7 +2719,7 @@ class _PeriodChipState extends State<_PeriodChip>
       widget.period.label,
       textAlign: TextAlign.center,
       style: TextStyle(
-        color: widget.selected ? Colors.white : _C.amber,
+        color: widget.selected ? Colors.white : DS.gold,
         fontSize: 13,
         fontWeight: FontWeight.w700,
       ),
@@ -2761,7 +2740,7 @@ class _FeatureChip extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 10),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.13),
-        borderRadius: BorderRadius.circular(_C.r12),
+        borderRadius: BorderRadius.circular(DS.radiusSm),
         border: Border.all(color: color.withValues(alpha: 0.32)),
         boxShadow: [
           BoxShadow(
@@ -2803,7 +2782,7 @@ class _BuyButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final needPay = isLoggedIn && !hasBalance && (priceKopeks ?? 0) > 0;
-    final color   = needPay ? _C.teal : _C.indigo;
+    final color   = needPay ? _teal : DS.violet;
 
     final String label;
     if (loading) {
@@ -2831,7 +2810,7 @@ class _BuyButton extends StatelessWidget {
             colors: [color, Color.lerp(color, Colors.black, 0.28)!],
             begin: Alignment.topLeft, end: Alignment.bottomRight,
           ),
-          borderRadius: BorderRadius.circular(_C.r16),
+          borderRadius: BorderRadius.circular(_r16),
           boxShadow: [
             BoxShadow(
               color: color.withValues(alpha: loading ? 0.12 : 0.38),
@@ -2868,10 +2847,10 @@ class _Disclaimer extends StatelessWidget {
   Widget build(BuildContext context) => const Row(
     mainAxisAlignment: MainAxisAlignment.center,
     children: [
-      Icon(Icons.lock_outline_rounded, size: 11, color: _C.t2),
+      Icon(Icons.lock_outline_rounded, size: 11, color: _t2),
       SizedBox(width: 5),
       Text('Безопасная оплата · YooKassa',
-          style: TextStyle(color: _C.t2, fontSize: 11)),
+          style: TextStyle(color: _t2, fontSize: 11)),
     ],
   );
 }
@@ -2902,15 +2881,15 @@ class _ActiveCard extends StatelessWidget {
 
     // Urgency palette: calm gold → warm amber → alert rose
     final Color accent = daysLeft == null || daysLeft > 7
-        ? _C.gold
+        ? DS.gold
         : daysLeft > 3
             ? const Color(0xFFFBBF24)
-            : _C.rose;
+            : DS.rose;
 
     // Badge colour: teal for a healthy active sub (green = "all OK" signal).
     // Trial and urgency states keep the urgency accent.
-    final Color badgeColor = (!sub.isTrial && accent == _C.gold)
-        ? _C.teal
+    final Color badgeColor = (!sub.isTrial && accent == DS.gold)
+        ? _teal
         : accent;
 
     final String daysLabel = daysLeft == null
@@ -2928,9 +2907,9 @@ class _ActiveCard extends StatelessWidget {
     return Container(
       clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(_C.r16),
+        borderRadius: BorderRadius.circular(_r16),
         gradient: const LinearGradient(
-          colors: [_C.cg1, _C.cg2],
+          colors: [_cg1, _cg2],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -2949,7 +2928,7 @@ class _ActiveCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
 
         // ── Top stripe — animated shimmer (Itten: gold ↔ violet) ───────────
-        _ShimmerStripe(leading: accent, trailing: _C.indigo),
+        _ShimmerStripe(leading: accent, trailing: DS.violet),
 
         // ── Main row: status pill + plan name + days remaining ────────────
         Padding(
@@ -2981,7 +2960,7 @@ class _ActiveCard extends StatelessWidget {
               child: Text(
                 planName,
                 style: const TextStyle(
-                  color: _C.t0, fontSize: 14, fontWeight: FontWeight.w600,
+                  color: _t0, fontSize: 14, fontWeight: FontWeight.w600,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -2996,7 +2975,7 @@ class _ActiveCard extends StatelessWidget {
         ),
 
         // ── Bottom row: expiry + autopay ──────────────────────────────────
-        Container(height: 1, color: _C.b0),
+        Container(height: 1, color: _b0),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 9, 16, 11),
           child: Row(children: [
@@ -3012,14 +2991,14 @@ class _ActiveCard extends StatelessWidget {
             const Spacer(),
             PhosphorIcon(
               PhosphorIconsRegular.arrowsClockwise,
-              color: sub.autopayEnabled ? _C.teal : _C.t2,
+              color: sub.autopayEnabled ? _teal : _t2,
               size: 13,
             ),
             const SizedBox(width: 5),
             Text(
               sub.autopayEnabled ? 'Автопродление' : 'Без автопродления',
               style: TextStyle(
-                color: sub.autopayEnabled ? _C.teal : _C.t2, fontSize: 12,
+                color: sub.autopayEnabled ? _teal : _t2, fontSize: 12,
               ),
             ),
           ]),
@@ -3045,21 +3024,21 @@ class _ExpiredCard extends StatelessWidget {
     return Container(
       clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(_C.r16),
+        borderRadius: BorderRadius.circular(_r16),
         gradient: const LinearGradient(
           colors: [Color(0xFF1A0A0E), Color(0xFF110810)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         border: Border(
-          left:   BorderSide(color: _C.rose, width: 3),
-          top:    BorderSide(color: _C.rose.withValues(alpha: 0.15)),
-          right:  BorderSide(color: _C.rose.withValues(alpha: 0.15)),
-          bottom: BorderSide(color: _C.rose.withValues(alpha: 0.15)),
+          left:   BorderSide(color: DS.rose, width: 3),
+          top:    BorderSide(color: DS.rose.withValues(alpha: 0.15)),
+          right:  BorderSide(color: DS.rose.withValues(alpha: 0.15)),
+          bottom: BorderSide(color: DS.rose.withValues(alpha: 0.15)),
         ),
         boxShadow: [
           BoxShadow(
-            color: _C.rose.withValues(alpha: 0.08),
+            color: DS.rose.withValues(alpha: 0.08),
             blurRadius: 20, offset: const Offset(0, 4),
           ),
         ],
@@ -3068,7 +3047,7 @@ class _ExpiredCard extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
         child: Row(children: [
           PhosphorIcon(PhosphorIconsFill.warningCircle,
-              color: _C.rose, size: 18),
+              color: DS.rose, size: 18),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -3076,16 +3055,16 @@ class _ExpiredCard extends StatelessWidget {
               children: [
                 Text(planName,
                     style: const TextStyle(
-                        color: _C.t1, fontSize: 15,
+                        color: _t1, fontSize: 15,
                         fontWeight: FontWeight.w700)),
                 const SizedBox(height: 2),
                 Text('истекла $expiredAt',
                     style: const TextStyle(
-                        color: _C.t2, fontSize: 12)),
+                        color: _t2, fontSize: 12)),
               ],
             ),
           ),
-          _MiniChip(label: 'Доступ закрыт', color: _C.rose, bordered: true),
+          _MiniChip(label: 'Доступ закрыт', color: DS.rose, bordered: true),
         ]),
       ),
     );
@@ -3118,19 +3097,19 @@ class _PlanContextStrip extends StatelessWidget {
               _CtxItem(
                 icon: PhosphorIconsRegular.sparkle,
                 label: planName,
-                color: _C.t1,
+                color: _t1,
               ),
             _CtxItem(
               icon: PhosphorIconsRegular.devices,
               label: '${sub.deviceLimit} ${_devWord(sub.deviceLimit)}',
-              color: _C.t2,
+              color: _t2,
             ),
             _CtxItem(
               icon: PhosphorIconsRegular.database,
               label: sub.trafficLimitGb == 0
                   ? 'безлимит'
                   : '${sub.trafficLimitGb} ГБ',
-              color: _C.t2,
+              color: _t2,
             ),
           ],
         ),
@@ -3140,9 +3119,9 @@ class _PlanContextStrip extends StatelessWidget {
     // Active: exact expiry + autopay status
     final expDate  = sub.expireDate;
     final daysLeft = expDate?.difference(DateTime.now()).inDays;
-    final urgency  = (daysLeft != null && daysLeft <= 7) ? _C.rose
+    final urgency  = (daysLeft != null && daysLeft <= 7) ? DS.rose
                    : (daysLeft != null && daysLeft <= 30) ? const Color(0xFFFBBF24)
-                   : _C.gold;
+                   : DS.gold;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
@@ -3161,7 +3140,7 @@ class _PlanContextStrip extends StatelessWidget {
                 ? PhosphorIconsFill.arrowsClockwise
                 : PhosphorIconsRegular.arrowsClockwise,
             label: sub.autopayEnabled ? 'Автопродление' : 'Без автопродления',
-            color: sub.autopayEnabled ? _C.teal : _C.t2,
+            color: sub.autopayEnabled ? _teal : _t2,
           ),
         ],
       ),
@@ -3265,7 +3244,7 @@ class _TrafficBarState extends State<_TrafficBar>
         borderRadius: BorderRadius.circular(6),
         child: Container(
           height: 7,
-          color: _C.b1,
+          color: _b1,
           child: FractionallySizedBox(
             alignment: Alignment.centerLeft,
             widthFactor: v.clamp(0.0, 1.0),
@@ -3273,8 +3252,8 @@ class _TrafficBarState extends State<_TrafficBar>
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: v > 0.85
-                      ? [_C.amber, _C.rose]
-                      : [_C.teal, _C.sky],
+                      ? [DS.gold, DS.rose]
+                      : [_teal, _sky],
                 ),
                 borderRadius: BorderRadius.circular(6),
               ),
@@ -3460,7 +3439,7 @@ class _ManageSection extends StatelessWidget {
       return const Center(
         child: Padding(
           padding: EdgeInsets.only(top: 40),
-          child: CircularProgressIndicator(color: _C.indigo, strokeWidth: 2.5),
+          child: CircularProgressIndicator(color: DS.violet, strokeWidth: 2.5),
         ),
       );
     }
@@ -3490,7 +3469,7 @@ class _ManageSection extends StatelessWidget {
       _ActionBtn(
         loading: loading,
         disabled: renewPeriodId == null || selRenewKopeks == null,
-        color: _C.indigo,
+        color: DS.violet,
         label: selRenewKopeks != null
             ? 'Продлить за ${(selRenewKopeks / 100).toStringAsFixed(0)} ₽'
             : 'Продлить подписку',
@@ -3510,7 +3489,7 @@ class _ManageSection extends StatelessWidget {
               topLabel: '+${p.gb} ГБ',
               bottomLabel: k == null ? '…' : (k == 0 ? 'Бесп.' : '${(k / 100).toStringAsFixed(0)} ₽'),
               selected: p.gb == selectedTrafficGb,
-              accentColor: _C.sky,
+              accentColor: _sky,
             );
           }).toList(),
           onSelect: (id) => onTrafficChanged(int.parse(id)),
@@ -3519,7 +3498,7 @@ class _ManageSection extends StatelessWidget {
         _ActionBtn(
           loading: loading,
           disabled: selectedTrafficGb == null || trafficPrices[selectedTrafficGb] == null,
-          color: _C.sky,
+          color: _sky,
           label: selectedTrafficGb != null && trafficPrices[selectedTrafficGb] != null
               ? 'Добавить $selectedTrafficGb ГБ за ${(trafficPrices[selectedTrafficGb]! / 100).toStringAsFixed(0)} ₽'
               : 'Добавить трафик',
@@ -3542,7 +3521,7 @@ class _ManageSection extends StatelessWidget {
               bottomLabel: k == null ? '…' : (k == 0 ? 'Бесп.' : '${(k / 100).toStringAsFixed(0)} ₽'),
               subLabel: '${sub.deviceLimit}→$target',
               selected: add == selectedDevicesAdd,
-              accentColor: _C.indigoB,
+              accentColor: _indigoB,
             );
           }).toList(),
           onSelect: (id) => onDevicesChanged(int.parse(id)),
@@ -3551,7 +3530,7 @@ class _ManageSection extends StatelessWidget {
         _ActionBtn(
           loading: loading,
           disabled: selectedDevicesAdd == null || devicesPrices[selectedDevicesAdd] == null,
-          color: _C.indigoB,
+          color: _indigoB,
           label: selectedDevicesAdd != null && devicesPrices[selectedDevicesAdd] != null
               ? 'Добавить $selectedDevicesAdd устр. за ${(devicesPrices[selectedDevicesAdd]! / 100).toStringAsFixed(0)} ₽'
               : 'Добавить устройства',
@@ -3600,16 +3579,16 @@ class _PeriodTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: selected
-              ? _C.indigo.withValues(alpha: 0.10)
-              : _C.surface,
-          borderRadius: BorderRadius.circular(_C.r12),
+              ? DS.violet.withValues(alpha: 0.10)
+              : _premSurface,
+          borderRadius: BorderRadius.circular(DS.radiusSm),
           border: Border.all(
-            color: selected ? _C.indigo : _C.b1,
+            color: selected ? DS.violet : _b1,
             width: selected ? 1.5 : 1,
           ),
           boxShadow: selected
               ? [BoxShadow(
-                  color: _C.indigo.withValues(alpha: 0.15),
+                  color: DS.violet.withValues(alpha: 0.15),
                   blurRadius: 14, offset: const Offset(0, 4))]
               : null,
         ),
@@ -3620,9 +3599,9 @@ class _PeriodTile extends StatelessWidget {
             width: 20, height: 20,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: selected ? _C.indigo : Colors.transparent,
+              color: selected ? DS.violet : Colors.transparent,
               border: Border.all(
-                color: selected ? _C.indigo : _C.t2,
+                color: selected ? DS.violet : _t2,
                 width: 2,
               ),
             ),
@@ -3641,7 +3620,7 @@ class _PeriodTile extends StatelessWidget {
                 Text(
                   period.label,
                   style: TextStyle(
-                    color: selected ? _C.t0 : _C.t1,
+                    color: selected ? _t0 : _t1,
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                   ),
@@ -3652,8 +3631,8 @@ class _PeriodTile extends StatelessWidget {
                     '~${monthlyRub.round()} ₽/мес',
                     style: TextStyle(
                       color: selected
-                          ? _C.indigo.withValues(alpha: 0.75)
-                          : _C.t2,
+                          ? DS.violet.withValues(alpha: 0.75)
+                          : _t2,
                       fontSize: 11,
                     ),
                   ),
@@ -3670,17 +3649,17 @@ class _PeriodTile extends StatelessWidget {
                   margin: const EdgeInsets.only(bottom: 5),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: _C.teal.withValues(alpha: 0.14),
+                    color: _teal.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
-                      color: _C.teal.withValues(alpha: 0.30),
+                      color: _teal.withValues(alpha: 0.30),
                       width: 1,
                     ),
                   ),
                   child: Text(
                     '−$discount%',
                     style: const TextStyle(
-                      color: _C.teal,
+                      color: _teal,
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0.3,
@@ -3691,7 +3670,7 @@ class _PeriodTile extends StatelessWidget {
                 Text(
                   '${priceRub.toStringAsFixed(0)} ₽',
                   style: TextStyle(
-                    color: selected ? _C.indigo : _C.t0,
+                    color: selected ? DS.violet : _t0,
                     fontSize: 17,
                     fontWeight: FontWeight.w800,
                     height: 1,
@@ -3701,7 +3680,7 @@ class _PeriodTile extends StatelessWidget {
                 const SizedBox(
                   width: 14, height: 14,
                   child: CircularProgressIndicator(
-                      strokeWidth: 1.5, color: _C.t2)),
+                      strokeWidth: 1.5, color: _t2)),
             ],
           ),
         ]),
@@ -3718,13 +3697,13 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-    Icon(icon, color: _C.t2, size: 13),
+    Icon(icon, color: _t2, size: 13),
     const SizedBox(width: 7),
     Text(label, style: const TextStyle(
-        color: _C.t2, fontSize: 10,
+        color: _t2, fontSize: 10,
         fontWeight: FontWeight.w800, letterSpacing: 1.8)),
     const SizedBox(width: 10),
-    Expanded(child: Container(height: 1, color: _C.b1)),
+    Expanded(child: Container(height: 1, color: _b1)),
   ]);
 }
 
@@ -3736,13 +3715,13 @@ class _PSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-    PhosphorIcon(icon, color: _C.t2, size: 14),
+    PhosphorIcon(icon, color: _t2, size: 14),
     const SizedBox(width: 7),
     Text(label, style: const TextStyle(
-        color: _C.t2, fontSize: 10,
+        color: _t2, fontSize: 10,
         fontWeight: FontWeight.w800, letterSpacing: 1.8)),
     const SizedBox(width: 10),
-    Expanded(child: Container(height: 1, color: _C.b1)),
+    Expanded(child: Container(height: 1, color: _b1)),
   ]);
 }
 
@@ -3816,10 +3795,10 @@ class _OptionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: item.selected
             ? item.accentColor.withValues(alpha: 0.12)
-            : _C.surface,
-        borderRadius: BorderRadius.circular(_C.r12),
+            : _premSurface,
+        borderRadius: BorderRadius.circular(DS.radiusSm),
         border: Border.all(
-          color: item.selected ? item.accentColor : _C.b1,
+          color: item.selected ? item.accentColor : _b1,
           width: item.selected ? 1.5 : 1,
         ),
         boxShadow: item.selected
@@ -3837,7 +3816,7 @@ class _OptionCard extends StatelessWidget {
           textAlign: TextAlign.center,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: item.selected ? item.accentColor : _C.t1,
+            color: item.selected ? item.accentColor : _t1,
             fontSize: 13, fontWeight: FontWeight.w700,
           ),
         ),
@@ -3847,7 +3826,7 @@ class _OptionCard extends StatelessWidget {
             item.subLabel!,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: item.selected ? item.accentColor.withValues(alpha: 0.7) : _C.t2,
+              color: item.selected ? item.accentColor.withValues(alpha: 0.7) : _t2,
               fontSize: 9,
             ),
           ),
@@ -3858,7 +3837,7 @@ class _OptionCard extends StatelessWidget {
           textAlign: TextAlign.center,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: item.selected ? item.accentColor : _C.t0,
+            color: item.selected ? item.accentColor : _t0,
             fontSize: 12, fontWeight: FontWeight.w800,
           ),
         ),
@@ -3924,9 +3903,9 @@ class _ActionBtnState extends State<_ActionBtn>
                     : LinearGradient(
                         colors: [widget.color, Color.lerp(widget.color, Colors.black, 0.28)!],
                         begin: Alignment.topLeft, end: Alignment.bottomRight),
-                color: widget.disabled ? _C.surface : null,
-                borderRadius: BorderRadius.circular(_C.r16),
-                border: widget.disabled ? Border.all(color: _C.b1) : null,
+                color: widget.disabled ? _premSurface : null,
+                borderRadius: BorderRadius.circular(_r16),
+                border: widget.disabled ? Border.all(color: _b1) : null,
                 boxShadow: widget.disabled ? null : [
                   BoxShadow(
                     color: widget.color.withValues(alpha: 0.24 + 0.18 * p),
@@ -3959,7 +3938,7 @@ class _ActionBtnState extends State<_ActionBtn>
                       widget.label,
                       key: ValueKey(widget.label),
                       style: TextStyle(
-                        color: widget.disabled ? _C.t2 : Colors.white,
+                        color: widget.disabled ? _t2 : Colors.white,
                         fontSize: 15, fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -3984,24 +3963,24 @@ class _LoginCard extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(28, 36, 28, 32),
     decoration: BoxDecoration(
       gradient: const LinearGradient(
-        colors: [_C.cg1, _C.cg2],
+        colors: [_cg1, _cg2],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
-      borderRadius: BorderRadius.circular(_C.r22),
-      border: Border.all(color: _C.indigo.withValues(alpha: 0.25)),
+      borderRadius: BorderRadius.circular(_r22),
+      border: Border.all(color: DS.violet.withValues(alpha: 0.25)),
     ),
     child: Column(children: [
       Container(
         width: 80, height: 80,
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-              colors: [_C.indigo, _C.indigoD],
+              colors: [DS.violet, _indigoD],
               begin: Alignment.topLeft, end: Alignment.bottomRight),
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-                color: _C.indigo.withValues(alpha: 0.45),
+                color: DS.violet.withValues(alpha: 0.45),
                 blurRadius: 28, offset: const Offset(0, 8)),
           ],
         ),
@@ -4012,14 +3991,14 @@ class _LoginCard extends StatelessWidget {
         'Войдите, чтобы\nувидеть тарифы',
         textAlign: TextAlign.center,
         style: TextStyle(
-            color: _C.t0, fontSize: 22,
+            color: _t0, fontSize: 22,
             fontWeight: FontWeight.w800, height: 1.25, letterSpacing: -0.3),
       ),
       const SizedBox(height: 8),
       const Text(
         'Тарифы формируются индивидуально.\nАвторизуйтесь через Telegram.',
         textAlign: TextAlign.center,
-        style: TextStyle(color: _C.t1, fontSize: 14, height: 1.55),
+        style: TextStyle(color: _t1, fontSize: 14, height: 1.55),
       ),
       const SizedBox(height: 28),
       TelegramLoginButton(onTap: onLogin),
@@ -4040,39 +4019,39 @@ class _ErrorCard extends StatelessWidget {
     padding: const EdgeInsets.all(28),
     decoration: BoxDecoration(
       gradient: const LinearGradient(
-        colors: [_C.cg1, _C.cg2],
+        colors: [_cg1, _cg2],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
-      borderRadius: BorderRadius.circular(_C.r22),
-      border: Border.all(color: _C.b1),
+      borderRadius: BorderRadius.circular(_r22),
+      border: Border.all(color: _b1),
     ),
     child: Column(children: [
       Container(
         width: 60, height: 60,
         decoration: BoxDecoration(
-            color: _C.rose.withValues(alpha: 0.10), shape: BoxShape.circle),
-        child: const Icon(Icons.wifi_off_rounded, color: _C.rose, size: 28),
+            color: DS.rose.withValues(alpha: 0.10), shape: BoxShape.circle),
+        child: const Icon(Icons.wifi_off_rounded, color: DS.rose, size: 28),
       ),
       const SizedBox(height: 16),
       const Text('Не удалось загрузить тарифы',
           textAlign: TextAlign.center,
-          style: TextStyle(color: _C.t0, fontSize: 17, fontWeight: FontWeight.w700)),
+          style: TextStyle(color: _t0, fontSize: 17, fontWeight: FontWeight.w700)),
       const SizedBox(height: 6),
       const Text('Проверьте подключение к интернету',
           textAlign: TextAlign.center,
-          style: TextStyle(color: _C.t1, fontSize: 13)),
+          style: TextStyle(color: _t1, fontSize: 13)),
       const SizedBox(height: 20),
       GestureDetector(
         onTap: onRetry,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 11),
           decoration: BoxDecoration(
-              color: _C.indigo.withValues(alpha: 0.12),
+              color: DS.violet.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(50),
-              border: Border.all(color: _C.indigo.withValues(alpha: 0.35))),
+              border: Border.all(color: DS.violet.withValues(alpha: 0.35))),
           child: const Text('Попробовать снова',
-              style: TextStyle(color: _C.indigo, fontSize: 14, fontWeight: FontWeight.w700)),
+              style: TextStyle(color: DS.violet, fontSize: 14, fontWeight: FontWeight.w700)),
         ),
       ),
     ]),
@@ -4091,24 +4070,24 @@ class _PollingCard extends StatelessWidget {
     padding: const EdgeInsets.all(32),
     decoration: BoxDecoration(
       gradient: const LinearGradient(
-        colors: [_C.cg1, _C.cg2],
+        colors: [_cg1, _cg2],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),
-      borderRadius: BorderRadius.circular(_C.r22),
-      border: Border.all(color: _C.indigo.withValues(alpha: 0.28))),
+      borderRadius: BorderRadius.circular(_r22),
+      border: Border.all(color: DS.violet.withValues(alpha: 0.28))),
     child: Column(children: [
       const SizedBox(
           width: 52, height: 52,
-          child: CircularProgressIndicator(strokeWidth: 3, color: _C.indigo)),
+          child: CircularProgressIndicator(strokeWidth: 3, color: DS.violet)),
       const SizedBox(height: 24),
       const Text('Обрабатываем платёж…',
           textAlign: TextAlign.center,
-          style: TextStyle(color: _C.t0, fontSize: 20, fontWeight: FontWeight.w700)),
+          style: TextStyle(color: _t0, fontSize: 20, fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
       const Text('Ожидаем подтверждение.\nОбычно это занимает меньше минуты.',
           textAlign: TextAlign.center,
-          style: TextStyle(color: _C.t1, fontSize: 14, height: 1.6)),
+          style: TextStyle(color: _t1, fontSize: 14, height: 1.6)),
     ]),
   );
 }
@@ -4269,7 +4248,7 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
     child: FadeTransition(
       opacity: _fadeIn,
       child: Container(
-        color: _C.bg.withValues(alpha: 0.97),
+        color: DS.surface0.withValues(alpha: 0.97),
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -4306,7 +4285,7 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(
-                                  color: _C.teal.withValues(alpha: 0.55),
+                                  color: _teal.withValues(alpha: 0.55),
                                   width: 2.5),
                             ),
                           ),
@@ -4321,13 +4300,13 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         gradient: const LinearGradient(
-                            colors: [_C.teal, Color(0xFF059669)],
+                            colors: [_teal, Color(0xFF059669)],
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight),
                         boxShadow: [
-                          BoxShadow(color: _C.teal.withValues(alpha: 0.55),
+                          BoxShadow(color: _teal.withValues(alpha: 0.55),
                               blurRadius: 50, offset: const Offset(0, 10)),
-                          BoxShadow(color: _C.teal.withValues(alpha: 0.25),
+                          BoxShadow(color: _teal.withValues(alpha: 0.25),
                               blurRadius: 90, spreadRadius: 10),
                         ],
                       ),
@@ -4350,7 +4329,7 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                         Text(
                           widget.isUpgrade ? 'Готово!' : 'Подписка активна',
                           style: const TextStyle(
-                              color: _C.t0, fontSize: 30,
+                              color: _t0, fontSize: 30,
                               fontWeight: FontWeight.w800,
                               letterSpacing: -0.5),
                         ),
@@ -4359,7 +4338,7 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                           widget.isUpgrade
                               ? 'Изменения применены'
                               : 'Добро пожаловать',
-                          style: const TextStyle(color: _C.t1, fontSize: 16),
+                          style: const TextStyle(color: _t1, fontSize: 16),
                         ),
                       ]),
                     ),

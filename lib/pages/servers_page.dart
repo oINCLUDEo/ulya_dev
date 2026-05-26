@@ -323,8 +323,8 @@ class _ServersPageState extends State<ServersPage> {
     return Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('Серверы', style: TextStyle(
-            color: DS.textPrimary, fontSize: 32,
-            fontWeight: FontWeight.w800, letterSpacing: -0.5, height: 1)),
+            color: DS.textPrimary, fontSize: 28,
+            fontWeight: FontWeight.w700, letterSpacing: -0.5, height: 1)),
         if (subtitle != null) ...[
           const SizedBox(height: 6),
           Text(subtitle, style: const TextStyle(color: DS.textSecondary, fontSize: 15)),
@@ -381,7 +381,7 @@ class _SectionHeader extends StatelessWidget {
           Container(width: 42, height: 42,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(11),
+                borderRadius: BorderRadius.circular(DS.radiusSm),
               ),
               child: Icon(icon, color: color, size: 20)),
           const SizedBox(width: 12),
@@ -579,7 +579,7 @@ class _NodeTile extends StatelessWidget {
               else if (isPublicCatalog)
                 Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                    decoration: BoxDecoration(color: DS.surface2, borderRadius: BorderRadius.circular(8),
+                    decoration: BoxDecoration(color: DS.surface2, borderRadius: BorderRadius.circular(DS.radiusXs),
                         border: Border.all(color: DS.border)),
                     child: const Icon(Icons.lock_outline_rounded, size: 14, color: DS.textMuted))
               else
@@ -589,7 +589,7 @@ class _NodeTile extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
                       color: _pingColor(ping).withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(DS.radiusXs),
                       border: Border.all(color: _pingColor(ping).withValues(alpha: 0.25)),
                     ),
                     child: ping == -2
@@ -695,7 +695,7 @@ class _ProtoBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
-          color: c.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(5)),
+          color: c.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(DS.radiusXs)),
       child: Text(_label, style: TextStyle(
           color: c, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
     );

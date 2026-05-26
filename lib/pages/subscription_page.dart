@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../main.dart' show DS;
+
 import '../models/me_response.dart';
 import '../models/subscription_info.dart';
 import '../services/auth_service.dart';
@@ -12,35 +14,6 @@ import '../services/subscription_api_service.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Design tokens
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _DS {
-  static const violet      = Color(0xFF7C6FF7);
-  static const violetDim   = Color(0xFF4A44AA);
-  // Itten complementary to violet — premium membership status.
-  static const gold        = Color(0xFFD4A84B);
-  static const emerald     = Color(0xFF34D399);
-  static const amber       = Color(0xFFFBBF24);
-  static const rose        = Color(0xFFF87171);
-  static const sky         = Color(0xFF38BDF8);
-  static const telegramBlue = Color(0xFF229ED9);
-
-  static const surface0 = Color(0xFF0F0F14);
-  static const surface1 = Color(0xFF17171F);
-  static const surface2 = Color(0xFF1E1E2A);
-  static const surface3 = Color(0xFF26263A);
-
-  static const textPrimary   = Color(0xFFEEEEF8);
-  static const textSecondary = Color(0xFF8888AA);
-  static const textMuted     = Color(0xFF55556A);
-  static const border        = Color(0xFF2A2A3D);
-
-  static const radius   = 20.0;
-  static const radiusSm = 12.0;
-  static const radiusXs = 8.0;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SubscriptionPage
@@ -129,10 +102,10 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     final me   = meNotifier.value;
 
     return Scaffold(
-      backgroundColor: _DS.surface0,
+      backgroundColor: DS.surface0,
       body: RefreshIndicator(
-        color: _DS.violet,
-        backgroundColor: _DS.surface2,
+        color: DS.violet,
+        backgroundColor: DS.surface2,
         onRefresh: () => _refresh(force: true),
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -157,7 +130,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                     const SizedBox(height: 140),
                     const Center(
                         child: CircularProgressIndicator(
-                            color: _DS.violet, strokeWidth: 2.5)),
+                            color: DS.violet, strokeWidth: 2.5)),
                   ] else ...[
                     // ── Hero subscription status card ─────────────────────
                     _HeroSubCard(me: me, trafficInfo: _trafficInfo),
@@ -218,14 +191,14 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: _DS.surface2,
+        backgroundColor: DS.surface2,
         shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(_DS.radius)),
+            borderRadius: BorderRadius.circular(DS.radius)),
         title: const Text('Выйти из аккаунта?',
             style: TextStyle(
-                color: _DS.textPrimary, fontWeight: FontWeight.w700)),
+                color: DS.textPrimary, fontWeight: FontWeight.w700)),
         content: const Text('Данные подписки будут сброшены.',
-            style: TextStyle(color: _DS.textSecondary)),
+            style: TextStyle(color: DS.textSecondary)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -233,7 +206,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Выйти',
-                style: TextStyle(color: _DS.rose)),
+                style: TextStyle(color: DS.rose)),
           ),
         ],
       ),
@@ -298,7 +271,7 @@ class _SubHeader extends StatelessWidget {
             const Text(
               'ПОДПИСКА',
               style: TextStyle(
-                color: _DS.textMuted,
+                color: DS.textMuted,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 2.5,
@@ -308,9 +281,9 @@ class _SubHeader extends StatelessWidget {
             const Text(
               'Мой аккаунт',
               style: TextStyle(
-                color: _DS.textPrimary,
-                fontSize: 30,
-                fontWeight: FontWeight.w800,
+                color: DS.textPrimary,
+                fontSize: 28,
+                fontWeight: FontWeight.w700,
                 letterSpacing: -0.8,
                 height: 1,
               ),
@@ -321,12 +294,12 @@ class _SubHeader extends StatelessWidget {
                 Container(
                   width: 6, height: 6,
                   decoration: const BoxDecoration(
-                    color: _DS.violet, shape: BoxShape.circle),
+                    color: DS.violet, shape: BoxShape.circle),
                 ),
                 const SizedBox(width: 7),
                 Text(name,
                     style: const TextStyle(
-                        color: _DS.textSecondary,
+                        color: DS.textSecondary,
                         fontSize: 14,
                         fontWeight: FontWeight.w500)),
               ]),
@@ -395,14 +368,14 @@ class _RefreshButtonState extends State<_RefreshButton>
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: _DS.surface2,
+            color: DS.surface2,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _DS.border),
+            border: Border.all(color: DS.border),
           ),
           child: RotationTransition(
             turns: _rotCtrl,
             child: const Icon(Icons.refresh_rounded,
-                color: _DS.textSecondary, size: 20),
+                color: DS.textSecondary, size: 20),
           ),
         ),
       );
@@ -426,7 +399,7 @@ class _WelcomeCard extends StatelessWidget {
             end: Alignment.bottomRight,
           ),
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: _DS.violet.withValues(alpha: 0.25)),
+          border: Border.all(color: DS.violet.withValues(alpha: 0.25)),
         ),
         child: Column(children: [
           Container(
@@ -434,14 +407,14 @@ class _WelcomeCard extends StatelessWidget {
             height: 82,
             decoration: BoxDecoration(
               gradient: const LinearGradient(
-                colors: [_DS.violet, _DS.violetDim],
+                colors: [DS.violet, DS.violetDim],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: _DS.violet.withValues(alpha: 0.40),
+                  color: DS.violet.withValues(alpha: 0.40),
                   blurRadius: 28,
                   offset: const Offset(0, 8),
                 )
@@ -454,7 +427,7 @@ class _WelcomeCard extends StatelessWidget {
           const Text(
             'Войдите в аккаунт',
             style: TextStyle(
-              color: _DS.textPrimary,
+              color: DS.textPrimary,
               fontSize: 22,
               fontWeight: FontWeight.w800,
               letterSpacing: -0.3,
@@ -465,7 +438,7 @@ class _WelcomeCard extends StatelessWidget {
           const Text(
             'Управляйте подпиской, следите\nза трафиком и балансом',
             style: TextStyle(
-                color: _DS.textSecondary, fontSize: 14, height: 1.55),
+                color: DS.textSecondary, fontSize: 14, height: 1.55),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 26),
@@ -484,20 +457,20 @@ class _GoPremiumBanner extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           decoration: BoxDecoration(
-            color: _DS.surface1,
+            color: DS.surface1,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _DS.border),
+            border: Border.all(color: DS.border),
           ),
           child: Row(children: [
             Container(
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: _DS.gold.withValues(alpha: 0.12),
+                color: DS.gold.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(13),
               ),
               child: const Icon(Icons.workspace_premium_rounded,
-                  color: _DS.gold, size: 22),
+                  color: DS.gold, size: 22),
             ),
             const SizedBox(width: 14),
             const Expanded(
@@ -506,17 +479,17 @@ class _GoPremiumBanner extends StatelessWidget {
                   children: [
                     Text('Посмотреть тарифы',
                         style: TextStyle(
-                            color: _DS.textPrimary,
+                            color: DS.textPrimary,
                             fontSize: 15,
                             fontWeight: FontWeight.w600)),
                     SizedBox(height: 3),
                     Text('Быстрый и надёжный VPN',
                         style: TextStyle(
-                            color: _DS.textSecondary, fontSize: 12)),
+                            color: DS.textSecondary, fontSize: 12)),
                   ]),
             ),
             const Icon(Icons.arrow_forward_ios_rounded,
-                color: _DS.textMuted, size: 15),
+                color: DS.textMuted, size: 15),
           ]),
         ),
       );
@@ -536,8 +509,6 @@ class _GoPremiumBanner extends StatelessWidget {
 // a three-column stat grid (ДНЕЙ / УСТРОЙСТВ / ТРАФИК) and a time bar.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Gold — Itten complementary to the brand's indigo/violet.
-const _gold = Color(0xFFD4A84B);
 
 class _HeroSubCard extends StatelessWidget {
   final MeResponse? me;
@@ -571,11 +542,11 @@ class _HeroSubCard extends StatelessWidget {
     double trafficFrac     = 0.0;
     String trafficUsedLbl  = '';
     String trafficTotalLbl = '';
-    Color  trafficBarColor = _DS.sky;
+    Color  trafficBarColor = DS.cyan;
     bool   hasTrafficBar   = false;
 
     if (sub == null) {
-      accent      = _DS.textMuted;
+      accent      = DS.textMuted;
       bgGrad      = [const Color(0xFF111118), const Color(0xFF0C0C10)];
       badgeText   = 'НЕТ ПОДПИСКИ';
       isLive      = false;
@@ -586,7 +557,7 @@ class _HeroSubCard extends StatelessWidget {
       final diff = sub.expireDate != null
           ? DateTime.now().difference(sub.expireDate!).inDays
           : 0;
-      accent      = _DS.rose;
+      accent      = DS.rose;
       bgGrad      = [const Color(0xFF1E0A0C), const Color(0xFF150809)];
       badgeText   = 'ИСТЕКЛА';
       isLive      = false;
@@ -599,13 +570,13 @@ class _HeroSubCard extends StatelessWidget {
       final days = sub.expireDate?.difference(DateTime.now()).inDays;
       // Itten urgency: gold (safe) → amber (caution) → rose (critical)
       if (days == null || days > 7) {
-        accent = _gold;
+        accent = DS.gold;
         bgGrad = [const Color(0xFF0D0B26), const Color(0xFF0A0820)];
       } else if (days > 3) {
-        accent = _DS.amber;
+        accent = DS.amber;
         bgGrad = [const Color(0xFF1A1306), const Color(0xFF120E04)];
       } else {
-        accent = _DS.rose;
+        accent = DS.rose;
         bgGrad = [const Color(0xFF1E0A0C), const Color(0xFF150809)];
       }
       badgeText   = sub.isTrial ? 'ПРОБНЫЙ' : 'АКТИВНА';
@@ -635,10 +606,10 @@ class _HeroSubCard extends StatelessWidget {
             ? trafficInfo!.formattedTotal
             : '${sub.trafficLimitGb} ГБ';
         trafficBarColor = trafficFrac >= 0.9
-            ? _DS.rose
+            ? DS.rose
             : trafficFrac >= 0.7
-                ? _DS.amber
-                : _DS.sky;
+                ? DS.amber
+                : DS.cyan;
       }
     }
 
@@ -647,8 +618,8 @@ class _HeroSubCard extends StatelessWidget {
 
     // Badge colour: emerald for a healthy active sub (intuitive "all OK" signal).
     // Urgency states (trial/expiring/expired) stay with the urgency accent colour.
-    final Color badgeColor = (isLive && !sub!.isTrial && accent == _gold)
-        ? _DS.emerald
+    final Color badgeColor = (isLive && !sub!.isTrial && accent == DS.gold)
+        ? DS.emerald
         : accent;
 
     return Container(
@@ -674,7 +645,7 @@ class _HeroSubCard extends StatelessWidget {
         children: [
 
           // ── Top accent stripe: animated shimmer (Itten pair gold ↔ violet) ─
-          _ShimmerStripe(leading: accent, trailing: _DS.violet),
+          _ShimmerStripe(leading: accent, trailing: DS.violet),
 
           Padding(
             padding: EdgeInsets.fromLTRB(20, 18, 20, showBottomRow ? 16 : 20),
@@ -721,7 +692,7 @@ class _HeroSubCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 9, vertical: 4),
                       decoration: BoxDecoration(
-                        color: _DS.surface2,
+                        color: DS.surface2,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                             color: accent.withValues(alpha: 0.18)),
@@ -729,7 +700,7 @@ class _HeroSubCard extends StatelessWidget {
                       child: Text(
                         planLabel,
                         style: const TextStyle(
-                          color: _DS.textSecondary,
+                          color: DS.textSecondary,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
@@ -756,7 +727,7 @@ class _HeroSubCard extends StatelessWidget {
                         _StatCell(
                           value: '${sub.deviceLimit}',
                           unit: 'УСТРОЙСТВ',
-                          color: _DS.violet,
+                          color: DS.violet,
                         ),
                         _StatDivider(color: accent),
                         _StatCell(
@@ -764,7 +735,7 @@ class _HeroSubCard extends StatelessWidget {
                               ? '∞'
                               : '${sub.trafficLimitGb}',
                           unit: sub.trafficLimitGb == 0 ? 'ГБ БЕЗЛИМ' : 'ГБ',
-                          color: _DS.sky,
+                          color: DS.cyan,
                         ),
                       ],
                     ],
@@ -776,7 +747,7 @@ class _HeroSubCard extends StatelessWidget {
                   const SizedBox(height: 16),
                   Row(children: [
                     Icon(Icons.storage_rounded,
-                        color: _DS.textMuted, size: 12),
+                        color: DS.textMuted, size: 12),
                     const SizedBox(width: 5),
                     RichText(text: TextSpan(children: [
                       TextSpan(
@@ -790,7 +761,7 @@ class _HeroSubCard extends StatelessWidget {
                       TextSpan(
                         text: ' / $trafficTotalLbl',
                         style: const TextStyle(
-                          color: _DS.textMuted, fontSize: 12,
+                          color: DS.textMuted, fontSize: 12,
                         ),
                       ),
                     ])),
@@ -808,7 +779,7 @@ class _HeroSubCard extends StatelessWidget {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(3),
                     child: Stack(children: [
-                      Container(height: 4, color: _DS.surface3),
+                      Container(height: 4, color: DS.surface3),
                       FractionallySizedBox(
                         widthFactor: trafficFrac,
                         child: Container(
@@ -836,7 +807,7 @@ class _HeroSubCard extends StatelessWidget {
           if (showBottomRow) ...[
             Container(
                 height: 1,
-                color: _DS.border.withValues(alpha: 0.5)),
+                color: DS.border.withValues(alpha: 0.5)),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
               child: Row(children: [
@@ -857,8 +828,8 @@ class _HeroSubCard extends StatelessWidget {
                 Icon(
                   Icons.autorenew_rounded,
                   color: sub.autopayEnabled
-                      ? _DS.emerald
-                      : _DS.textMuted,
+                      ? DS.emerald
+                      : DS.textMuted,
                   size: 13,
                 ),
                 const SizedBox(width: 5),
@@ -868,8 +839,8 @@ class _HeroSubCard extends StatelessWidget {
                       : 'Без автопродления',
                   style: TextStyle(
                     color: sub.autopayEnabled
-                        ? _DS.emerald
-                        : _DS.textMuted,
+                        ? DS.emerald
+                        : DS.textMuted,
                     fontSize: 12,
                   ),
                 ),
@@ -915,7 +886,7 @@ class _StatCell extends StatelessWidget {
         Text(
           unit,
           style: const TextStyle(
-            color: _DS.textSecondary,
+            color: DS.textSecondary,
             fontSize: 9,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.8,
@@ -1080,10 +1051,10 @@ class _SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(children: [
     Text(text, style: const TextStyle(
-        color: _DS.textMuted, fontSize: 10,
+        color: DS.textMuted, fontSize: 10,
         fontWeight: FontWeight.w700, letterSpacing: 2.0)),
     const SizedBox(width: 10),
-    Expanded(child: Container(height: 1, color: _DS.border)),
+    Expanded(child: Container(height: 1, color: DS.border)),
   ]);
 }
 
@@ -1121,21 +1092,21 @@ class _TrafficCard extends StatelessWidget {
 
     final Color barColor;
     if (unlimited) {
-      barColor = _DS.violet;
+      barColor = DS.violet;
     } else if (fraction >= 0.9) {
-      barColor = _DS.rose;
+      barColor = DS.rose;
     } else if (fraction >= 0.7) {
-      barColor = _DS.amber;
+      barColor = DS.amber;
     } else {
-      barColor = _DS.emerald;
+      barColor = DS.emerald;
     }
 
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
       decoration: BoxDecoration(
-        color: _DS.surface1,
+        color: DS.surface1,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _DS.border),
+        border: Border.all(color: DS.border),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
@@ -1152,7 +1123,7 @@ class _TrafficCard extends StatelessWidget {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(unlimited ? 'Безлимит' : 'использовано',
                 style: const TextStyle(
-                    color: _DS.textSecondary, fontSize: 13, fontWeight: FontWeight.w500)),
+                    color: DS.textSecondary, fontSize: 13, fontWeight: FontWeight.w500)),
             if (!unlimited) ...[
               const SizedBox(height: 2),
               RichText(
@@ -1160,7 +1131,7 @@ class _TrafficCard extends StatelessWidget {
                   TextSpan(text: usedLabel, style: TextStyle(
                       color: barColor, fontSize: 14, fontWeight: FontWeight.w700)),
                   TextSpan(text: ' / $totalLabel', style: const TextStyle(
-                      color: _DS.textMuted, fontSize: 13)),
+                      color: DS.textMuted, fontSize: 13)),
                 ]),
               ),
             ],
@@ -1169,7 +1140,7 @@ class _TrafficCard extends StatelessWidget {
             Text('осталось\n${_fmtBytes(remainingBytes)}',
               textAlign: TextAlign.right,
               style: const TextStyle(
-                  color: _DS.textSecondary, fontSize: 12, height: 1.4)),
+                  color: DS.textSecondary, fontSize: 12, height: 1.4)),
         ]),
 
         if (!unlimited) ...[
@@ -1177,7 +1148,7 @@ class _TrafficCard extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: Stack(children: [
-              Container(height: 7, color: _DS.surface3),
+              Container(height: 7, color: DS.surface3),
               FractionallySizedBox(
                 widthFactor: fraction,
                 child: Container(
@@ -1197,10 +1168,10 @@ class _TrafficCard extends StatelessWidget {
         ] else ...[
           const SizedBox(height: 12),
           Row(children: [
-            const Icon(Icons.all_inclusive_rounded, color: _DS.violet, size: 16),
+            const Icon(Icons.all_inclusive_rounded, color: DS.violet, size: 16),
             const SizedBox(width: 7),
             const Text('Трафик без ограничений',
-                style: TextStyle(color: _DS.textSecondary, fontSize: 13)),
+                style: TextStyle(color: DS.textSecondary, fontSize: 13)),
           ]),
         ],
       ]),
@@ -1236,7 +1207,7 @@ class _QuickInfoRow extends StatelessWidget {
         Expanded(
           child: _InfoTile(
             icon: Icons.account_balance_wallet_rounded,
-            iconColor: _DS.emerald,
+            iconColor: DS.emerald,
             label: 'БАЛАНС',
             value: '${balanceRub.toStringAsFixed(0)} $currency',
             actionLabel: 'Пополнить',
@@ -1247,7 +1218,7 @@ class _QuickInfoRow extends StatelessWidget {
         Expanded(
           child: _InfoTile(
             icon: Icons.devices_rounded,
-            iconColor: _DS.violet,
+            iconColor: DS.violet,
             label: 'УСТРОЙСТВА',
             value: devices != null ? '$devices ${_devWord(devices)}' : '—',
           ),
@@ -1285,9 +1256,9 @@ class _InfoTile extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
         decoration: BoxDecoration(
-          color: _DS.surface1,
+          color: DS.surface1,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _DS.border),
+          border: Border.all(color: DS.border),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
@@ -1321,11 +1292,11 @@ class _InfoTile extends StatelessWidget {
           ]),
           const SizedBox(height: 10),
           Text(label, style: TextStyle(
-              color: _DS.textMuted, fontSize: 9,
+              color: DS.textMuted, fontSize: 9,
               fontWeight: FontWeight.w700, letterSpacing: 1.5)),
           const SizedBox(height: 4),
           Text(value, style: const TextStyle(
-              color: _DS.textPrimary, fontSize: 20,
+              color: DS.textPrimary, fontSize: 20,
               fontWeight: FontWeight.w800, height: 1.05)),
         ]),
       );
@@ -1378,19 +1349,19 @@ class _AutopayCardState extends State<_AutopayCard> {
             height: 44,
             decoration: BoxDecoration(
               color: _enabled
-                  ? _DS.violet.withValues(alpha: 0.15)
-                  : _DS.surface3,
+                  ? DS.violet.withValues(alpha: 0.15)
+                  : DS.surface3,
               borderRadius: BorderRadius.circular(13),
             ),
             child: Icon(Icons.autorenew_rounded,
-                color: _enabled ? _DS.violet : _DS.textMuted, size: 22),
+                color: _enabled ? DS.violet : DS.textMuted, size: 22),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('Автопродление',
                   style: TextStyle(
-                      color: _DS.textPrimary,
+                      color: DS.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.w600)),
               const SizedBox(height: 2),
@@ -1399,7 +1370,7 @@ class _AutopayCardState extends State<_AutopayCard> {
                     ? 'Подписка продлевается автоматически'
                     : 'Автопродление отключено',
                 style: const TextStyle(
-                    color: _DS.textSecondary, fontSize: 12),
+                    color: DS.textSecondary, fontSize: 12),
               ),
             ]),
           ),
@@ -1408,12 +1379,12 @@ class _AutopayCardState extends State<_AutopayCard> {
                 width: 26,
                 height: 26,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: _DS.violet))
+                    strokeWidth: 2, color: DS.violet))
           else
             Switch(
               value: _enabled,
               onChanged: _toggle,
-              activeColor: _DS.violet,
+              activeColor: DS.violet,
             ),
         ]),
       );
@@ -1450,15 +1421,15 @@ class _SubUrlCardState extends State<_SubUrlCard> {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: _DS.sky.withValues(alpha: 0.1),
+                color: DS.cyan.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Icon(Icons.link_rounded, color: _DS.sky, size: 17),
+              child: const Icon(Icons.link_rounded, color: DS.cyan, size: 17),
             ),
             const SizedBox(width: 12),
             const Text('URL подписки',
                 style: TextStyle(
-                    color: _DS.textPrimary,
+                    color: DS.textPrimary,
                     fontSize: 15,
                     fontWeight: FontWeight.w600)),
             const Spacer(),
@@ -1470,8 +1441,8 @@ class _SubUrlCardState extends State<_SubUrlCard> {
                     horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: _copied
-                      ? _DS.emerald.withValues(alpha: 0.12)
-                      : _DS.violet.withValues(alpha: 0.1),
+                      ? DS.emerald.withValues(alpha: 0.12)
+                      : DS.violet.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1480,12 +1451,12 @@ class _SubUrlCardState extends State<_SubUrlCard> {
                           ? Icons.check_rounded
                           : Icons.copy_rounded,
                       size: 13,
-                      color: _copied ? _DS.emerald : _DS.violet),
+                      color: _copied ? DS.emerald : DS.violet),
                   const SizedBox(width: 5),
                   Text(
                       _copied ? 'Скопировано' : 'Копировать',
                       style: TextStyle(
-                          color: _copied ? _DS.emerald : _DS.violet,
+                          color: _copied ? DS.emerald : DS.violet,
                           fontSize: 12,
                           fontWeight: FontWeight.w600)),
                 ]),
@@ -1497,14 +1468,14 @@ class _SubUrlCardState extends State<_SubUrlCard> {
             padding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
-              color: _DS.surface2,
+              color: DS.surface2,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _DS.border),
+              border: Border.all(color: DS.border),
             ),
             child: Text(
               widget.url,
               style: const TextStyle(
-                color: _DS.textSecondary,
+                color: DS.textSecondary,
                 fontSize: 11,
                 fontFamily: 'monospace',
                 height: 1.4,
@@ -1532,14 +1503,14 @@ class _ManagePlanButton extends StatelessWidget {
           height: 60,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
-              colors: [_DS.violet, _DS.violetDim],
+              colors: [DS.violet, DS.violetDim],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(18),
             boxShadow: [
               BoxShadow(
-                  color: _DS.violet.withValues(alpha: 0.38),
+                  color: DS.violet.withValues(alpha: 0.38),
                   blurRadius: 22,
                   offset: const Offset(0, 6))
             ],
@@ -1582,16 +1553,16 @@ class _LogoutButton extends StatelessWidget {
         child: Container(
           height: 52,
           decoration: BoxDecoration(
-            color: _DS.surface1,
+            color: DS.surface1,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: _DS.rose.withValues(alpha: 0.30)),
+            border: Border.all(color: DS.rose.withValues(alpha: 0.30)),
           ),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Icon(Icons.logout_rounded, color: _DS.rose, size: 18),
+            const Icon(Icons.logout_rounded, color: DS.rose, size: 18),
             const SizedBox(width: 8),
             const Text('Выйти из аккаунта',
                 style: TextStyle(
-                    color: _DS.rose,
+                    color: DS.rose,
                     fontSize: 15,
                     fontWeight: FontWeight.w600)),
           ]),
@@ -1611,9 +1582,9 @@ class _Card extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: _DS.surface1,
+          color: DS.surface1,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: _DS.border),
+          border: Border.all(color: DS.border),
         ),
         child: child,
       );
@@ -1703,7 +1674,7 @@ class _TopupSheetState extends State<_TopupSheet> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
-      backgroundColor: isError ? _DS.rose : _DS.emerald,
+      backgroundColor: isError ? DS.rose : DS.emerald,
       behavior: SnackBarBehavior.floating,
     ));
   }
@@ -1720,7 +1691,7 @@ class _TopupSheetState extends State<_TopupSheet> {
       margin:
           EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       decoration: const BoxDecoration(
-        color: _DS.surface1,
+        color: DS.surface1,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
@@ -1734,7 +1705,7 @@ class _TopupSheetState extends State<_TopupSheet> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                  color: _DS.border,
+                  color: DS.border,
                   borderRadius: BorderRadius.circular(2)),
             ),
           ),
@@ -1742,13 +1713,13 @@ class _TopupSheetState extends State<_TopupSheet> {
 
           const Text('Пополнить баланс',
               style: TextStyle(
-                  color: _DS.textPrimary,
+                  color: DS.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           const Text('Выберите сумму или введите свою',
               style:
-                  TextStyle(color: _DS.textSecondary, fontSize: 14)),
+                  TextStyle(color: DS.textSecondary, fontSize: 14)),
           const SizedBox(height: 20),
 
           // Preset chips
@@ -1766,20 +1737,20 @@ class _TopupSheetState extends State<_TopupSheet> {
                       horizontal: 18, vertical: 10),
                   decoration: BoxDecoration(
                     color: _selected == a
-                        ? _DS.violet.withValues(alpha: 0.18)
-                        : _DS.surface2,
+                        ? DS.violet.withValues(alpha: 0.18)
+                        : DS.surface2,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                         color: _selected == a
-                            ? _DS.violet.withValues(alpha: 0.6)
-                            : _DS.border,
+                            ? DS.violet.withValues(alpha: 0.6)
+                            : DS.border,
                         width: _selected == a ? 1.5 : 1),
                   ),
                   child: Text('$a ₽',
                       style: TextStyle(
                           color: _selected == a
-                              ? _DS.violet
-                              : _DS.textSecondary,
+                              ? DS.violet
+                              : DS.textSecondary,
                           fontSize: 14,
                           fontWeight: FontWeight.w600)),
                 ),
@@ -1792,26 +1763,26 @@ class _TopupSheetState extends State<_TopupSheet> {
             controller: _customController,
             focusNode: _focusNode,
             keyboardType: TextInputType.number,
-            style: const TextStyle(color: _DS.textPrimary, fontSize: 15),
+            style: const TextStyle(color: DS.textPrimary, fontSize: 15),
             decoration: InputDecoration(
               hintText: 'Другая сумма, ₽',
               prefixIcon: const Icon(Icons.edit_rounded,
-                  color: _DS.textMuted, size: 18),
+                  color: DS.textMuted, size: 18),
               filled: true,
-              fillColor: _DS.surface2,
-              hintStyle: const TextStyle(color: _DS.textMuted),
+              fillColor: DS.surface2,
+              hintStyle: const TextStyle(color: DS.textMuted),
               contentPadding: const EdgeInsets.symmetric(
                   horizontal: 14, vertical: 14),
               border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(_DS.radiusSm),
-                  borderSide: const BorderSide(color: _DS.border)),
+                  borderRadius: BorderRadius.circular(DS.radiusSm),
+                  borderSide: const BorderSide(color: DS.border)),
               enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(_DS.radiusSm),
-                  borderSide: const BorderSide(color: _DS.border)),
+                  borderRadius: BorderRadius.circular(DS.radiusSm),
+                  borderSide: const BorderSide(color: DS.border)),
               focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(_DS.radiusSm),
+                  borderRadius: BorderRadius.circular(DS.radiusSm),
                   borderSide:
-                      const BorderSide(color: _DS.violet, width: 1.5)),
+                      const BorderSide(color: DS.violet, width: 1.5)),
             ),
           ),
           const SizedBox(height: 20),
@@ -1830,12 +1801,12 @@ class _TopupSheetState extends State<_TopupSheet> {
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight)
                     : null,
-                color: canSubmit ? null : _DS.surface2,
+                color: canSubmit ? null : DS.surface2,
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: canSubmit
                     ? [
                         BoxShadow(
-                            color: _DS.violet.withValues(alpha: 0.35),
+                            color: DS.violet.withValues(alpha: 0.35),
                             blurRadius: 20,
                             offset: const Offset(0, 6))
                       ]
@@ -1852,7 +1823,7 @@ class _TopupSheetState extends State<_TopupSheet> {
                         style: TextStyle(
                             color: canSubmit
                                 ? Colors.white
-                                : _DS.textMuted,
+                                : DS.textMuted,
                             fontSize: 16,
                             fontWeight: FontWeight.w700)),
               ),

@@ -20,6 +20,7 @@ import '../services/selected_server_state.dart';
 import '../utils/speed_calculator.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
+import 'subscription_page.dart';
 import 'support_page.dart';
 import '../main.dart' show DS;
 
@@ -734,24 +735,16 @@ class _HomePageState extends State<HomePage>
   // ── Header ─────────────────────────────────────────────────────────────────
   Widget _buildHeader() {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Ulya VPN', style: TextStyle(
-              color: DS.textPrimary, fontSize: 32,
-              fontWeight: FontWeight.w800, letterSpacing: -0.5, height: 1,
-            )),
-            const SizedBox(height: 6),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: Text(
-                key: ValueKey(_isConnected),
-                _isConnected ? 'Соединение защищено' : 'Свобода начинается с приватности',
-                style: const TextStyle(color: DS.textSecondary, fontSize: 15),
-              ),
-            ),
-          ]),
+          child: Text('Ulya VPN', style: const TextStyle(
+            color: DS.textPrimary,
+            fontSize: 28,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.5,
+            height: 1,
+          )),
         ),
         VpnIconBtn(
           loading: false,
@@ -775,59 +768,100 @@ class _HomePageState extends State<HomePage>
   // ── Connection card ────────────────────────────────────────────────────────
   Widget _buildConnectionCard() {
     final connected = _isConnected;
+    final transitioning = _isTransitioning;
+
+    final String statusSub;
+    if (connected) {
+      statusSub = 'Сессия: ${_fmtDuration(_status.duration)} · IP скрыт';
+    } else if (transitioning) {
+      statusSub = 'Устанавливаем соединение…';
+    } else {
+      statusSub = 'Ваш IP виден сайтам';
+    }
+
+    final borderColor = connected
+        ? DS.emerald.withValues(alpha: 0.38)
+        : transitioning
+            ? DS.amber.withValues(alpha: 0.28)
+            : DS.border;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 350),
       decoration: BoxDecoration(
         color: DS.surface1,
         borderRadius: BorderRadius.circular(DS.radius),
-        border: Border.all(
-          color: connected ? DS.violet.withValues(alpha: 0.45) : DS.border,
-          width: connected ? 1.5 : 1,
-        ),
+        border: Border.all(color: borderColor, width: connected ? 1.5 : 1.0),
         boxShadow: connected
-            ? [BoxShadow(color: DS.violet.withValues(alpha: 0.18),
-            blurRadius: 36, spreadRadius: -8)]
-            : [BoxShadow(color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 20, offset: const Offset(0, 6))],
+            ? [BoxShadow(
+                color: DS.emerald.withValues(alpha: 0.12),
+                blurRadius: 32, spreadRadius: -4)]
+            : [BoxShadow(
+                color: Colors.black.withValues(alpha: 0.20),
+                blurRadius: 16, offset: const Offset(0, 4))],
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
         child: Column(children: [
-          // Status text
-          Column(children: [
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              child: Text(key: ValueKey(_statusLabel), _statusLabel,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700,
-                      color: DS.textPrimary, letterSpacing: 0.1)),
+          // Status label
+          const Text(
+            'СТАТУС',
+            style: TextStyle(
+              color: DS.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.8,
             ),
-            const SizedBox(height: 5),
-            Text(
-              connected
-                  ? 'Сессия: ${_fmtDuration(_status.duration)}'
-                  : 'Выберите сервер и нажмите подключить',
+          ),
+          const SizedBox(height: 8),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: Text(
+              key: ValueKey(_statusLabel),
+              _statusLabel,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+                color: DS.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: Text(
+              key: ValueKey(statusSub),
+              statusSub,
               style: const TextStyle(fontSize: 13, color: DS.textSecondary),
             ),
-          ]),
+          ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 28),
+
+          // Big circle button
           _ConnectButton(
             isConnected: connected,
-            isLoading: _isTransitioning,
+            isLoading: transitioning,
             onTap: _toggleConnection,
           ),
-          const SizedBox(height: 22),
 
-          // Separator
-          Container(height: 1, decoration: const BoxDecoration(
-              gradient: LinearGradient(colors: [Colors.transparent, DS.border, Colors.transparent]))),
-          const SizedBox(height: 14),
+          const SizedBox(height: 24),
+
+          // Gradient separator
+          Container(
+            height: 1,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.transparent, DS.border, Colors.transparent],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
 
           // Server selector
           GestureDetector(
             onTap: _showServerPicker,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
               decoration: BoxDecoration(
                 color: DS.surface2,
                 borderRadius: BorderRadius.circular(DS.radiusSm),
@@ -838,39 +872,37 @@ class _HomePageState extends State<HomePage>
                   CountryFlag.fromCountryCode(
                     _selectedNode!.countryCode,
                     theme: const ImageTheme(
-                      width: 36,
-                      height: 28,
-                      shape: RoundedRectangle(8),
-                    ),
+                        width: 36, height: 26, shape: RoundedRectangle(6)),
                   )
                 else
                   Container(
-                    width: 36,
-                    height: 28,
+                    width: 36, height: 26,
                     decoration: BoxDecoration(
-                      color: DS.violet.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
+                      color: DS.violet.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                    child: const Icon(
-                      Icons.public_rounded,
-                      color: DS.violet,
-                      size: 18,
-                    ),
+                    child: const Icon(Icons.public_rounded, color: DS.violet, size: 16),
                   ),
-
-                const SizedBox(width: 14),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(
-                    _selectedNode?.name ?? 'Выберите сервер',
-                    style: TextStyle(
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(
+                      _selectedNode?.name ?? 'Выберите сервер',
+                      style: TextStyle(
                         color: _selectedNode != null ? DS.textPrimary : DS.violet,
-                        fontWeight: FontWeight.w600, fontSize: 15),
-                  ),
-                  if (_selectedNode != null && (_selectedNode!.protocol ?? '').isNotEmpty)
-                    Text(_selectedNode!.protocol!.toUpperCase(),
-                        style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
-                ])),
-                const Icon(Icons.chevron_right_rounded, color: DS.violet, size: 20),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    if (_selectedNode != null &&
+                        (_selectedNode!.protocol ?? '').isNotEmpty)
+                      Text(
+                        _selectedNode!.protocol!.toUpperCase(),
+                        style: const TextStyle(color: DS.textSecondary, fontSize: 12),
+                      ),
+                  ]),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 20),
               ]),
             ),
           ),
@@ -883,7 +915,6 @@ class _HomePageState extends State<HomePage>
   Widget _buildSpeedCard() {
     final upActive   = _speedCalc.uploadSpeed > 1024;
     final downActive = _speedCalc.downloadSpeed > 1024;
-    // Dim the entire card when disconnected — makes the "live" state pop.
     return AnimatedOpacity(
       opacity: _isConnected ? 1.0 : 0.45,
       duration: const Duration(milliseconds: 350),
@@ -902,10 +933,15 @@ class _HomePageState extends State<HomePage>
             total: _fmtBytes(_status.uploadSpeed),
             color: upActive ? DS.violet : DS.textMuted,
           )),
-          Container(width: 1, height: 52, decoration: const BoxDecoration(
+          Container(
+            width: 1, height: 48,
+            decoration: const BoxDecoration(
               gradient: LinearGradient(
-                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, DS.border, Colors.transparent]))),
+                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                colors: [Colors.transparent, DS.border, Colors.transparent],
+              ),
+            ),
+          ),
           Expanded(child: _SpeedTile(
             icon: Icons.arrow_downward_rounded,
             label: 'Загрузка',
@@ -920,97 +956,114 @@ class _HomePageState extends State<HomePage>
 
   // ── Subscription card ──────────────────────────────────────────────────────
   Widget _buildSubscriptionCard() {
-    final info = _subscriptionInfo;
+    final info      = _subscriptionInfo;
     final authState = authStateNotifier.value;
-    final sub = meNotifier.value?.subscription;
+    final sub       = meNotifier.value?.subscription;
+
+    // Whether the card header is navigable to SubscriptionPage
+    final canOpenDetails = authState.isLoggedIn && (info != null || sub != null);
+
+    void openDetails() {
+      if (!canOpenDetails) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SubscriptionPage(onGoToPremium: widget.onGoToPremium),
+        ),
+      );
+    }
 
     return Container(
-      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: DS.surface1,
         borderRadius: BorderRadius.circular(DS.radius),
         border: Border.all(color: DS.border),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header row
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('ПОДПИСКА', style: TextStyle(
-              color: DS.textMuted, fontSize: 11,
-              fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-          if (sub != null) _SubBadge(sub: sub)
-          else if (info?.expireDate != null) _ExpiryBadge(expireDate: info!.expireDate!),
-        ]),
+        // Header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+          child: Row(children: [
+            const Text('ПОДПИСКА', style: TextStyle(
+              color: DS.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            )),
+            const Spacer(),
+            if (sub != null) _SubBadge(sub: sub)
+            else if (info?.expireDate != null) _ExpiryBadge(expireDate: info!.expireDate!),
+          ]),
+        ),
 
-        // Auth user strip
-        if (authState.isLoggedIn) ...[
-          const SizedBox(height: 12),
-          _TelegramStrip(
-            name: authState.displayName,
-            onLogout: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Выйти из аккаунта?'),
-                  content: const Text(
-                      'Данные подписки будут удалены с устройства.',
-                      style: TextStyle(color: DS.textSecondary)),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Отмена')),
-                    TextButton(onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Выйти',
-                            style: TextStyle(color: DS.rose))),
-                  ],
-                ),
-              );
-              if (ok == true && mounted) await _performLogout();
-            },
-          ),
-        ],
-
-        const SizedBox(height: 16),
-
-        // Content
-        if (info == null && !_isPublicCatalog) ...[
-          // Traffic info hasn't loaded yet — show cached subscription state
-          // if available so the card is meaningful from the very first frame.
-          if (!authState.isLoggedIn)
-            _LoginPrompt()
-          else if (sub != null &&
-              (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
-            Text(
-              sub.expireDate != null
-                  ? 'Истекла ${_formatExpiry(sub.expireDate!)}'
-                  : 'Доступ приостановлен',
-              style: const TextStyle(
-                  color: DS.textSecondary, fontSize: 13, height: 1.4),
-            ),
-            const SizedBox(height: 14),
-            _RenewButton(onTap: widget.onGoToPremium),
-          ] else if (sub != null) ...[
-            // Active subscription — traffic loading placeholder
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: DS.textMuted),
+        // Body
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Telegram user strip
+            if (authState.isLoggedIn) ...[
+              _TelegramStrip(
+                name: authState.displayName,
+                onLogout: () async {
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Выйти из аккаунта?'),
+                      content: const Text(
+                          'Данные подписки будут удалены с устройства.',
+                          style: TextStyle(color: DS.textSecondary)),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Отмена')),
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('Выйти',
+                                style: TextStyle(color: DS.rose))),
+                      ],
+                    ),
+                  );
+                  if (ok == true && mounted) await _performLogout();
+                },
               ),
-              SizedBox(width: 8),
-              Text('Загрузка трафика…',
-                  style: TextStyle(color: DS.textSecondary, fontSize: 13)),
-            ]),
-          ] else
-            const Center(
-                child: Text('Загрузка данных…',
-                    style:
-                        TextStyle(color: DS.textSecondary, fontSize: 13))),
-        ] else if (_isPublicCatalog && !authState.isLoggedIn)
-          _LoginPrompt()
-        else if (_isPublicCatalog && authState.isLoggedIn)
-            _NoPlanPrompt(onGoToPremium: widget.onGoToPremium)
-          else if (info != null) ...[
-              // Expired subscription — minimal inline CTA, no extra boxes
+              const SizedBox(height: 14),
+            ],
+
+            // Content
+            if (info == null && !_isPublicCatalog) ...[
+              if (!authState.isLoggedIn)
+                _LoginPrompt()
+              else if (sub != null &&
+                  (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
+                Text(
+                  sub.expireDate != null
+                      ? 'Истекла ${_formatExpiry(sub.expireDate!)}'
+                      : 'Доступ приостановлен',
+                  style: const TextStyle(
+                      color: DS.textSecondary, fontSize: 13, height: 1.4),
+                ),
+                const SizedBox(height: 14),
+                _RenewButton(onTap: widget.onGoToPremium),
+              ] else if (sub != null)
+                Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+                  SizedBox(
+                    width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: DS.textMuted),
+                  ),
+                  SizedBox(width: 8),
+                  Text('Загрузка трафика…',
+                      style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+                ])
+              else
+                const Center(
+                  child: Text('Загрузка данных…',
+                      style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+                ),
+            ] else if (_isPublicCatalog && !authState.isLoggedIn)
+              _LoginPrompt()
+            else if (_isPublicCatalog && authState.isLoggedIn)
+              _NoPlanPrompt(onGoToPremium: widget.onGoToPremium)
+            else if (info != null) ...[
               if (sub != null &&
                   (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
                 Text(
@@ -1022,42 +1075,46 @@ class _HomePageState extends State<HomePage>
                 ),
                 const SizedBox(height: 14),
                 _RenewButton(onTap: widget.onGoToPremium),
-
-              // Active subscription — traffic stats
               ] else ...[
-                Row(crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic, children: [
-                  Text(info.formattedUsed, style: const TextStyle(
-                      color: DS.textPrimary, fontSize: 28,
-                      fontWeight: FontWeight.w800, height: 1)),
-                  const SizedBox(width: 6),
-                  Text('/ ${info.formattedTotal}',
-                      style: const TextStyle(color: DS.textMuted, fontSize: 15)),
-                ]),
+                // Traffic stats
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(info.formattedUsed, style: const TextStyle(
+                        color: DS.textPrimary, fontSize: 28,
+                        fontWeight: FontWeight.w800, height: 1)),
+                    const SizedBox(width: 6),
+                    Text('/ ${info.formattedTotal}',
+                        style: const TextStyle(color: DS.textMuted, fontSize: 15)),
+                  ],
+                ),
                 const SizedBox(height: 12),
 
+                // Progress bar
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: Stack(children: [
-                    Container(height: 8, color: DS.surface3),
+                    Container(height: 6, color: DS.surface3),
                     FractionallySizedBox(
                       widthFactor: info.usedFraction.clamp(0.0, 1.0),
                       child: Container(
-                        height: 8,
+                        height: 6,
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [
                               _progressColor(info.usedFraction),
-                              Color.lerp(_progressColor(info.usedFraction),
-                                  Colors.white, 0.25)!,
+                              Color.lerp(
+                                  _progressColor(info.usedFraction),
+                                  Colors.white, 0.22)!,
                             ],
                             begin: Alignment.centerLeft,
                             end: Alignment.centerRight,
                           ),
                           boxShadow: [BoxShadow(
                               color: _progressColor(info.usedFraction)
-                                  .withValues(alpha: 0.5),
-                              blurRadius: 8)],
+                                  .withValues(alpha: 0.45),
+                              blurRadius: 6)],
                         ),
                       ),
                     ),
@@ -1065,11 +1122,9 @@ class _HomePageState extends State<HomePage>
                 ),
                 const SizedBox(height: 10),
 
-                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Осталось: ${_remaining(info)}',
-                      style: const TextStyle(
-                          color: DS.textSecondary, fontSize: 12)),
+                      style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
                   Text('${(info.usedFraction * 100).toStringAsFixed(1)}%',
                       style: TextStyle(
                           color: _progressColor(info.usedFraction),
@@ -1077,6 +1132,43 @@ class _HomePageState extends State<HomePage>
                 ]),
               ],
             ],
+
+            const SizedBox(height: 16),
+          ]),
+        ),
+
+        // ── Явная строка «Управление подпиской» ──────────────────────────────
+        // Показывается только залогиненному пользователю с данными подписки.
+        // Стандартный паттерн «settings row»: иконка + метка + шеврон.
+        if (canOpenDetails) ...[
+          Divider(height: 1, color: DS.border),
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: openDetails,
+              borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(DS.radius)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                child: Row(children: [
+                  const Icon(Icons.credit_card_rounded,
+                      size: 18, color: DS.textSecondary),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('Управление подпиской',
+                        style: TextStyle(
+                            color: DS.textPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500)),
+                  ),
+                  const Icon(Icons.chevron_right_rounded,
+                      size: 20, color: DS.textMuted),
+                ]),
+              ),
+            ),
+          ),
+        ] else
+          const SizedBox(height: 2),
       ]),
     );
   }
@@ -1086,42 +1178,160 @@ class _HomePageState extends State<HomePage>
 // Local widgets
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _ConnectButton extends StatelessWidget {
+// ── Круглая кнопка подключения ────────────────────────────────────────────────
+
+class _ConnectButton extends StatefulWidget {
   final bool isConnected;
   final bool isLoading;
   final VoidCallback onTap;
-  const _ConnectButton({required this.isConnected, required this.isLoading, required this.onTap});
+  const _ConnectButton({
+    required this.isConnected,
+    required this.isLoading,
+    required this.onTap,
+  });
+
+  @override
+  State<_ConnectButton> createState() => _ConnectButtonState();
+}
+
+class _ConnectButtonState extends State<_ConnectButton>
+    with TickerProviderStateMixin {
+  // Pulsing glow ring when connected
+  late final AnimationController _glowCtrl;
+  late final Animation<double> _glowAnim;
+  // Icon rotation when loading
+  late final AnimationController _spinCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _glowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    _glowAnim = Tween<double>(begin: 0.06, end: 0.24).animate(
+      CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
+    );
+    _spinCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    if (widget.isConnected) _glowCtrl.repeat(reverse: true);
+    if (widget.isLoading) _spinCtrl.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ConnectButton old) {
+    super.didUpdateWidget(old);
+    if (widget.isConnected && !old.isConnected) {
+      _glowCtrl.repeat(reverse: true);
+    } else if (!widget.isConnected && old.isConnected) {
+      _glowCtrl
+        ..stop()
+        ..reset();
+    }
+    if (widget.isLoading && !old.isLoading) {
+      _spinCtrl.repeat();
+    } else if (!widget.isLoading && old.isLoading) {
+      _spinCtrl
+        ..stop()
+        ..reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _glowCtrl.dispose();
+    _spinCtrl.dispose();
+    super.dispose();
+  }
+
+  Color get _color => widget.isConnected
+      ? DS.emerald
+      : widget.isLoading
+          ? DS.amber
+          : DS.violet;
+
+  IconData get _icon => widget.isConnected
+      ? Icons.shield_rounded
+      : widget.isLoading
+          ? Icons.refresh_rounded
+          : Icons.power_settings_new_rounded;
+
+  String get _subLabel => widget.isConnected
+      ? 'Нажмите, чтобы отключить'
+      : widget.isLoading
+          ? 'Подождите…'
+          : 'Нажмите, чтобы подключить';
 
   @override
   Widget build(BuildContext context) {
-    final color = isConnected ? DS.rose : DS.violet;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      width: 220, height: 56,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [color, Color.lerp(color, Colors.black, 0.3)!],
-          begin: Alignment.topLeft, end: Alignment.bottomRight,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AnimatedBuilder(
+          animation: Listenable.merge([_glowAnim, _spinCtrl]),
+          builder: (_, __) {
+            final glowAlpha = widget.isConnected ? _glowAnim.value : 0.0;
+            return GestureDetector(
+              onTap: widget.isLoading ? null : widget.onTap,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 350),
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _color,
+                  boxShadow: [
+                    BoxShadow(
+                      color: _color.withValues(alpha: 0.45),
+                      blurRadius: 40,
+                      spreadRadius: 0,
+                    ),
+                    if (widget.isConnected)
+                      BoxShadow(
+                        color: DS.emerald.withValues(alpha: glowAlpha),
+                        blurRadius: 0,
+                        spreadRadius: 16,
+                      ),
+                  ],
+                ),
+                child: widget.isLoading
+                    ? RotationTransition(
+                        turns: _spinCtrl,
+                        child: const Icon(
+                          Icons.refresh_rounded,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      )
+                    : AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: Icon(
+                          key: ValueKey(_icon),
+                          _icon,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      ),
+              ),
+            );
+          },
         ),
-        borderRadius: BorderRadius.circular(DS.radius),
-        boxShadow: [BoxShadow(
-            color: color.withValues(alpha: 0.35),
-            blurRadius: 20, offset: const Offset(0, 6))],
-      ),
-      child: Material(color: Colors.transparent,
-        child: InkWell(
-          onTap: isLoading ? null : onTap,
-          borderRadius: BorderRadius.circular(DS.radius),
-          child: Center(
-            child: isLoading
-                ? const SizedBox(width: 22, height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                : Text(isConnected ? 'Отключить' : 'Подключить',
-                style: const TextStyle(color: Colors.white, fontSize: 16,
-                    fontWeight: FontWeight.w700, letterSpacing: 0.3)),
+        const SizedBox(height: 12),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: Text(
+            key: ValueKey(_subLabel),
+            _subLabel,
+            style: const TextStyle(
+              color: DS.textSecondary,
+              fontSize: 13,
+              fontWeight: FontWeight.w400,
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -1171,8 +1381,8 @@ class _TelegramStrip extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
     decoration: BoxDecoration(
       color: DS.telegramBlue.withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(DS.radiusXs),
-      border: Border.all(color: DS.telegramBlue.withValues(alpha: 0.2)),
+      borderRadius: BorderRadius.circular(DS.radiusSm),
+      border: Border.all(color: DS.telegramBlue.withValues(alpha: 0.20)),
     ),
     child: Row(children: [
       const Icon(Icons.telegram, color: DS.telegramBlue, size: 15),
@@ -1208,23 +1418,29 @@ class _NoPlanPrompt extends StatelessWidget {
       const Text('У вас нет активной подписки.',
           style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
       const SizedBox(height: 12),
-      GestureDetector(
-        onTap: onGoToPremium,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [DS.violet, DS.violetDim],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+      SizedBox(
+        width: double.infinity,
+        height: 52,
+        child: GestureDetector(
+          onTap: onGoToPremium,
+          child: Container(
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: DS.violet,
+              borderRadius: BorderRadius.circular(DS.radius),
+              boxShadow: [
+                BoxShadow(
+                  color: DS.violet.withValues(alpha: 0.30),
+                  blurRadius: 16, offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            borderRadius: BorderRadius.circular(DS.radiusSm),
+            child: const Text('Получить подписку',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600)),
           ),
-          child: const Text('Получить подписку',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700)),
         ),
       ),
     ],
@@ -1303,40 +1519,39 @@ class _RenewButton extends StatelessWidget {
   const _RenewButton({this.onTap});
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [DS.violet, DS.violetDim],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+  Widget build(BuildContext context) => SizedBox(
+    width: double.infinity,
+    height: 56,
+    child: GestureDetector(
+      onTap: onTap,
+      child: Container(
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: DS.violet,
+          borderRadius: BorderRadius.circular(DS.radius),
+          boxShadow: [
+            BoxShadow(
+              color: DS.violet.withValues(alpha: 0.30),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
             ),
-            borderRadius: BorderRadius.circular(DS.radiusSm),
-            boxShadow: [
-              BoxShadow(
-                color: DS.violet.withValues(alpha: 0.30),
-                blurRadius: 16,
-                offset: const Offset(0, 4),
-              )
-            ],
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.bolt_rounded, size: 16, color: Colors.white),
-              SizedBox(width: 7),
-              Text('Возобновить подписку',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700)),
-            ],
-          ),
+          ],
         ),
-      );
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.bolt_rounded, size: 18, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Возобновить подписку',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 // ── Shared micro-widgets ──────────────────────────────────────────────────────
@@ -1393,9 +1608,9 @@ class _VpnIconBtnState extends State<VpnIconBtn>
   Widget build(BuildContext context) => GestureDetector(
     onTap: widget.onTap,
     child: Container(
-      width: 42, height: 42,
+      width: 40, height: 40,
       decoration: BoxDecoration(
-        color: DS.surface2,
+        color: DS.surface1,
         borderRadius: BorderRadius.circular(DS.radiusSm),
         border: Border.all(color: DS.border),
       ),

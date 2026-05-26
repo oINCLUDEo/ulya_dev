@@ -2,13 +2,11 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import 'pages/home_page.dart';
 import 'pages/premium_page.dart';
 import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
-import 'pages/subscription_page.dart';
 import 'services/app_logger.dart';
 import 'services/auth_state.dart';
 import 'services/me_service.dart';
@@ -22,40 +20,40 @@ import 'widgets/notification_banner.dart';
 class DS {
   DS._();
 
-  // Accent
-  static const violet        = Color(0xFF7C6FF7);
-  static const violetDim     = Color(0xFF4A44AA);
-  static const violetGlow    = Color(0x337C6FF7);
+  // ── Accent ────────────────────────────────────────────────────────────────
+  static const violet        = Color(0xFF7C6BFF);   // accent/primary
+  static const violetDim     = Color(0xFF5B4DE0);   // accent/hover / pressed
+  static const violetGlow    = Color(0x337C6BFF);
   static const indigoLight   = Color(0xFF818CF8);   // auto-server / virtual host
   static const cyan          = Color(0xFF22D3EE);   // vless protocol / unlimited group
   static const orchid        = Color(0xFFF0ABFC);   // tuic protocol
-  // Itten complementary to violet — used for premium/subscription active status.
-  // Gold signals "active membership"; emerald signals "data/traffic ok".
-  static const gold          = Color(0xFFD4A84B);
+  static const gold          = Color(0xFFD4A84B);   // premium membership active
   static const goldDim       = Color(0xFFB8922E);
-  static const emerald       = Color(0xFF34D399);
-  static const amber         = Color(0xFFFBBF24);
-  static const rose          = Color(0xFFF87171);
-  static const telegramBlue  = Color(0xFF229ED9);
+  static const telegramBlue  = Color(0xFF3FA9F5);   // accent/telegram
 
-  // Surfaces
-  static const surface0 = Color(0xFF0F0F14);
-  static const surface1 = Color(0xFF17171F);
-  static const surface2 = Color(0xFF1E1E2A);
-  static const surface3 = Color(0xFF26263A);
+  // ── Semantic ──────────────────────────────────────────────────────────────
+  static const emerald       = Color(0xFF1DC97A);   // success / connected
+  static const amber         = Color(0xFFFAB432);   // warning / connecting
+  static const rose          = Color(0xFFE24B4A);   // danger / error
 
-  // Text
-  static const textPrimary   = Color(0xFFEEEEF8);
-  static const textSecondary = Color(0xFF8888AA);
-  static const textMuted     = Color(0xFF55556A);
+  // ── Surfaces ──────────────────────────────────────────────────────────────
+  static const surface0 = Color(0xFF0A0A0F);   // bg/base
+  static const surface1 = Color(0xFF16161F);   // bg/surface  (cards)
+  static const surface2 = Color(0xFF1F1F2C);   // bg/elevated (modals, popups)
+  static const surface3 = Color(0xFF2A2A38);   // disabled bg
 
-  // Border
-  static const border = Color(0xFF2A2A3D);
+  // ── Text ──────────────────────────────────────────────────────────────────
+  static const textPrimary   = Color(0xFFFFFFFF);   // text/primary
+  static const textSecondary = Color(0xFFA8A8B8);   // text/secondary
+  static const textMuted     = Color(0xFF6B6B7D);   // text/tertiary
 
-  // Radii
-  static const radius   = 20.0;
-  static const radiusSm = 12.0;
-  static const radiusXs = 8.0;
+  // ── Border ────────────────────────────────────────────────────────────────
+  static const border = Color(0xFF2E2E40);
+
+  // ── Radii ─────────────────────────────────────────────────────────────────
+  static const radius   = 20.0;   // lg — buttons, large cards
+  static const radiusSm = 12.0;   // md — cards
+  static const radiusXs = 4.0;    // sm — badges
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,7 +186,7 @@ class UlyaVpnApp extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main shell
+// Main shell — 3 tabs: Home / Servers / Settings
 // ─────────────────────────────────────────────────────────────────────────────
 
 class MainShell extends StatefulWidget {
@@ -199,19 +197,24 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
-  int _currentIndex = 2;
+  int _currentIndex = 0;
+
+  void _goToPremium() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const PremiumPage()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final pages = [
+      HomePage(onGoToPremium: _goToPremium),
       ServersPage(
-        onGoToHome: () => _go(2),
-        onGoToSettings: () => _go(4),
-        onGoToPremium: () => _go(3),
+        onGoToHome: () => _go(0),
+        onGoToSettings: () => _go(2),
+        onGoToPremium: _goToPremium,
       ),
-      SubscriptionPage(onGoToPremium: () => _go(3)),
-      HomePage(onGoToPremium: () => _go(3)),
-      const PremiumPage(),
       const SettingsPage(),
     ];
 
@@ -247,10 +250,9 @@ class _NavBarContainer extends StatelessWidget {
     return Stack(
       alignment: Alignment.bottomCenter,
       children: [
-        // Gradient fog so content scrolls under gracefully
         Positioned(
           bottom: 0, left: 0, right: 0,
-          height: 130 + MediaQuery.viewPaddingOf(context).bottom,
+          height: 120 + MediaQuery.viewPaddingOf(context).bottom,
           child: IgnorePointer(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -259,17 +261,16 @@ class _NavBarContainer extends StatelessWidget {
                   end: Alignment.topCenter,
                   colors: [
                     DS.surface0,
-                    DS.surface0.withValues(alpha: 0.82),
-                    DS.surface0.withValues(alpha: 0.38),
+                    DS.surface0.withValues(alpha: 0.80),
+                    DS.surface0.withValues(alpha: 0.32),
                     Colors.transparent,
                   ],
-                  stops: const [0.0, 0.28, 0.58, 1.0],
+                  stops: const [0.0, 0.30, 0.62, 1.0],
                 ),
               ),
             ),
           ),
         ),
-
         Padding(
           padding: EdgeInsets.fromLTRB(
             16, 0, 16,
@@ -286,7 +287,7 @@ class _NavBarContainer extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Glass nav bar pill
+// Glass nav bar pill — 3 items
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _GlassNavBar extends StatelessWidget {
@@ -298,6 +299,12 @@ class _GlassNavBar extends StatelessWidget {
     required this.onTabSelected,
   });
 
+  static const _items = [
+    (icon: Icons.home_outlined,    activeIcon: Icons.home_rounded,     label: 'Главная'),
+    (icon: Icons.public_outlined,  activeIcon: Icons.public_rounded,   label: 'Серверы'),
+    (icon: Icons.settings_outlined, activeIcon: Icons.settings_rounded, label: 'Настройки'),
+  ];
+
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
@@ -305,50 +312,29 @@ class _GlassNavBar extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
         child: Container(
-          height: 66,
+          height: 64,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(28),
-            color: DS.surface1.withValues(alpha: 0.90),
+            color: DS.surface1.withValues(alpha: 0.92),
             border: Border.all(color: DS.border),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                blurRadius: 32,
-                offset: const Offset(0, 10),
+                color: Colors.black.withValues(alpha: 0.40),
+                blurRadius: 28,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Row(
             children: [
-              _NavItem(
-                icon: Icons.dns_outlined,
-                activeIcon: Icons.dns_rounded,
-                label: 'Серверы',
-                selected: currentIndex == 0,
-                onTap: () => onTabSelected(0),
-              ),
-              _NavItem(
-                icon: Icons.card_membership_outlined,
-                activeIcon: Icons.card_membership_rounded,
-                label: 'Подписка',
-                selected: currentIndex == 1,
-                onTap: () => onTabSelected(1),
-              ),
-              _HomeNavItem(
-                selected: currentIndex == 2,
-                onTap: () => onTabSelected(2),
-              ),
-              _PremiumNavItem(
-                selected: currentIndex == 3,
-                onTap: () => onTabSelected(3),
-              ),
-              _NavItem(
-                icon: Icons.settings_outlined,
-                activeIcon: Icons.settings_rounded,
-                label: 'Настройки',
-                selected: currentIndex == 4,
-                onTap: () => onTabSelected(4),
-              ),
+              for (int i = 0; i < _items.length; i++)
+                _NavItem(
+                  icon: _items[i].icon,
+                  activeIcon: _items[i].activeIcon,
+                  label: _items[i].label,
+                  selected: currentIndex == i,
+                  onTap: () => onTabSelected(i),
+                ),
             ],
           ),
         ),
@@ -358,204 +344,7 @@ class _GlassNavBar extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Center home button
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _HomeNavItem extends StatefulWidget {
-  final bool selected;
-  final VoidCallback onTap;
-  const _HomeNavItem({required this.selected, required this.onTap});
-
-  @override
-  State<_HomeNavItem> createState() => _HomeNavItemState();
-}
-
-class _HomeNavItemState extends State<_HomeNavItem>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-      lowerBound: 0.88,
-      upperBound: 1.0,
-      value: widget.selected ? 1.0 : 0.88,
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _HomeNavItem old) {
-    super.didUpdateWidget(old);
-    widget.selected ? _ctrl.forward() : _ctrl.reverse();
-  }
-
-  @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: widget.onTap,
-        child: AnimatedBuilder(
-          animation: _ctrl,
-          builder: (_, child) => Transform.scale(scale: _ctrl.value, child: child),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Glowing circle button
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: widget.selected
-                        ? [DS.violet, DS.violetDim]
-                        : [DS.surface2, DS.surface3],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  border: Border.all(
-                    color: widget.selected
-                        ? DS.violet.withValues(alpha: 0.6)
-                        : DS.border,
-                  ),
-                  boxShadow: widget.selected
-                      ? [BoxShadow(
-                    color: DS.violet.withValues(alpha: 0.40),
-                    blurRadius: 18,
-                    offset: const Offset(0, 4),
-                  )]
-                      : [],
-                ),
-                child: Icon(
-                  widget.selected ? Icons.home_rounded : Icons.home_outlined,
-                  color: Colors.white,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                'Главная',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  color: widget.selected ? DS.textPrimary : DS.textMuted,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Premium nav item — special gold-glow diamond button
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _PremiumNavItem extends StatefulWidget {
-  final bool selected;
-  final VoidCallback onTap;
-  const _PremiumNavItem({required this.selected, required this.onTap});
-
-  @override
-  State<_PremiumNavItem> createState() => _PremiumNavItemState();
-}
-
-class _PremiumNavItemState extends State<_PremiumNavItem>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  static const _gold = Color(0xFFD4A84B);
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 200),
-      lowerBound: 1.0,
-      upperBound: 1.10,
-      value: widget.selected ? 1.10 : 1.0,
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant _PremiumNavItem old) {
-    super.didUpdateWidget(old);
-    widget.selected ? _ctrl.forward() : _ctrl.reverse();
-  }
-
-  @override
-  void dispose() { _ctrl.dispose(); super.dispose(); }
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: widget.onTap,
-        child: AnimatedBuilder(
-          animation: _ctrl,
-          builder: (_, child) => Transform.scale(scale: _ctrl.value, child: child),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Icon with permanent subtle glow
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: widget.selected
-                      ? _gold.withValues(alpha: 0.18)
-                      : _gold.withValues(alpha: 0.06),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _gold.withValues(
-                          alpha: widget.selected ? 0.55 : 0.22),
-                      blurRadius: widget.selected ? 16 : 8,
-                      spreadRadius: widget.selected ? 1 : 0,
-                    ),
-                  ],
-                ),
-                child: PhosphorIcon(
-                  widget.selected
-                      ? PhosphorIconsFill.sparkle
-                      : PhosphorIconsRegular.sparkle,
-                  size: 22,
-                  color: widget.selected ? _gold : _gold.withValues(alpha: 0.65),
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                'Premium',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: widget.selected
-                      ? _gold
-                      : DS.textMuted,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Regular nav item
+// Nav item — uniform for all 3 tabs
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _NavItem extends StatefulWidget {
@@ -614,18 +403,22 @@ class _NavItemState extends State<_NavItem>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                widget.selected ? widget.activeIcon : widget.icon,
-                size: 22,
-                color: widget.selected ? DS.violet : DS.textMuted,
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: Icon(
+                  key: ValueKey(widget.selected),
+                  widget.selected ? widget.activeIcon : widget.icon,
+                  size: 24,
+                  color: widget.selected ? DS.violet : DS.textMuted,
+                ),
               ),
               const SizedBox(height: 3),
               Text(
                 widget.label,
                 style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  color: widget.selected ? DS.textPrimary : DS.textMuted,
+                  fontSize: 11,
+                  fontWeight: widget.selected ? FontWeight.w600 : FontWeight.w400,
+                  color: widget.selected ? DS.violet : DS.textSecondary,
                 ),
               ),
             ],

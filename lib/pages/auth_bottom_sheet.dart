@@ -114,8 +114,8 @@ class _AuthSheetState extends State<_AuthSheet>
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: DS.surface1,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        color: DS.surface2,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(DS.radius)),
       ),
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
@@ -144,7 +144,7 @@ class _AuthSheetState extends State<_AuthSheet>
                   child: const Icon(Icons.check_rounded, color: DS.emerald, size: 38)),
               const SizedBox(height: 20),
               const Text('Авторизация успешна!', style: TextStyle(
-                  color: DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w700)),
+                  color: DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               const Text('Добро пожаловать',
                   style: TextStyle(color: DS.textSecondary, fontSize: 14)),
@@ -197,7 +197,7 @@ class _AuthSheetState extends State<_AuthSheet>
             key: ValueKey(waiting),
             waiting ? 'Ожидаем подтверждения…' : 'Нужна авторизация',
             style: const TextStyle(
-                color: DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w700),
+                color: DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w600),
             textAlign: TextAlign.center,
           ),
         ),
@@ -276,10 +276,10 @@ class _TelegramButton extends StatelessWidget {
     child: GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 15),
+        padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
           color: DS.telegramBlue,
-          borderRadius: BorderRadius.circular(DS.radiusSm),
+          borderRadius: BorderRadius.circular(DS.radius),
           boxShadow: [BoxShadow(
               color: DS.telegramBlue.withValues(alpha: 0.35),
               blurRadius: 18, offset: const Offset(0, 5))],
@@ -288,7 +288,7 @@ class _TelegramButton extends StatelessWidget {
           const Icon(Icons.telegram, color: Colors.white, size: 20),
           const SizedBox(width: 10),
           Text(label, style: const TextStyle(
-              color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+              color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
         ]),
       ),
     ),

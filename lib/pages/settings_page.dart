@@ -15,6 +15,8 @@ import '../utils/core_info_parser.dart';
 import '../services/remnawave_service.dart';
 import '../main.dart' show DS;
 import 'logs_page.dart';
+import 'premium_page.dart';
+import 'subscription_page.dart';
 import 'support_page.dart';
 import '../services/support_api_service.dart';
 
@@ -140,14 +142,37 @@ class _SettingsPageState extends State<SettingsPage> {
               padding: EdgeInsets.fromLTRB(20, top + 20, 20, 24),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('Настройки', style: TextStyle(
-                    color: DS.textPrimary, fontSize: 32,
-                    fontWeight: FontWeight.w800, letterSpacing: -0.5, height: 1)),
+                    color: DS.textPrimary, fontSize: 28,
+                    fontWeight: FontWeight.w700, letterSpacing: -0.5, height: 1)),
                 const SizedBox(height: 6),
                 const Text('Параметры приложения',
                     style: TextStyle(color: DS.textSecondary, fontSize: 15)),
               ]),
             ),
           ),
+
+          // Account
+          _pad(_Section(
+            title: 'Аккаунт',
+            icon: Icons.person_rounded,
+            child: _SettingsTile(
+              icon: Icons.card_membership_rounded,
+              label: 'Управление подпиской',
+              value: 'Статус, трафик и устройства',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SubscriptionPage(
+                    onGoToPremium: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const PremiumPage()),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          )),
+          _gap,
 
           // Core card
           _pad(_CoreCard(info: _coreInfo)),
@@ -238,7 +263,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       Container(width: 36, height: 36,
                           decoration: BoxDecoration(
                               color: DS.emerald.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(10)),
+                              borderRadius: BorderRadius.circular(DS.radiusSm)),
                           child: const Icon(Icons.add_rounded, color: DS.emerald, size: 18)),
                       const SizedBox(width: 12),
                       const Text('Добавить DNS-сервер',
@@ -585,7 +610,7 @@ class _SettingsTile extends StatelessWidget {
                   width: 36, height: 36,
                   decoration: BoxDecoration(
                       color: DS.violet.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(DS.radiusSm)),
                   child: Icon(icon, color: DS.violet, size: 18)),
               if (badge > 0)
                 Positioned(
@@ -645,7 +670,7 @@ class _SwitchTile extends StatelessWidget {
           width: 36, height: 36,
           decoration: BoxDecoration(
               color: (value ? DS.violet : DS.textMuted).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(10)),
+              borderRadius: BorderRadius.circular(DS.radiusSm)),
           child: Icon(icon, color: value ? DS.violet : DS.textMuted, size: 18)),
       const SizedBox(width: 12),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -721,7 +746,7 @@ class _DnsTile extends StatelessWidget {
         child: Container(
             width: 32, height: 32,
             decoration: BoxDecoration(color: DS.surface2,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(DS.radiusXs),
                 border: Border.all(color: DS.border)),
             child: const Icon(Icons.edit_rounded, size: 14, color: DS.textSecondary)),
       ),
@@ -749,7 +774,7 @@ class _CoreCard extends StatelessWidget {
       Container(width: 44, height: 44,
           decoration: BoxDecoration(
               color: DS.violet.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12)),
+              borderRadius: BorderRadius.circular(DS.radiusSm)),
           child: const Icon(Icons.memory_rounded, color: DS.violet, size: 22)),
       const SizedBox(width: 14),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -762,7 +787,7 @@ class _CoreCard extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                     color: DS.surface2,
-                    borderRadius: BorderRadius.circular(5),
+                    borderRadius: BorderRadius.circular(DS.radiusXs),
                     border: Border.all(color: DS.border)),
                 child: Text(info.shortArch, style: const TextStyle(
                     color: DS.textMuted, fontSize: 9, fontWeight: FontWeight.w600))),
@@ -865,7 +890,7 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
       builder: (_, scrollCtrl) => Container(
         decoration: const BoxDecoration(
           color: DS.surface1,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(DS.radius)),
         ),
         child: Column(children: [
           const SizedBox(height: 12),
@@ -889,7 +914,7 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
                   style: TextButton.styleFrom(
                       backgroundColor: DS.violet.withValues(alpha: 0.08),
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(DS.radiusSm))),
                   child: const Text('Готово', style: TextStyle(fontWeight: FontWeight.w600))),
             ]),
           ),
@@ -932,7 +957,7 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
                           : Container(width: 32, height: 32,
                           decoration: BoxDecoration(
                               color: DS.surface2,
-                              borderRadius: BorderRadius.circular(8)),
+                              borderRadius: BorderRadius.circular(DS.radiusXs)),
                           child: const Icon(Icons.android_rounded, size: 20, color: DS.textMuted)),
                       title: Text(name,
                           style: const TextStyle(color: DS.textPrimary, fontSize: 14)),
