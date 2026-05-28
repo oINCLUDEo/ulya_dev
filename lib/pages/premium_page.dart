@@ -119,6 +119,11 @@ class _PremiumPageState extends State<PremiumPage>
   Map<int, int?>    _trafficPrices = {};
   Map<int, int?>    _devicesPrices = {};
 
+  // ── Change-tariff 2-step checkout ─────────────────────────────────────────
+  bool _checkoutMode     = false;   // false=step1 (tariff list), true=step2 (checkout)
+  bool _useBalance       = false;   // balance toggle on renew + checkout screens
+  int  _familyDeviceCount = 5;      // device count in family stepper
+
   // ── Computed ───────────────────────────────────────────────────────────────
 
   bool get _trafficTabAvailable =>
@@ -740,25 +745,15 @@ class _PremiumPageState extends State<PremiumPage>
 
   // ── Build helpers ─────────────────────────────────────────────────────────
 
-  /// Label for the "Сменить тариф" action button.
-  /// Shows prorated price when loaded, "Бесплатно" for downgrades, or falls
-  /// back to the tariff's full price while calc is pending.
-  String _buildChangeTariffLabel(TariffPeriod? selPeriod) {
-    if (selPeriod == null) return 'Сменить тариф';
-    if (_changeTariffCalcLoading) return 'Сменить тариф…';
-    final calc = _changeTariffCalcResult;
-    if (calc != null) {
-      if (calc.amountKopeks <= 0) return 'Сменить тариф · Бесплатно';
-      return 'Сменить тариф · ${calc.amountRub.toStringAsFixed(0)} ₽';
-    }
-    // Calc not loaded yet — show the period's base price as a fallback.
-    return 'Сменить тариф · ${selPeriod.priceRub.toStringAsFixed(0)} ₽';
-  }
-
   String? _tariffBadge(TariffInfo t) {
     final n = _TariffRadioCard._cleanTariffName(t.name).toLowerCase();
     if (n.contains('безлимит') || n.contains('unlimit')) return 'РЕКОМЕНДУЕМ';
     return null;
+  }
+
+  static bool _isFamilyTariff(TariffInfo t) {
+    final n = t.name.toLowerCase();
+    return n.contains('семей') || n.contains('family');
   }
 
   /// Human-readable label for a period length in days.
@@ -883,17 +878,24 @@ class _PremiumPageState extends State<PremiumPage>
     );
   }
 
-  /// Build change-tariff section (radio cards, current tariff excluded).
-  Widget _buildChangeTariffRadioSection(
-      List<TariffInfo> tariffs, bool isLoggedIn) {
-    final subName = (meNotifier.value?.subscription?.planName ?? '').toLowerCase().trim();
+  /// Top-level wrapper for the 2-step change-tariff flow.
+  Widget _buildChangeTariffSection(List<TariffInfo> tariffs, bool isLoggedIn) {
+    return _checkoutMode
+        ? _buildChangeTariffCheckout(tariffs)
+        : _buildChangeTariffStep1(tariffs, isLoggedIn);
+  }
+
+  /// Step 1 — tariff selection (current tariff highlighted, others listed).
+  Widget _buildChangeTariffStep1(List<TariffInfo> tariffs, bool isLoggedIn) {
+    final sub     = meNotifier.value?.subscription;
+    final subName = (sub?.planName ?? '').toLowerCase().trim();
     final available = subName.isNotEmpty
         ? tariffs.where((t) => t.name.toLowerCase().trim() != subName).toList()
         : tariffs;
 
     if (available.isEmpty) {
       return Padding(
-        key: const ValueKey('change-radio'),
+        key: const ValueKey('change-step1'),
         padding: const EdgeInsets.symmetric(vertical: 32),
         child: Center(
           child: Text('Другие тарифы не доступны',
@@ -902,41 +904,55 @@ class _PremiumPageState extends State<PremiumPage>
       );
     }
 
-    final days    = _uniqueDays(available);
-    final selDays = _selectedPeriodDays ?? (days.isNotEmpty ? days.first : 30);
-    final selId   = _changeTariffId ?? available.first.id;
-
+    final selId = _changeTariffId ?? available.first.id;
     final selTariff = available.firstWhere(
         (t) => t.id == selId, orElse: () => available.first);
-    final selPeriod = _periodForDays(selTariff, selDays);
+    final selPeriod = selTariff.cheapestPeriod;
+
+    final isFamilySel = _isFamilyTariff(selTariff);
+    final familyMin = selTariff.deviceLimit;
+    final familyMax = familyMin + 3;
+    if (_familyDeviceCount < familyMin) {
+      WidgetsBinding.instance.addPostFrameCallback(
+          (_) => setState(() => _familyDeviceCount = familyMin));
+    }
+    final clampedDevices = _familyDeviceCount.clamp(familyMin, familyMax);
+    final extraDevices   = clampedDevices - familyMin;
+    final extraPriceKop  = extraDevices > 0 ? _devicesPrices[extraDevices] : 0;
+    final totalPerMonthRub = selPeriod != null
+        ? (selPeriod.priceRub + (extraPriceKop != null ? extraPriceKop / 100 : 0))
+        : null;
+
+    String buttonLabel;
+    if (selPeriod == null) {
+      buttonLabel = 'Перейти на «${_TariffRadioCard._cleanTariffName(selTariff.name)}»';
+    } else {
+      final price = totalPerMonthRub != null
+          ? '${totalPerMonthRub.toStringAsFixed(0)} ₽/мес'
+          : '';
+      buttonLabel = 'Перейти на «${_TariffRadioCard._cleanTariffName(selTariff.name)}» · $price';
+    }
 
     return Column(
-      key: const ValueKey('change-radio'),
+      key: const ValueKey('change-step1'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Period strip
-        if (days.length > 1) ...[
-          _PeriodStrip(
-            days: days,
-            selected: selDays,
-            tariffs: available,
-            onChanged: (d) {
-              final t = available.firstWhere(
-                  (t) => t.id == (_changeTariffId ?? available.first.id),
-                  orElse: () => available.first);
-              final p = _periodForDays(t, d);
-              setState(() {
-                _selectedPeriodDays      = d;
-                _changeTariffPeriodId    = p?.id;
-                _changeTariffCalcResult  = null;
-              });
-              _loadChangeTariffCalc();
-            },
-          ),
-          const SizedBox(height: 14),
+        // Current tariff mini-card
+        if (sub != null) ...[
+          _CurrentTariffMini(sub: sub, tariffs: tariffs),
+          const SizedBox(height: 18),
         ],
 
-        // Tariff radio cards
+        const Text(
+          'ДРУГИЕ ТАРИФЫ',
+          style: TextStyle(
+            color: _t2, fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 2.2,
+          ),
+        ),
+        const SizedBox(height: 10),
+
+        // Tariff cards
         for (int i = 0; i < available.length; i++) ...[
           if (i > 0) const SizedBox(height: 10),
           AnimatedBuilder(
@@ -952,40 +968,372 @@ class _PremiumPageState extends State<PremiumPage>
                 ),
               );
             },
-            child: _TariffRadioCard(
+            child: _TariffSelectCard(
               tariff:     available[i],
               selected:   available[i].id == selId,
-              period:     _periodForDays(available[i], selDays),
               badgeLabel: _tariffBadge(available[i]),
+              showStepper: available[i].id == selId && isFamilySel,
+              deviceCount: clampedDevices,
+              deviceMin:   familyMin,
+              deviceMax:   familyMax,
               onTap: () {
                 final t = available[i];
-                final p = _periodForDays(t, selDays);
                 setState(() {
-                  _changeTariffId          = t.id;
-                  _changeTariffPeriodId    = p?.id;
-                  _changeTariffCalcResult  = null;
+                  _changeTariffId         = t.id;
+                  _changeTariffPeriodId   = t.cheapestPeriod?.id;
+                  _changeTariffCalcResult = null;
+                  if (_isFamilyTariff(t)) {
+                    _familyDeviceCount = t.deviceLimit;
+                  }
                 });
-                _loadChangeTariffCalc();
+              },
+              onDeviceDecrement: () {
+                if (_familyDeviceCount > familyMin) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _familyDeviceCount--);
+                  if (_familyDeviceCount - familyMin > 0) {
+                    _calcDevicesPrice(_familyDeviceCount - familyMin);
+                  }
+                }
+              },
+              onDeviceIncrement: () {
+                if (_familyDeviceCount < familyMax) {
+                  HapticFeedback.selectionClick();
+                  setState(() => _familyDeviceCount++);
+                  _calcDevicesPrice(_familyDeviceCount - familyMin);
+                }
               },
             ),
           ),
         ],
 
-        const SizedBox(height: 16),
+        const SizedBox(height: 18),
 
-        // Continue button — label shows prorated price or "Бесплатно" for downgrades
         _ActionBtn(
-          loading: _purchasing || _changeTariffCalcLoading,
+          loading: false,
           disabled: selPeriod == null,
           color: DS.violet,
-          label: _buildChangeTariffLabel(selPeriod),
-          onTap: _onChangeTariffTapped,
+          label: buttonLabel,
+          onTap: () {
+            setState(() {
+              _checkoutMode           = true;
+              _changeTariffCalcResult = null;
+              final p = selTariff.cheapestPeriod;
+              if (p != null) {
+                _changeTariffPeriodId  = p.id;
+                _selectedPeriodDays    = p.days;
+              }
+            });
+            _loadChangeTariffCalc();
+          },
         ),
 
         const SizedBox(height: 6),
+        Center(
+          child: Text(
+            'Выбор периода — на следующем шаге',
+            style: const TextStyle(color: _t2, fontSize: 11),
+          ),
+        ),
+        const SizedBox(height: 4),
         const _Disclaimer(),
       ],
     );
+  }
+
+  /// Step 2 — checkout: period selector + cost breakdown + pay button.
+  Widget _buildChangeTariffCheckout(List<TariffInfo> tariffs) {
+    final sub     = meNotifier.value?.subscription;
+    final subName = (sub?.planName ?? '').toLowerCase().trim();
+    final available = subName.isNotEmpty
+        ? tariffs.where((t) => t.name.toLowerCase().trim() != subName).toList()
+        : tariffs;
+
+    final selId   = _changeTariffId ?? (available.isNotEmpty ? available.first.id : null);
+    final selTariff = selId != null
+        ? available.firstWhere((t) => t.id == selId,
+            orElse: () => available.isNotEmpty ? available.first : tariffs.first)
+        : (available.isNotEmpty ? available.first : tariffs.first);
+
+    final periods  = selTariff.periods;
+    final selPerId = _changeTariffPeriodId ?? (periods.isNotEmpty ? periods.first.id : null);
+    final selPer   = selPerId != null
+        ? periods.firstWhere((p) => p.id == selPerId,
+            orElse: () => periods.isNotEmpty ? periods.first : throw StateError('no periods'))
+        : (periods.isNotEmpty ? periods.first : null);
+
+    final isFam          = _isFamilyTariff(selTariff);
+    final familyMin      = selTariff.deviceLimit;
+    final extraDevices   = isFam ? (_familyDeviceCount - familyMin).clamp(0, 99) : 0;
+    final extraPriceKop  = extraDevices > 0 ? (_devicesPrices[extraDevices] ?? 0) : 0;
+
+    // Cost breakdown
+    final months         = selPer?.months ?? 1;
+    final baseMonthRub   = selPer?.priceRub ?? 0.0;
+    final extraMonthRub  = extraPriceKop / 100.0;
+    final totalMonthRub  = baseMonthRub + extraMonthRub;
+    final periodTotalRub = totalMonthRub * months;
+
+    final balanceRub     = _options?.balanceRub ?? 0.0;
+    final toPayRub       = _useBalance
+        ? (periodTotalRub - balanceRub).clamp(0.0, double.infinity)
+        : periodTotalRub;
+
+    final calcResult  = _changeTariffCalcResult;
+
+    return Column(
+      key: const ValueKey('change-step2'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Tariff summary (with pencil to go back) ────────────────────────
+        const Text(
+          'ТАРИФ',
+          style: TextStyle(
+            color: _t2, fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 2.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: _premSurface,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            border: Border.all(color: _b1),
+          ),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+          child: Row(children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: DS.violet.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Icon(Icons.shield_rounded, color: DS.violet, size: 20),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  _TariffRadioCard._cleanTariffName(selTariff.name),
+                  style: const TextStyle(
+                    color: _t0, fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  isFam
+                      ? '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · $_familyDeviceCount устр.'
+                      : '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · ${selTariff.deviceLimit} устр.',
+                  style: const TextStyle(color: _t1, fontSize: 12),
+                ),
+              ]),
+            ),
+            GestureDetector(
+              onTap: () => setState(() {
+                _checkoutMode           = false;
+                _changeTariffCalcResult = null;
+              }),
+              child: const Icon(Icons.edit_rounded, color: DS.violet, size: 18),
+            ),
+          ]),
+        ),
+
+        const SizedBox(height: 16),
+
+        // ── Period selector ─────────────────────────────────────────────────
+        if (periods.length > 1) ...[
+          const Text(
+            'ПЕРИОД',
+            style: TextStyle(
+              color: _t2, fontSize: 10,
+              fontWeight: FontWeight.w700, letterSpacing: 2.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            decoration: BoxDecoration(
+              color: _premSurface,
+              borderRadius: BorderRadius.circular(DS.radiusSm),
+              border: Border.all(color: _b1),
+            ),
+            padding: const EdgeInsets.all(4),
+            child: Row(children: [
+              for (int i = 0; i < periods.length; i++) ...[
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _changeTariffPeriodId   = periods[i].id;
+                        _selectedPeriodDays     = periods[i].days;
+                        _changeTariffCalcResult = null;
+                      });
+                      _loadChangeTariffCalc();
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: periods[i].id == selPerId
+                            ? DS.violet
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Center(
+                            child: Text(
+                              _daysLabel(periods[i].days),
+                              style: TextStyle(
+                                color: periods[i].id == selPerId
+                                    ? Colors.white
+                                    : _t1,
+                                fontSize: 11,
+                                fontWeight: periods[i].id == selPerId
+                                    ? FontWeight.w700 : FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          if (periods[i].discountPercent > 0)
+                            Positioned(
+                              top: -8, right: 2,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 4, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: DS.emerald.withValues(alpha: 0.18),
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: Text(
+                                  '−${periods[i].discountPercent}%',
+                                  style: const TextStyle(
+                                    color: DS.emerald,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ]),
+          ),
+          const SizedBox(height: 16),
+        ],
+
+        // ── Cost breakdown ──────────────────────────────────────────────────
+        const Text(
+          'РАСЧЁТ',
+          style: TextStyle(
+            color: _t2, fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 2.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: _premSurface,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            border: Border.all(color: _b1),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Column(children: [
+            _BreakdownRow(
+              label: 'Базовая цена · ${selTariff.deviceLimit} устр.',
+              value: '${baseMonthRub.toStringAsFixed(0)} ₽/мес',
+            ),
+            if (extraDevices > 0) ...[
+              const SizedBox(height: 4),
+              _BreakdownRow(
+                label: '$extraDevices доп. устр.',
+                value: '+${extraMonthRub.toStringAsFixed(0)} ₽/мес',
+              ),
+            ],
+            const SizedBox(height: 4),
+            _BreakdownRow(
+              label: '× $months ${_monthsLabel(months)}',
+              value: '${periodTotalRub.toStringAsFixed(0)} ₽',
+            ),
+            if (_useBalance && balanceRub > 0) ...[
+              const SizedBox(height: 4),
+              _BreakdownRow(
+                label: 'Списано с баланса',
+                value: '−${balanceRub.toStringAsFixed(0)} ₽',
+                accent: DS.emerald,
+              ),
+            ],
+            const SizedBox(height: 10),
+            const Divider(height: 1, color: _b0),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                const Text('К оплате',
+                    style: TextStyle(
+                        color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
+                _changeTariffCalcLoading
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: DS.violet))
+                    : Text(
+                        '${(calcResult?.amountRub ?? toPayRub).toStringAsFixed(0)} ₽',
+                        style: const TextStyle(
+                          color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
+                      ),
+              ],
+            ),
+          ]),
+        ),
+
+        if (balanceRub > 0) ...[
+          const SizedBox(height: 12),
+          // Balance toggle
+          _BalanceUsageToggle(
+            balanceRub: balanceRub,
+            enabled: _useBalance,
+            onToggle: (v) => setState(() => _useBalance = v),
+          ),
+        ],
+
+        const SizedBox(height: 16),
+
+        _ActionBtn(
+          loading: _purchasing || _changeTariffCalcLoading,
+          disabled: selPer == null,
+          color: DS.violet,
+          label: 'Оплатить ${(calcResult?.amountRub ?? toPayRub).toStringAsFixed(0)} ₽',
+          onTap: _onChangeTariffTapped,
+        ),
+
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.lock_rounded, size: 12, color: _t2),
+            SizedBox(width: 4),
+            Text('Безопасная оплата · YooKassa',
+                style: TextStyle(color: _t2, fontSize: 11)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        const _Disclaimer(),
+      ],
+    );
+  }
+
+  static String _monthsLabel(int months) {
+    if (months >= 11 && months <= 19) return 'месяцев';
+    final last = months % 10;
+    if (last == 1) return 'месяц';
+    if (last >= 2 && last <= 4) return 'месяца';
+    return 'месяцев';
   }
 
   /// Renew section for active user. Uses tariff periods when available,
@@ -998,18 +1346,25 @@ class _PremiumPageState extends State<PremiumPage>
       catch (_) {}
     }
 
+    final balanceRub = _options?.balanceRub ?? 0.0;
+
     if (cur != null && cur.periods.isNotEmpty) {
       final selId = _renewTariffPeriodId ?? cur.periods.first.id;
       final sel   = cur.periods.firstWhere(
           (p) => p.id == selId, orElse: () => cur!.periods.first);
 
+      final toPayRub = _useBalance
+          ? (sel.priceRub - balanceRub).clamp(0.0, double.infinity)
+          : sel.priceRub;
+
       return Column(
         key: const ValueKey('renew-tariff'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _PSectionHeader(
-              label: 'ПРОДЛИТЬ', icon: PhosphorIconsRegular.arrowsCounterClockwise),
-          const SizedBox(height: 10),
+          // Current tariff mini-card
+          _CurrentTariffMini(sub: sub, tariffs: tariffs),
+          const SizedBox(height: 18),
+
           for (int i = 0; i < cur.periods.length; i++) ...[
             if (i > 0) const SizedBox(height: 8),
             _TariffPeriodTile(
@@ -1018,15 +1373,34 @@ class _PremiumPageState extends State<PremiumPage>
               onTap: () => setState(() => _renewTariffPeriodId = cur!.periods[i].id),
             ),
           ],
+
+          if (balanceRub > 0) ...[
+            const SizedBox(height: 14),
+            _BalanceUsageToggle(
+              balanceRub: balanceRub,
+              enabled: _useBalance,
+              onToggle: (v) => setState(() => _useBalance = v),
+            ),
+          ],
           const SizedBox(height: 14),
           _ActionBtn(
             loading: _purchasing,
             disabled: false,
             color: DS.violet,
-            label: 'Продлить за ${sel.priceRub.toStringAsFixed(0)} ₽',
+            label: 'Оплатить ${toPayRub.toStringAsFixed(0)} ₽',
             onTap: _onRenewCurrentTariffTapped,
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              Icon(Icons.lock_rounded, size: 12, color: _t2),
+              SizedBox(width: 4),
+              Text('Безопасная оплата · YooKassa',
+                  style: TextStyle(color: _t2, fontSize: 11)),
+            ],
+          ),
+          const SizedBox(height: 4),
           const _Disclaimer(),
         ],
       );
@@ -1036,14 +1410,18 @@ class _PremiumPageState extends State<PremiumPage>
     final opts = _options;
     if (opts == null) return const SizedBox.shrink();
     final selRenewKopeks = _renewPeriodId != null ? _renewPrices[_renewPeriodId] : null;
+    final legacyPriceRub = selRenewKopeks != null ? selRenewKopeks / 100.0 : null;
+    final legacyPayRub   = (_useBalance && legacyPriceRub != null)
+        ? (legacyPriceRub - balanceRub).clamp(0.0, double.infinity)
+        : legacyPriceRub;
 
     return Column(
       key: const ValueKey('renew-legacy'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _PSectionHeader(
-            label: 'ПРОДЛИТЬ', icon: PhosphorIconsRegular.arrowsCounterClockwise),
-        const SizedBox(height: 10),
+        _CurrentTariffMini(sub: sub, tariffs: tariffs),
+        const SizedBox(height: 18),
+
         for (int i = 0; i < opts.periods.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),
           _PeriodTile(
@@ -1054,17 +1432,36 @@ class _PremiumPageState extends State<PremiumPage>
             onTap: () => setState(() => _renewPeriodId = opts.periods[i].id),
           ),
         ],
+
+        if (balanceRub > 0) ...[
+          const SizedBox(height: 14),
+          _BalanceUsageToggle(
+            balanceRub: balanceRub,
+            enabled: _useBalance,
+            onToggle: (v) => setState(() => _useBalance = v),
+          ),
+        ],
         const SizedBox(height: 14),
         _ActionBtn(
           loading: _purchasing,
           disabled: _renewPeriodId == null || selRenewKopeks == null,
           color: DS.violet,
-          label: selRenewKopeks != null
-              ? 'Продлить за ${(selRenewKopeks / 100).toStringAsFixed(0)} ₽'
+          label: legacyPayRub != null
+              ? 'Оплатить ${legacyPayRub.toStringAsFixed(0)} ₽'
               : 'Продлить подписку',
           onTap: _onRenewTapped,
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 10),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: const [
+            Icon(Icons.lock_rounded, size: 12, color: _t2),
+            SizedBox(width: 4),
+            Text('Безопасная оплата · YooKassa',
+                style: TextStyle(color: _t2, fontSize: 11)),
+          ],
+        ),
+        const SizedBox(height: 4),
         const _Disclaimer(),
       ],
     );
@@ -1139,8 +1536,8 @@ class _PremiumPageState extends State<PremiumPage>
                             setState(() {
                               _showChangeTariff       = i == 1;
                               _changeTariffCalcResult = null;
+                              _checkoutMode           = false;
                             });
-                            if (i == 1) _loadChangeTariffCalc();
                           },
                         ),
                         const SizedBox(height: 16),
@@ -1159,7 +1556,7 @@ class _PremiumPageState extends State<PremiumPage>
                             transitionBuilder: (child, anim) =>
                                 FadeTransition(opacity: anim, child: child),
                             child: _showChangeTariff
-                                ? _buildChangeTariffRadioSection(tariffs, auth.isLoggedIn)
+                                ? _buildChangeTariffSection(tariffs, auth.isLoggedIn)
                                 : _buildRenewContent(sub, tariffs),
                           ),
                         ),
@@ -1207,8 +1604,8 @@ class _PremiumPageState extends State<PremiumPage>
                             setState(() {
                               _showChangeTariff       = i == 1;
                               _changeTariffCalcResult = null;
+                              _checkoutMode           = false;
                             });
-                            if (i == 1) _loadChangeTariffCalc();
                           },
                         ),
                         const SizedBox(height: 16),
@@ -1227,7 +1624,7 @@ class _PremiumPageState extends State<PremiumPage>
                             transitionBuilder: (child, anim) =>
                                 FadeTransition(opacity: anim, child: child),
                             child: _showChangeTariff
-                                ? _buildChangeTariffRadioSection(tariffs, auth.isLoggedIn)
+                                ? _buildChangeTariffSection(tariffs, auth.isLoggedIn)
                                 : _buildRenewContent(sub, tariffs),
                           ),
                         ),
@@ -3707,24 +4104,6 @@ class _SectionHeader extends StatelessWidget {
   ]);
 }
 
-// Phosphor-based section header variant
-class _PSectionHeader extends StatelessWidget {
-  final String label;
-  final PhosphorIconData icon;
-  const _PSectionHeader({required this.label, required this.icon});
-
-  @override
-  Widget build(BuildContext context) => Row(children: [
-    PhosphorIcon(icon, color: _t2, size: 14),
-    const SizedBox(width: 7),
-    Text(label, style: const TextStyle(
-        color: _t2, fontSize: 10,
-        fontWeight: FontWeight.w800, letterSpacing: 1.8)),
-    const SizedBox(width: 10),
-    Expanded(child: Container(height: 1, color: _b1)),
-  ]);
-}
-
 // Option item data
 class _OptionItem {
   final String id;
@@ -4350,5 +4729,431 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
         ),
       ),
     ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  _TariffSelectCard — compact tariff row for change-tariff step 1
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _TariffSelectCard extends StatefulWidget {
+  final TariffInfo tariff;
+  final bool selected;
+  final String? badgeLabel;
+  final bool showStepper;
+  final int deviceCount;
+  final int deviceMin;
+  final int deviceMax;
+  final VoidCallback onTap;
+  final VoidCallback onDeviceDecrement;
+  final VoidCallback onDeviceIncrement;
+
+  const _TariffSelectCard({
+    required this.tariff,
+    required this.selected,
+    required this.onTap,
+    required this.onDeviceDecrement,
+    required this.onDeviceIncrement,
+    this.badgeLabel,
+    this.showStepper = false,
+    this.deviceCount = 5,
+    this.deviceMin = 5,
+    this.deviceMax = 8,
+  });
+
+  @override
+  State<_TariffSelectCard> createState() => _TariffSelectCardState();
+}
+
+class _TariffSelectCardState extends State<_TariffSelectCard> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t        = widget.tariff;
+    final selected = widget.selected;
+    final cheapest = t.cheapestPeriod;
+    final accent   = _TariffRadioCardState._tariffStyle(t).$2;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTapDown:   (_) => setState(() => _pressed = true),
+          onTapUp:     (_) { widget.onTap(); setState(() => _pressed = false); },
+          onTapCancel: ()  => setState(() => _pressed = false),
+          child: AnimatedScale(
+            scale: _pressed ? 0.98 : 1.0,
+            duration: _pressed
+                ? const Duration(milliseconds: 70)
+                : const Duration(milliseconds: 280),
+            curve: _pressed ? Curves.easeIn : Curves.easeOutCubic,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              decoration: BoxDecoration(
+                color: selected
+                    ? accent.withValues(alpha: 0.08)
+                    : _premSurface,
+                borderRadius: BorderRadius.circular(DS.radiusSm),
+                border: Border.all(
+                  color: selected ? accent.withValues(alpha: 0.75) : _b1,
+                  width: 1.5,
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _TariffRadioCard._cleanTariffName(t.name),
+                          style: TextStyle(
+                            color: selected ? _t0 : _t1,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (cheapest != null)
+                          RichText(
+                            text: TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: '${cheapest.priceRub.toStringAsFixed(0)} ₽',
+                                  style: TextStyle(
+                                    color: selected ? accent : _t0,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const TextSpan(
+                                  text: '/мес',
+                                  style: TextStyle(
+                                    color: _t1,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w400,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(children: [
+                      _MetaChip(
+                        icon: t.trafficLimitGb == 0
+                            ? Icons.all_inclusive_rounded
+                            : Icons.storage_rounded,
+                        label: t.trafficLimitGb == 0
+                            ? 'Без лимита'
+                            : '${t.trafficLimitGb} ГБ',
+                      ),
+                      const SizedBox(width: 10),
+                      _MetaChip(
+                        icon: Icons.devices_rounded,
+                        label: '${t.deviceLimit} устр.',
+                      ),
+                    ]),
+                    if (widget.showStepper) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0A0A0F),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Устройства',
+                                    style: TextStyle(color: _t1, fontSize: 11)),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${widget.deviceCount} из ${widget.deviceMax}',
+                                  style: const TextStyle(
+                                    color: _t0,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Row(children: [
+                              _StepperBtn(
+                                icon: Icons.remove_rounded,
+                                enabled: widget.deviceCount > widget.deviceMin,
+                                onTap: widget.onDeviceDecrement,
+                                accent: accent,
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 14),
+                                child: Text(
+                                  '${widget.deviceCount}',
+                                  style: const TextStyle(
+                                    color: _t0,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              _StepperBtn(
+                                icon: Icons.add_rounded,
+                                enabled: widget.deviceCount < widget.deviceMax,
+                                onTap: widget.onDeviceIncrement,
+                                accent: accent,
+                                filled: true,
+                              ),
+                            ]),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (widget.badgeLabel != null)
+          Positioned(
+            top: -10,
+            left: 14,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: DS.violet,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                widget.badgeLabel!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _MetaChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _MetaChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 14, color: _t1),
+      const SizedBox(width: 4),
+      Text(label, style: const TextStyle(color: _t1, fontSize: 12)),
+    ],
+  );
+}
+
+class _StepperBtn extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final bool filled;
+  final Color accent;
+  final VoidCallback onTap;
+
+  const _StepperBtn({
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+    required this.accent,
+    this.filled = false,
+  });
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: enabled ? onTap : null,
+    child: AnimatedOpacity(
+      opacity: enabled ? 1.0 : 0.4,
+      duration: const Duration(milliseconds: 150),
+      child: Container(
+        width: 30, height: 30,
+        decoration: BoxDecoration(
+          color: filled && enabled ? accent : _premSurface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _b1),
+        ),
+        child: Icon(icon,
+            size: 16,
+            color: filled && enabled ? Colors.white : _t1),
+      ),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  _CurrentTariffMini — mini card showing the current subscription
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _CurrentTariffMini extends StatelessWidget {
+  final MeSubscription sub;
+  final List<TariffInfo> tariffs;
+  const _CurrentTariffMini({required this.sub, required this.tariffs});
+
+  @override
+  Widget build(BuildContext context) {
+    final subName = (sub.planName ?? '').toLowerCase().trim();
+    TariffInfo? cur;
+    if (subName.isNotEmpty) {
+      try {
+        cur = tariffs.firstWhere((t) => t.name.toLowerCase().trim() == subName);
+      } catch (_) {}
+    }
+
+    final trafficLabel = cur != null
+        ? (cur.trafficLimitGb == 0 ? 'Без лимита' : '${cur.trafficLimitGb} ГБ')
+        : null;
+    final deviceLabel = cur != null ? '${cur.deviceLimit} устр.' : null;
+    final cheapestPriceRub = cur?.cheapestPeriod?.priceRub;
+
+    final metaParts = <String>[
+      ?trafficLabel,
+      ?deviceLabel,
+      if (cheapestPriceRub != null) '${cheapestPriceRub.toStringAsFixed(0)} ₽/мес',
+    ];
+    final meta = metaParts.join(' · ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'У ВАС СЕЙЧАС',
+          style: TextStyle(
+            color: _t2, fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 2.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: _premSurface,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            border: Border.all(color: _b1),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
+          child: Row(children: [
+            Container(
+              width: 32, height: 32,
+              decoration: BoxDecoration(
+                color: DS.violet.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: const Center(
+                child: Icon(Icons.shield_rounded, color: DS.violet, size: 18),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    sub.planName ?? 'Текущий тариф',
+                    style: const TextStyle(
+                      color: _t0, fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  if (meta.isNotEmpty)
+                    Text(meta, style: const TextStyle(color: _t1, fontSize: 11)),
+                ],
+              ),
+            ),
+          ]),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  _BalanceUsageToggle — balance deduction toggle
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _BalanceUsageToggle extends StatelessWidget {
+  final double balanceRub;
+  final bool enabled;
+  final ValueChanged<bool> onToggle;
+
+  const _BalanceUsageToggle({
+    required this.balanceRub,
+    required this.enabled,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      color: _premSurface,
+      borderRadius: BorderRadius.circular(DS.radiusSm),
+      border: Border.all(color: _b1),
+    ),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    child: Row(children: [
+      Icon(Icons.account_balance_wallet_rounded,
+          size: 18, color: enabled ? _teal : _t1),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Text.rich(
+          TextSpan(
+            text: 'Списать с баланса ',
+            style: const TextStyle(color: _t0, fontSize: 13),
+            children: [
+              TextSpan(
+                text: '(${balanceRub.toStringAsFixed(0)} ₽)',
+                style: const TextStyle(color: _t1),
+              ),
+            ],
+          ),
+        ),
+      ),
+      Switch(
+        value: enabled,
+        onChanged: onToggle,
+        activeThumbColor: _teal,
+        activeTrackColor: _teal.withValues(alpha: 0.5),
+      ),
+    ]),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  _BreakdownRow — single row in cost breakdown table
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _BreakdownRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? accent;
+
+  const _BreakdownRow({
+    required this.label,
+    required this.value,
+    this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Text(label, style: TextStyle(color: accent ?? _t1, fontSize: 13)),
+      Text(value, style: TextStyle(color: accent ?? _t0, fontSize: 13)),
+    ],
   );
 }

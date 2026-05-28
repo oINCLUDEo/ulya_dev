@@ -13,10 +13,11 @@ import '../services/remnawave_service.dart';
 import '../services/subscription_api_service.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
-
+import 'change_tariff_page.dart';
+import 'renew_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SubscriptionPage
+// SubscriptionPage — экран «Аккаунт»
 // ─────────────────────────────────────────────────────────────────────────────
 
 class SubscriptionPage extends StatefulWidget {
@@ -32,6 +33,8 @@ class _SubscriptionPageState extends State<SubscriptionPage>
   bool _loading = false;
   SubscriptionInfo? _trafficInfo;
   DateTime? _lastRefresh;
+  bool _autopayEnabled = false;
+  bool _autopayLoading = false;
 
   @override
   void initState() {
@@ -42,6 +45,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     globalRefreshNotifier.addListener(_onGlobalRefresh);
     _loadCachedMe();
     _refresh();
+    _autopayEnabled = meNotifier.value?.subscription?.autopayEnabled ?? false;
   }
 
   Future<void> _loadCachedMe() async => MeService.loadFromCache();
@@ -65,7 +69,14 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     _refresh();
   }
 
-  void _onMeChanged() { if (mounted) setState(() {}); }
+  void _onMeChanged() {
+    if (mounted) {
+      setState(() {
+        _autopayEnabled =
+            meNotifier.value?.subscription?.autopayEnabled ?? false;
+      });
+    }
+  }
 
   void _onGlobalRefresh() {
     if (!mounted) return;
@@ -87,7 +98,9 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     setState(() => _loading = true);
     try {
       await MeService.refreshAll();
-      if (mounted) setState(() => _trafficInfo = RemnawaveService.lastSubscriptionInfo);
+      if (mounted) {
+        setState(() => _trafficInfo = RemnawaveService.lastSubscriptionInfo);
+      }
     } catch (e, st) {
       debugPrint('SubscriptionPage refresh error: $e\n$st');
     }
@@ -99,7 +112,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
   @override
   Widget build(BuildContext context) {
     final auth = authStateNotifier.value;
-    final me   = meNotifier.value;
+    final me = meNotifier.value;
 
     return Scaffold(
       backgroundColor: DS.surface0,
@@ -112,8 +125,6 @@ class _SubscriptionPageState extends State<SubscriptionPage>
           slivers: [
             SliverToBoxAdapter(
               child: _SubHeader(
-                me: me,
-                auth: auth,
                 isRefreshing: _loading,
                 onRefresh: () => _refresh(force: true),
               ),
@@ -123,57 +134,43 @@ class _SubscriptionPageState extends State<SubscriptionPage>
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
                   if (!auth.isLoggedIn) ...[
-                    _WelcomeCard(onLoginTap: () => showAuthBottomSheet(context)),
+                    _WelcomeCard(
+                        onLoginTap: () => showAuthBottomSheet(context)),
                     const SizedBox(height: 12),
                     _GoPremiumBanner(onTap: _onPremiumTap),
                   ] else if (_loading && me == null) ...[
                     const SizedBox(height: 140),
                     const Center(
-                        child: CircularProgressIndicator(
-                            color: DS.violet, strokeWidth: 2.5)),
+                      child: CircularProgressIndicator(
+                          color: DS.violet, strokeWidth: 2.5),
+                    ),
                   ] else ...[
-                    // ── Hero subscription status card ─────────────────────
-                    _HeroSubCard(me: me, trafficInfo: _trafficInfo),
-                    const SizedBox(height: 20),
-
-                    // ── Traffic ───────────────────────────────────────────
+                    _StatusCard(
+                      me: me,
+                      onRenew: _onRenewTap,
+                      onChangePlan: _onChangePlanTap,
+                    ),
+                    const SizedBox(height: 12),
                     if (me?.subscription != null) ...[
-                      const _SectionLabel(text: 'ИСПОЛЬЗОВАНИЕ'),
-                      const SizedBox(height: 10),
-                      _TrafficCard(
-                          sub: me!.subscription!, trafficInfo: _trafficInfo),
-                      const SizedBox(height: 20),
+                      _TrafficSectionCard(
+                        sub: me!.subscription!,
+                        trafficInfo: _trafficInfo,
+                      ),
+                      const SizedBox(height: 12),
                     ],
-
-                    // ── Balance + devices ─────────────────────────────────
-                    const _SectionLabel(text: 'ФИНАНСЫ'),
-                    const SizedBox(height: 10),
-                    _QuickInfoRow(
+                    _BalanceRow(
                       me: me,
                       onTopup: () => _showTopupSheet(context),
                     ),
-                    const SizedBox(height: 20),
-
-                    // ── Autopay + URL ─────────────────────────────────────
                     if (me?.subscription != null) ...[
-                      const _SectionLabel(text: 'НАСТРОЙКИ'),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       _AutopayCard(
-                          sub: me!.subscription!, onToggle: _onAutopayToggle),
-                      if (me.subscription!.subscriptionUrl != null) ...[
-                        const SizedBox(height: 10),
-                        _SubUrlCard(url: me.subscription!.subscriptionUrl!),
-                      ],
-                      const SizedBox(height: 20),
+                        enabled: _autopayEnabled,
+                        loading: _autopayLoading,
+                        onToggle: _onAutopayToggle,
+                      ),
                     ],
-
-                    // ── Manage plan ───────────────────────────────────────
-                    const _SectionLabel(text: 'УПРАВЛЕНИЕ'),
-                    const SizedBox(height: 10),
-                    _ManagePlanButton(onTap: _onPremiumTap),
-                    const SizedBox(height: 10),
-
-                    // ── Logout ────────────────────────────────────────────
+                    const SizedBox(height: 24),
                     _LogoutButton(onTap: _onLogout),
                   ],
                 ]),
@@ -214,11 +211,6 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     if (confirm == true) await AuthService.logout();
   }
 
-  Future<void> _onAutopayToggle(bool enabled) async {
-    final result = await SubscriptionApiService.setAutopay(enabled: enabled);
-    if (result != null && mounted) await MeService.refresh();
-  }
-
   void _onPremiumTap() {
     if (widget.onGoToPremium != null) {
       widget.onGoToPremium!();
@@ -230,6 +222,20 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     }
   }
 
+  void _onRenewTap() {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => const RenewPage()),
+    );
+  }
+
+  void _onChangePlanTap() {
+    Navigator.push<void>(
+      context,
+      MaterialPageRoute(builder: (_) => const ChangeTariffPage()),
+    );
+  }
+
   void _showTopupSheet(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -238,82 +244,69 @@ class _SubscriptionPageState extends State<SubscriptionPage>
       builder: (_) => const _TopupSheet(),
     );
   }
+
+  Future<void> _onAutopayToggle(bool value) async {
+    setState(() {
+      _autopayEnabled = value;
+      _autopayLoading = true;
+    });
+    try {
+      await SubscriptionApiService.setAutopay(enabled: value);
+      await MeService.refresh();
+    } catch (_) {
+      if (mounted) setState(() => _autopayEnabled = !value);
+    }
+    if (mounted) setState(() => _autopayLoading = false);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Header — editorial: большой заголовок + имя пользователя
+// Header
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _SubHeader extends StatelessWidget {
-  final MeResponse? me;
-  final AuthState   auth;
-  final bool        isRefreshing;
+  final bool isRefreshing;
   final VoidCallback onRefresh;
 
-  const _SubHeader({
-    required this.me,
-    required this.auth,
-    required this.isRefreshing,
-    required this.onRefresh,
-  });
+  const _SubHeader({required this.isRefreshing, required this.onRefresh});
 
   @override
   Widget build(BuildContext context) {
-    final top  = MediaQuery.of(context).padding.top;
-    final name = me?.displayName ??
-        (auth.isLoggedIn ? auth.displayName : null);
-
+    final top = MediaQuery.of(context).padding.top;
+    final canPop = Navigator.canPop(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(20, top + 18, 20, 18),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text(
-              'ПОДПИСКА',
-              style: TextStyle(
-                color: DS.textMuted,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 2.5,
-              ),
+      padding: EdgeInsets.fromLTRB(
+          canPop ? 8 : 20, top + 18, 20, 18),
+      child: Row(
+        children: [
+          if (canPop) ...[
+            IconButton(
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.chevron_left_rounded,
+                  color: DS.textPrimary, size: 28),
+              splashRadius: 20,
+              padding: const EdgeInsets.all(8),
+              constraints: const BoxConstraints(),
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'Мой аккаунт',
+            const SizedBox(width: 2),
+          ],
+          const Expanded(
+            child: Text(
+              'Аккаунт',
               style: TextStyle(
                 color: DS.textPrimary,
-                fontSize: 28,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.8,
-                height: 1,
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            if (name != null && name.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Row(children: [
-                Container(
-                  width: 6, height: 6,
-                  decoration: const BoxDecoration(
-                    color: DS.violet, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 7),
-                Text(name,
-                    style: const TextStyle(
-                        color: DS.textSecondary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500)),
-              ]),
-            ],
-          ]),
-        ),
-        const SizedBox(width: 12),
-        _RefreshButton(isRefreshing: isRefreshing, onTap: onRefresh),
-      ]),
+          ),
+          _RefreshButton(isRefreshing: isRefreshing, onTap: onRefresh),
+        ],
+      ),
     );
   }
 }
 
-// Animated refresh button extracted for proper dispose
 class _RefreshButton extends StatefulWidget {
   final bool isRefreshing;
   final VoidCallback onTap;
@@ -348,7 +341,9 @@ class _RefreshButtonState extends State<_RefreshButton>
                 duration: Duration(
                     milliseconds:
                         (remaining * 700).round().clamp(1, 700)))
-            .then((_) { if (mounted) _rotCtrl.reset(); });
+            .then((_) {
+          if (mounted) _rotCtrl.reset();
+        });
       } else {
         _rotCtrl.reset();
       }
@@ -365,17 +360,538 @@ class _RefreshButtonState extends State<_RefreshButton>
   Widget build(BuildContext context) => GestureDetector(
         onTap: widget.isRefreshing ? null : widget.onTap,
         child: Container(
-          width: 44,
-          height: 44,
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
-            color: DS.surface2,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: DS.border),
+            color: DS.surface1,
+            shape: BoxShape.circle,
           ),
           child: RotationTransition(
             turns: _rotCtrl,
             child: const Icon(Icons.refresh_rounded,
-                color: DS.textSecondary, size: 20),
+                color: DS.textSecondary, size: 18),
+          ),
+        ),
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status card — два состояния: активна / истекла
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _StatusCard extends StatelessWidget {
+  final MeResponse? me;
+  final VoidCallback onRenew;
+  final VoidCallback onChangePlan;
+
+  const _StatusCard({
+    required this.me,
+    required this.onRenew,
+    required this.onChangePlan,
+  });
+
+  static const _months = [
+    'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+    'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+  ];
+
+  static String _monthRu(int m) => _months[(m - 1).clamp(0, 11)];
+
+  static String _dayLabel(int n) {
+    final abs = n.abs() % 100;
+    final last = abs % 10;
+    if (abs >= 11 && abs <= 19) return 'дней';
+    if (last == 1) return 'день';
+    if (last >= 2 && last <= 4) return 'дня';
+    return 'дней';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sub = me?.subscription;
+
+    // ── No subscription ───────────────────────────────────────────────────────
+    if (sub == null) {
+      return _CardShell(
+        accentColor: DS.textMuted,
+        gradientStart: const Color(0x00000000),
+        gradientEnd: const Color(0x00000000),
+        borderColor: DS.border,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Container(
+                  width: 6, height: 6,
+                  decoration: const BoxDecoration(
+                      color: DS.textMuted, shape: BoxShape.circle)),
+              const SizedBox(width: 6),
+              const Text('НЕТ ПОДПИСКИ',
+                  style: TextStyle(
+                      color: DS.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8)),
+            ]),
+            const SizedBox(height: 10),
+            const Text('Подписка не активна',
+                style: TextStyle(
+                    color: DS.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            const Text('Подключение к VPN недоступно',
+                style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+            const SizedBox(height: 16),
+            _PrimaryButton(
+                label: 'Продлить',
+                icon: Icons.refresh_rounded,
+                onTap: onRenew),
+          ],
+        ),
+      );
+    }
+
+    // ── Expired ───────────────────────────────────────────────────────────────
+    if (sub.isExpired) {
+      final expDate = sub.expireDate;
+      final badge = expDate != null
+          ? 'Истекла ${expDate.day} ${_monthRu(expDate.month)}'.toUpperCase()
+          : 'ИСТЕКЛА';
+      final planTitle =
+          sub.planName != null ? 'Тариф «${sub.planName}»' : 'Тариф истёк';
+
+      return _CardShell(
+        accentColor: DS.rose,
+        gradientStart: DS.rose.withValues(alpha: 0.12),
+        gradientEnd: DS.rose.withValues(alpha: 0.04),
+        borderColor: DS.rose.withValues(alpha: 0.30),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Container(
+                  width: 6, height: 6,
+                  decoration: const BoxDecoration(
+                      color: DS.rose, shape: BoxShape.circle)),
+              const SizedBox(width: 6),
+              Text(badge,
+                  style: const TextStyle(
+                      color: DS.rose,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.8)),
+            ]),
+            const SizedBox(height: 10),
+            Text(planTitle,
+                style: const TextStyle(
+                    color: DS.textPrimary,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            const Text('Подключение к VPN недоступно',
+                style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+            const SizedBox(height: 16),
+            _PrimaryButton(
+                label: 'Продлить',
+                icon: Icons.refresh_rounded,
+                accentColor: DS.rose,
+                onTap: onRenew),
+          ],
+        ),
+      );
+    }
+
+    // ── Active ────────────────────────────────────────────────────────────────
+    final days = sub.expireDate?.difference(DateTime.now()).inDays;
+    final badge = days == null
+        ? 'АКТИВНА'
+        : 'АКТИВНА · $days ${_dayLabel(days)}'.toUpperCase();
+    final expDate = sub.expireDate;
+    final expHint = expDate != null
+        ? 'До ${expDate.day} ${_monthRu(expDate.month)} ${expDate.year}'
+        : null;
+    final planTitle =
+        sub.planName != null ? 'Тариф «${sub.planName}»' : 'Активный тариф';
+
+    return _CardShell(
+      accentColor: DS.emerald,
+      gradientStart: DS.emerald.withValues(alpha: 0.10),
+      gradientEnd: DS.emerald.withValues(alpha: 0.03),
+      borderColor: DS.emerald.withValues(alpha: 0.30),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            _PulsingDot(color: DS.emerald),
+            const SizedBox(width: 6),
+            Text(badge,
+                style: const TextStyle(
+                    color: DS.emerald,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.8)),
+          ]),
+          const SizedBox(height: 10),
+          Text(planTitle,
+              style: const TextStyle(
+                  color: DS.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w600)),
+          if (expHint != null) ...[
+            const SizedBox(height: 4),
+            Text(expHint,
+                style:
+                    const TextStyle(color: DS.textSecondary, fontSize: 13)),
+          ],
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(
+                child: _GhostButton(label: 'Продлить', onTap: onRenew)),
+            const SizedBox(width: 8),
+            Expanded(
+                child: _GhostButton(
+                    label: 'Сменить тариф', onTap: onChangePlan)),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+class _CardShell extends StatelessWidget {
+  final Color accentColor;
+  final Color gradientStart;
+  final Color gradientEnd;
+  final Color borderColor;
+  final Widget child;
+
+  const _CardShell({
+    required this.accentColor,
+    required this.gradientStart,
+    required this.gradientEnd,
+    required this.borderColor,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [gradientStart, gradientEnd],
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: borderColor, width: 0.5),
+        ),
+        child: child,
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Traffic section card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TrafficSectionCard extends StatelessWidget {
+  final MeSubscription sub;
+  final SubscriptionInfo? trafficInfo;
+
+  const _TrafficSectionCard({required this.sub, required this.trafficInfo});
+
+  @override
+  Widget build(BuildContext context) {
+    final unlimited = sub.trafficLimitGb == 0 &&
+        (trafficInfo == null || trafficInfo!.totalBytes == 0);
+    final usedBytes = trafficInfo?.usedBytes ??
+        (sub.trafficUsedGb * 1024 * 1024 * 1024).round();
+    final totalBytes = (trafficInfo != null && trafficInfo!.totalBytes > 0)
+        ? trafficInfo!.totalBytes
+        : (sub.trafficLimitGb == 0
+            ? 0
+            : (sub.trafficLimitGb * 1024 * 1024 * 1024));
+    final fraction =
+        totalBytes > 0 ? (usedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
+    final usedLabel = trafficInfo?.formattedUsed ??
+        '${sub.trafficUsedGb.toStringAsFixed(1)} ГБ';
+    final totalLabel = unlimited
+        ? '∞'
+        : (trafficInfo != null && trafficInfo!.totalBytes > 0
+            ? trafficInfo!.formattedTotal
+            : '${sub.trafficLimitGb} ГБ');
+
+    final Color barColor;
+    if (unlimited) {
+      barColor = DS.violet;
+    } else if (fraction >= 0.9) {
+      barColor = DS.rose;
+    } else if (fraction >= 0.7) {
+      barColor = DS.amber;
+    } else {
+      barColor = DS.emerald;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'ТРАФИК В ЭТОМ ПЕРИОДЕ',
+            style: TextStyle(
+              color: DS.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.6,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              unlimited
+                  ? const Text('∞',
+                      style: TextStyle(
+                          color: DS.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w600))
+                  : RichText(
+                      text: TextSpan(children: [
+                        TextSpan(
+                          text: usedLabel,
+                          style: const TextStyle(
+                              color: DS.textPrimary,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w600),
+                        ),
+                        TextSpan(
+                          text: ' / $totalLabel',
+                          style: const TextStyle(
+                              color: DS.textSecondary, fontSize: 14),
+                        ),
+                      ]),
+                    ),
+              Text(
+                '${sub.deviceLimit} ${_devWord(sub.deviceLimit)}',
+                style: const TextStyle(
+                    color: DS.textSecondary, fontSize: 12),
+              ),
+            ],
+          ),
+          if (!unlimited) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: Stack(children: [
+                Container(height: 4, color: DS.surface3),
+                FractionallySizedBox(
+                  widthFactor: fraction,
+                  child: Container(
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: barColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+              ]),
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            const Text('Трафик без ограничений',
+                style: TextStyle(color: DS.textMuted, fontSize: 12)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _devWord(int n) {
+    if (n % 10 == 1 && n % 100 != 11) return 'устройство';
+    if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) {
+      return 'устройства';
+    }
+    return 'устройств';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Balance row
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BalanceRow extends StatelessWidget {
+  final MeResponse? me;
+  final VoidCallback onTopup;
+
+  const _BalanceRow({required this.me, required this.onTopup});
+
+  @override
+  Widget build(BuildContext context) {
+    final balance = me?.balanceRub ?? 0.0;
+    final currency = me?.balanceCurrency ?? 'RUB';
+    final symbol = currency == 'RUB' ? '₽' : currency;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Остаток на счёте',
+                  style:
+                      TextStyle(color: DS.textMuted, fontSize: 11)),
+              const SizedBox(height: 2),
+              Text(
+                '${balance.toStringAsFixed(0)} $symbol',
+                style: const TextStyle(
+                    color: DS.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          GestureDetector(
+            onTap: onTopup,
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Пополнить',
+                    style: TextStyle(
+                        color: DS.violet,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+                SizedBox(width: 2),
+                Icon(Icons.chevron_right_rounded,
+                    color: DS.violet, size: 16),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Buttons
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PrimaryButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final Color accentColor;
+
+  const _PrimaryButton({
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.accentColor = DS.violet,
+  });
+
+  /// Слегка осветляем акцентный цвет для текста — лучше читается на тёмном фоне.
+  Color get _textColor => Color.lerp(accentColor, Colors.white, 0.28)!;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: accentColor.withValues(alpha: 0.13),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: accentColor.withValues(alpha: 0.38),
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, color: _textColor, size: 17),
+                const SizedBox(width: 7),
+              ],
+              Text(label,
+                  style: TextStyle(
+                      color: _textColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600)),
+            ],
+          ),
+        ),
+      );
+}
+
+class _GhostButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _GhostButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: DS.border),
+          ),
+          child: Center(
+            child: Text(label,
+                style: const TextStyle(
+                    color: DS.textPrimary,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500)),
+          ),
+        ),
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Logout button
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LogoutButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _LogoutButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          height: 52,
+          decoration: BoxDecoration(
+            color: DS.surface1,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: DS.rose.withValues(alpha: 0.30)),
+          ),
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.logout_rounded, color: DS.rose, size: 18),
+              SizedBox(width: 8),
+              Text('Выйти из аккаунта',
+                  style: TextStyle(
+                      color: DS.rose,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600)),
+            ],
           ),
         ),
       );
@@ -424,16 +940,13 @@ class _WelcomeCard extends StatelessWidget {
                 color: Colors.white, size: 38),
           ),
           const SizedBox(height: 22),
-          const Text(
-            'Войдите в аккаунт',
-            style: TextStyle(
-              color: DS.textPrimary,
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.3,
-            ),
-            textAlign: TextAlign.center,
-          ),
+          const Text('Войдите в аккаунт',
+              style: TextStyle(
+                  color: DS.textPrimary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.3),
+              textAlign: TextAlign.center),
           const SizedBox(height: 8),
           const Text(
             'Управляйте подпиской, следите\nза трафиком и балансом',
@@ -496,502 +1009,8 @@ class _GoPremiumBanner extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pulsing dot — используется в статус-карточке
 // ─────────────────────────────────────────────────────────────────────────────
-// Hero subscription card
-//
-// Design language — Itten colour wheel:
-//   • Base: deep indigo-violet (#0D0A26) — analogous cool palette
-//   • Accent: gold (#D4A84B) — Itten complementary to violet (opposite on wheel)
-//   • Support: sky-blue (analogous) for traffic, violet (analogous) for devices
-//   • Urgency degradation: gold → amber → rose as expiry nears
-//
-// Layout: membership-card silhouette with a thin gradient top stripe,
-// a three-column stat grid (ДНЕЙ / УСТРОЙСТВ / ТРАФИК) and a time bar.
-// ─────────────────────────────────────────────────────────────────────────────
-
-
-class _HeroSubCard extends StatelessWidget {
-  final MeResponse? me;
-  final SubscriptionInfo? trafficInfo;
-  const _HeroSubCard({required this.me, this.trafficInfo});
-
-  // Russian day-word declension
-  static String _dayLabel(int n) {
-    final abs = n.abs() % 100;
-    final last = abs % 10;
-    if (abs >= 11 && abs <= 19) return 'дней';
-    if (last == 1) return 'день';
-    if (last >= 2 && last <= 4) return 'дня';
-    return 'дней';
-  }
-
-
-  @override
-  Widget build(BuildContext context) {
-    final sub = me?.subscription;
-
-    // ── State → visual tokens ────────────────────────────────────────────
-    final Color accent;
-    final List<Color> bgGrad;
-    final String badgeText;
-    final bool   isLive;
-    final String daysValue;
-    final String daysUnit;
-    final String? expiryHint;
-    // Traffic bar data (populated only for limited active plans)
-    double trafficFrac     = 0.0;
-    String trafficUsedLbl  = '';
-    String trafficTotalLbl = '';
-    Color  trafficBarColor = DS.cyan;
-    bool   hasTrafficBar   = false;
-
-    if (sub == null) {
-      accent      = DS.textMuted;
-      bgGrad      = [const Color(0xFF111118), const Color(0xFF0C0C10)];
-      badgeText   = 'НЕТ ПОДПИСКИ';
-      isLive      = false;
-      daysValue   = '—';
-      daysUnit    = 'нет данных';
-      expiryHint  = null;
-    } else if (sub.isExpired) {
-      final diff = sub.expireDate != null
-          ? DateTime.now().difference(sub.expireDate!).inDays
-          : 0;
-      accent      = DS.rose;
-      bgGrad      = [const Color(0xFF1E0A0C), const Color(0xFF150809)];
-      badgeText   = 'ИСТЕКЛА';
-      isLive      = false;
-      daysValue   = '$diff';
-      daysUnit    = '${_dayLabel(diff)} назад';
-      expiryHint  = sub.expireDate != null
-          ? 'истекла ${sub.formattedExpiry}'
-          : null;
-    } else {
-      final days = sub.expireDate?.difference(DateTime.now()).inDays;
-      // Itten urgency: gold (safe) → amber (caution) → rose (critical)
-      if (days == null || days > 7) {
-        accent = DS.gold;
-        bgGrad = [const Color(0xFF0D0B26), const Color(0xFF0A0820)];
-      } else if (days > 3) {
-        accent = DS.amber;
-        bgGrad = [const Color(0xFF1A1306), const Color(0xFF120E04)];
-      } else {
-        accent = DS.rose;
-        bgGrad = [const Color(0xFF1E0A0C), const Color(0xFF150809)];
-      }
-      badgeText   = sub.isTrial ? 'ПРОБНЫЙ' : 'АКТИВНА';
-      isLive      = true;
-      daysValue   = days != null ? '$days' : '∞';
-      daysUnit    = days == null
-          ? 'бессрочно'
-          : sub.isTrial
-              ? '${_dayLabel(days)} пробного'
-              : _dayLabel(days);
-      expiryHint  = sub.expireDate != null ? 'до ${sub.formattedExpiry}' : null;
-
-      // Compute traffic data for limited plans
-      if (sub.trafficLimitGb > 0) {
-        hasTrafficBar = true;
-        final usedBytes = trafficInfo?.usedBytes ??
-            (sub.trafficUsedGb * 1024 * 1024 * 1024).round();
-        final totalBytes = (trafficInfo != null && trafficInfo!.totalBytes > 0)
-            ? trafficInfo!.totalBytes
-            : (sub.trafficLimitGb * 1024 * 1024 * 1024).round();
-        trafficFrac = totalBytes > 0
-            ? (usedBytes / totalBytes).clamp(0.0, 1.0)
-            : 0.0;
-        trafficUsedLbl = trafficInfo?.formattedUsed ??
-            '${sub.trafficUsedGb.toStringAsFixed(1)} ГБ';
-        trafficTotalLbl = (trafficInfo != null && trafficInfo!.totalBytes > 0)
-            ? trafficInfo!.formattedTotal
-            : '${sub.trafficLimitGb} ГБ';
-        trafficBarColor = trafficFrac >= 0.9
-            ? DS.rose
-            : trafficFrac >= 0.7
-                ? DS.amber
-                : DS.cyan;
-      }
-    }
-
-    final planLabel = sub?.planName ?? (sub?.isTrial == true ? 'Пробный' : null);
-    final bool showBottomRow = sub != null;
-
-    // Badge colour: emerald for a healthy active sub (intuitive "all OK" signal).
-    // Urgency states (trial/expiring/expired) stay with the urgency accent colour.
-    final Color badgeColor = (isLive && !sub!.isTrial && accent == DS.gold)
-        ? DS.emerald
-        : accent;
-
-    return Container(
-      clipBehavior: Clip.hardEdge,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: bgGrad,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: accent.withValues(alpha: 0.28), width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: 0.10),
-            blurRadius: 36,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-
-          // ── Top accent stripe: animated shimmer (Itten pair gold ↔ violet) ─
-          _ShimmerStripe(leading: accent, trailing: DS.violet),
-
-          Padding(
-            padding: EdgeInsets.fromLTRB(20, 18, 20, showBottomRow ? 16 : 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-
-                // ── Status badge + plan name ──────────────────────────────
-                Row(children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: badgeColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: badgeColor.withValues(alpha: 0.30)),
-                    ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (isLive) ...[
-                        _PulsingDot(color: badgeColor),
-                        const SizedBox(width: 6),
-                      ] else ...[
-                        Icon(Icons.timer_off_rounded,
-                            color: badgeColor, size: 11),
-                        const SizedBox(width: 5),
-                      ],
-                      Text(
-                        badgeText,
-                        style: TextStyle(
-                          color: badgeColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ]),
-                  ),
-
-                  const Spacer(),
-
-                  if (planLabel != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 9, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: DS.surface2,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: accent.withValues(alpha: 0.18)),
-                      ),
-                      child: Text(
-                        planLabel,
-                        style: const TextStyle(
-                          color: DS.textSecondary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                ]),
-
-                const SizedBox(height: 22),
-
-                // ── Three-column stat grid ────────────────────────────────
-                IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _StatCell(
-                        value: daysValue,
-                        unit: daysUnit,
-                        color: accent,
-                        heroSize: true,
-                      ),
-
-                      if (sub != null) ...[
-                        _StatDivider(color: accent),
-                        _StatCell(
-                          value: '${sub.deviceLimit}',
-                          unit: 'УСТРОЙСТВ',
-                          color: DS.violet,
-                        ),
-                        _StatDivider(color: accent),
-                        _StatCell(
-                          value: sub.trafficLimitGb == 0
-                              ? '∞'
-                              : '${sub.trafficLimitGb}',
-                          unit: sub.trafficLimitGb == 0 ? 'ГБ БЕЗЛИМ' : 'ГБ',
-                          color: DS.cyan,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-                // ── Traffic usage bar (limited active plans only) ─────────
-                if (hasTrafficBar) ...[
-                  const SizedBox(height: 16),
-                  Row(children: [
-                    Icon(Icons.storage_rounded,
-                        color: DS.textMuted, size: 12),
-                    const SizedBox(width: 5),
-                    RichText(text: TextSpan(children: [
-                      TextSpan(
-                        text: trafficUsedLbl,
-                        style: TextStyle(
-                          color: trafficBarColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      TextSpan(
-                        text: ' / $trafficTotalLbl',
-                        style: const TextStyle(
-                          color: DS.textMuted, fontSize: 12,
-                        ),
-                      ),
-                    ])),
-                    const Spacer(),
-                    Text(
-                      '${(trafficFrac * 100).toStringAsFixed(0)}%',
-                      style: TextStyle(
-                        color: trafficBarColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ]),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: Stack(children: [
-                      Container(height: 4, color: DS.surface3),
-                      FractionallySizedBox(
-                        widthFactor: trafficFrac,
-                        child: Container(
-                          height: 4,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(colors: [
-                              trafficBarColor,
-                              Color.lerp(trafficBarColor, Colors.white, 0.2)!,
-                            ]),
-                            boxShadow: [BoxShadow(
-                              color: trafficBarColor.withValues(alpha: 0.5),
-                              blurRadius: 6,
-                            )],
-                          ),
-                        ),
-                      ),
-                    ]),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          // ── Bottom info row: expiry + autopay ─────────────────────────
-          if (showBottomRow) ...[
-            Container(
-                height: 1,
-                color: DS.border.withValues(alpha: 0.5)),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
-              child: Row(children: [
-                if (expiryHint != null) ...[
-                  Icon(Icons.calendar_today_outlined,
-                      color: accent, size: 13),
-                  const SizedBox(width: 6),
-                  Text(
-                    expiryHint,
-                    style: TextStyle(
-                      color: accent,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                Icon(
-                  Icons.autorenew_rounded,
-                  color: sub.autopayEnabled
-                      ? DS.emerald
-                      : DS.textMuted,
-                  size: 13,
-                ),
-                const SizedBox(width: 5),
-                Text(
-                  sub.autopayEnabled
-                      ? 'Автопродление'
-                      : 'Без автопродления',
-                  style: TextStyle(
-                    color: sub.autopayEnabled
-                        ? DS.emerald
-                        : DS.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ]),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-// Single stat cell used in the three-column grid
-class _StatCell extends StatelessWidget {
-  final String value;
-  final String unit;
-  final Color  color;
-  final bool   heroSize; // larger font for the "days" cell
-
-  const _StatCell({
-    required this.value,
-    required this.unit,
-    required this.color,
-    this.heroSize = false,
-  });
-
-  @override
-  Widget build(BuildContext context) => Expanded(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            color: color,
-            fontSize: heroSize ? 46 : 26,
-            fontWeight: FontWeight.w900,
-            height: 1,
-            letterSpacing: heroSize ? -2 : -0.5,
-          ),
-        ),
-        const SizedBox(height: 5),
-        Text(
-          unit,
-          style: const TextStyle(
-            color: DS.textSecondary,
-            fontSize: 9,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.8,
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-// Thin vertical divider between stat cells
-class _StatDivider extends StatelessWidget {
-  final Color color;
-  const _StatDivider({required this.color});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 1,
-    margin: const EdgeInsets.fromLTRB(14, 0, 14, 0),
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          color.withValues(alpha: 0.20),
-          color.withValues(alpha: 0.06),
-        ],
-      ),
-    ),
-  );
-}
-
-
-// ── Animated shimmer stripe (sweeping white flash left → right) ──────────────
-
-class _ShimmerStripe extends StatefulWidget {
-  final Color leading;   // accent colour (gold / amber / rose)
-  final Color trailing;  // brand colour (violet)
-  const _ShimmerStripe({required this.leading, required this.trailing});
-
-  @override
-  State<_ShimmerStripe> createState() => _ShimmerStripeState();
-}
-
-class _ShimmerStripeState extends State<_ShimmerStripe>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2800),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    height: 3,
-    child: Stack(children: [
-      // Base: static colour band (always visible)
-      Positioned.fill(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [widget.leading, widget.trailing],
-            ),
-          ),
-        ),
-      ),
-      // Sweep: a diagonal white flash that glides left → right.
-      // x goes −1.6 → +1.6, so the beam is fully off-screen at both
-      // endpoints and the loop restart is seamless (no jump).
-      AnimatedBuilder(
-        animation: _ctrl,
-        builder: (_, child) {
-          final x = -1.6 + _ctrl.value * 3.2;
-          return Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment(x - 0.4, -1),
-                  end:   Alignment(x + 0.4,  1),
-                  colors: [
-                    Colors.transparent,
-                    Colors.white.withValues(alpha: 0.55),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    ]),
-  );
-}
-
 
 class _PulsingDot extends StatefulWidget {
   final Color color;
@@ -1004,7 +1023,7 @@ class _PulsingDot extends StatefulWidget {
 class _PulsingDotState extends State<_PulsingDot>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
-  late final Animation<double>   _scale;
+  late final Animation<double> _scale;
 
   @override
   void initState() {
@@ -1026,14 +1045,15 @@ class _PulsingDotState extends State<_PulsingDot>
   Widget build(BuildContext context) => ScaleTransition(
         scale: _scale,
         child: Container(
-          width: 10,
-          height: 10,
+          width: 8,
+          height: 8,
           decoration: BoxDecoration(
             color: widget.color,
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                  color: widget.color.withValues(alpha: 0.6), blurRadius: 8)
+                  color: widget.color.withValues(alpha: 0.6),
+                  blurRadius: 6)
             ],
           ),
         ),
@@ -1041,557 +1061,7 @@ class _PulsingDotState extends State<_PulsingDot>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Section label — editorial разделитель секций
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _SectionLabel extends StatelessWidget {
-  final String text;
-  const _SectionLabel({required this.text});
-
-  @override
-  Widget build(BuildContext context) => Row(children: [
-    Text(text, style: const TextStyle(
-        color: DS.textMuted, fontSize: 10,
-        fontWeight: FontWeight.w700, letterSpacing: 2.0)),
-    const SizedBox(width: 10),
-    Expanded(child: Container(height: 1, color: DS.border)),
-  ]);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Traffic card — editorial: крупный процент + прогресс-бар
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _TrafficCard extends StatelessWidget {
-  final MeSubscription  sub;
-  final SubscriptionInfo? trafficInfo;
-  const _TrafficCard({required this.sub, required this.trafficInfo});
-
-  @override
-  Widget build(BuildContext context) {
-    final unlimited = sub.trafficLimitGb == 0 &&
-        (trafficInfo == null || trafficInfo!.totalBytes == 0);
-    final usedBytes = trafficInfo?.usedBytes ??
-        (sub.trafficUsedGb * 1024 * 1024 * 1024).round();
-    final totalBytes =
-        (trafficInfo != null && trafficInfo!.totalBytes > 0)
-            ? trafficInfo!.totalBytes
-            : (sub.trafficLimitGb == 0
-                ? 0
-                : (sub.trafficLimitGb * 1024 * 1024 * 1024));
-    final fraction =
-        totalBytes > 0 ? (usedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
-    final usedLabel = trafficInfo?.formattedUsed ??
-        '${sub.trafficUsedGb.toStringAsFixed(1)} ГБ';
-    final totalLabel = unlimited
-        ? '∞'
-        : (trafficInfo != null && trafficInfo!.totalBytes > 0
-            ? trafficInfo!.formattedTotal
-            : '${sub.trafficLimitGb} ГБ');
-    final remainingBytes = totalBytes - usedBytes;
-
-    final Color barColor;
-    if (unlimited) {
-      barColor = DS.violet;
-    } else if (fraction >= 0.9) {
-      barColor = DS.rose;
-    } else if (fraction >= 0.7) {
-      barColor = DS.amber;
-    } else {
-      barColor = DS.emerald;
-    }
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-      decoration: BoxDecoration(
-        color: DS.surface1,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: DS.border),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-
-        // ── Header ────────────────────────────────────────────────────────
-        Row(children: [
-          Text(
-            unlimited ? '∞' : '${(fraction * 100).toStringAsFixed(0)}%',
-            style: TextStyle(
-              color: barColor,
-              fontSize: 44, fontWeight: FontWeight.w800, letterSpacing: -2, height: 1,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(unlimited ? 'Безлимит' : 'использовано',
-                style: const TextStyle(
-                    color: DS.textSecondary, fontSize: 13, fontWeight: FontWeight.w500)),
-            if (!unlimited) ...[
-              const SizedBox(height: 2),
-              RichText(
-                text: TextSpan(children: [
-                  TextSpan(text: usedLabel, style: TextStyle(
-                      color: barColor, fontSize: 14, fontWeight: FontWeight.w700)),
-                  TextSpan(text: ' / $totalLabel', style: const TextStyle(
-                      color: DS.textMuted, fontSize: 13)),
-                ]),
-              ),
-            ],
-          ])),
-          if (!unlimited)
-            Text('осталось\n${_fmtBytes(remainingBytes)}',
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                  color: DS.textSecondary, fontSize: 12, height: 1.4)),
-        ]),
-
-        if (!unlimited) ...[
-          const SizedBox(height: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: Stack(children: [
-              Container(height: 7, color: DS.surface3),
-              FractionallySizedBox(
-                widthFactor: fraction,
-                child: Container(
-                  height: 7,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [
-                      barColor,
-                      Color.lerp(barColor, Colors.white, 0.22)!,
-                    ]),
-                    boxShadow: [BoxShadow(
-                        color: barColor.withValues(alpha: 0.5), blurRadius: 8)],
-                  ),
-                ),
-              ),
-            ]),
-          ),
-        ] else ...[
-          const SizedBox(height: 12),
-          Row(children: [
-            const Icon(Icons.all_inclusive_rounded, color: DS.violet, size: 16),
-            const SizedBox(width: 7),
-            const Text('Трафик без ограничений',
-                style: TextStyle(color: DS.textSecondary, fontSize: 13)),
-          ]),
-        ],
-      ]),
-    );
-  }
-
-  String _fmtBytes(int bytes) {
-    if (bytes <= 0) return '0 ГБ';
-    final gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return '${gb.toStringAsFixed(1)} ГБ';
-    final mb = bytes / (1024 * 1024);
-    return '${mb.toStringAsFixed(0)} МБ';
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Quick info row — balance tile + devices tile side by side
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _QuickInfoRow extends StatelessWidget {
-  final MeResponse?  me;
-  final VoidCallback onTopup;
-  const _QuickInfoRow({required this.me, required this.onTopup});
-
-  @override
-  Widget build(BuildContext context) {
-    final balanceRub  = me?.balanceRub ?? 0.0;
-    final currency    = me?.balanceCurrency ?? 'RUB';
-    final devices     = me?.subscription?.deviceLimit;
-
-    return IntrinsicHeight(
-      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Expanded(
-          child: _InfoTile(
-            icon: Icons.account_balance_wallet_rounded,
-            iconColor: DS.emerald,
-            label: 'БАЛАНС',
-            value: '${balanceRub.toStringAsFixed(0)} $currency',
-            actionLabel: 'Пополнить',
-            onAction: onTopup,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _InfoTile(
-            icon: Icons.devices_rounded,
-            iconColor: DS.violet,
-            label: 'УСТРОЙСТВА',
-            value: devices != null ? '$devices ${_devWord(devices)}' : '—',
-          ),
-        ),
-      ]),
-    );
-  }
-
-  String _devWord(int n) {
-    if (n % 10 == 1 && n % 100 != 11) return 'устройство';
-    if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20))
-      return 'устройства';
-    return 'устройств';
-  }
-}
-
-class _InfoTile extends StatelessWidget {
-  final IconData     icon;
-  final Color        iconColor;
-  final String       label;
-  final String       value;
-  final String?      actionLabel;
-  final VoidCallback? onAction;
-
-  const _InfoTile({
-    required this.icon,
-    required this.iconColor,
-    required this.label,
-    required this.value,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-        decoration: BoxDecoration(
-          color: DS.surface1,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: DS.border),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, color: iconColor, size: 16),
-            ),
-            const Spacer(),
-            if (actionLabel != null && onAction != null)
-              GestureDetector(
-                onTap: onAction,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: iconColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: iconColor.withValues(alpha: 0.18)),
-                  ),
-                  child: Text(actionLabel!,
-                      style: TextStyle(
-                          color: iconColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ),
-          ]),
-          const SizedBox(height: 10),
-          Text(label, style: TextStyle(
-              color: DS.textMuted, fontSize: 9,
-              fontWeight: FontWeight.w700, letterSpacing: 1.5)),
-          const SizedBox(height: 4),
-          Text(value, style: const TextStyle(
-              color: DS.textPrimary, fontSize: 20,
-              fontWeight: FontWeight.w800, height: 1.05)),
-        ]),
-      );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Autopay card
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _AutopayCard extends StatefulWidget {
-  final MeSubscription                sub;
-  final Future<void> Function(bool)   onToggle;
-  const _AutopayCard({required this.sub, required this.onToggle});
-
-  @override
-  State<_AutopayCard> createState() => _AutopayCardState();
-}
-
-class _AutopayCardState extends State<_AutopayCard> {
-  late bool _enabled;
-  bool _loading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _enabled = widget.sub.autopayEnabled;
-  }
-
-  @override
-  void didUpdateWidget(_AutopayCard old) {
-    super.didUpdateWidget(old);
-    if (old.sub.autopayEnabled != widget.sub.autopayEnabled) {
-      _enabled = widget.sub.autopayEnabled;
-    }
-  }
-
-  Future<void> _toggle(bool value) async {
-    setState(() { _enabled = value; _loading = true; });
-    try { await widget.onToggle(value); }
-    catch (_) { if (mounted) setState(() => _enabled = !value); }
-    if (mounted) setState(() => _loading = false);
-  }
-
-  @override
-  Widget build(BuildContext context) => _Card(
-        child: Row(children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: _enabled
-                  ? DS.violet.withValues(alpha: 0.15)
-                  : DS.surface3,
-              borderRadius: BorderRadius.circular(13),
-            ),
-            child: Icon(Icons.autorenew_rounded,
-                color: _enabled ? DS.violet : DS.textMuted, size: 22),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Автопродление',
-                  style: TextStyle(
-                      color: DS.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600)),
-              const SizedBox(height: 2),
-              Text(
-                _enabled
-                    ? 'Подписка продлевается автоматически'
-                    : 'Автопродление отключено',
-                style: const TextStyle(
-                    color: DS.textSecondary, fontSize: 12),
-              ),
-            ]),
-          ),
-          if (_loading)
-            const SizedBox(
-                width: 26,
-                height: 26,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: DS.violet))
-          else
-            Switch(
-              value: _enabled,
-              onChanged: _toggle,
-              activeColor: DS.violet,
-            ),
-        ]),
-      );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Subscription URL card
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _SubUrlCard extends StatefulWidget {
-  final String url;
-  const _SubUrlCard({required this.url});
-
-  @override
-  State<_SubUrlCard> createState() => _SubUrlCardState();
-}
-
-class _SubUrlCardState extends State<_SubUrlCard> {
-  bool _copied = false;
-
-  Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: widget.url));
-    setState(() => _copied = true);
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _copied = false);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) => _Card(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: DS.cyan.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.link_rounded, color: DS.cyan, size: 17),
-            ),
-            const SizedBox(width: 12),
-            const Text('URL подписки',
-                style: TextStyle(
-                    color: DS.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600)),
-            const Spacer(),
-            GestureDetector(
-              onTap: _copy,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _copied
-                      ? DS.emerald.withValues(alpha: 0.12)
-                      : DS.violet.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                      _copied
-                          ? Icons.check_rounded
-                          : Icons.copy_rounded,
-                      size: 13,
-                      color: _copied ? DS.emerald : DS.violet),
-                  const SizedBox(width: 5),
-                  Text(
-                      _copied ? 'Скопировано' : 'Копировать',
-                      style: TextStyle(
-                          color: _copied ? DS.emerald : DS.violet,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600)),
-                ]),
-              ),
-            ),
-          ]),
-          const SizedBox(height: 12),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: DS.surface2,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: DS.border),
-            ),
-            child: Text(
-              widget.url,
-              style: const TextStyle(
-                color: DS.textSecondary,
-                fontSize: 11,
-                fontFamily: 'monospace',
-                height: 1.4,
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ]),
-      );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Manage plan button — big, violet, prominent CTA
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _ManagePlanButton extends StatelessWidget {
-  final VoidCallback? onTap;
-  const _ManagePlanButton({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          height: 60,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [DS.violet, DS.violetDim],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                  color: DS.violet.withValues(alpha: 0.38),
-                  blurRadius: 22,
-                  offset: const Offset(0, 6))
-            ],
-          ),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Icon(Icons.workspace_premium_rounded,
-                color: Colors.white, size: 20),
-            const SizedBox(width: 10),
-            const Text('Управление тарифом',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(width: 10),
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(7)),
-              child: const Icon(Icons.arrow_forward_rounded,
-                  color: Colors.white, size: 13),
-            ),
-          ]),
-        ),
-      );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Logout button — subtle, red border
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _LogoutButton extends StatelessWidget {
-  final VoidCallback onTap;
-  const _LogoutButton({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          height: 52,
-          decoration: BoxDecoration(
-            color: DS.surface1,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: DS.rose.withValues(alpha: 0.30)),
-          ),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Icon(Icons.logout_rounded, color: DS.rose, size: 18),
-            const SizedBox(width: 8),
-            const Text('Выйти из аккаунта',
-                style: TextStyle(
-                    color: DS.rose,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600)),
-          ]),
-        ),
-      );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared card container
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _Card extends StatelessWidget {
-  final Widget child;
-  const _Card({required this.child});
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: DS.surface1,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: DS.border),
-        ),
-        child: child,
-      );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Top-up sheet
+// Top-up sheet — без изменений
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TopupSheet extends StatefulWidget {
@@ -1602,15 +1072,15 @@ class _TopupSheet extends StatefulWidget {
 }
 
 class _TopupSheetState extends State<_TopupSheet> {
-  static const _amounts    = [100, 200, 300, 500, 1000, 2000];
-  static const _minAmount  = 50;
-  static const _maxAmount  = 100000;
+  static const _amounts = [100, 200, 300, 500, 1000, 2000];
+  static const _minAmount = 50;
+  static const _maxAmount = 100000;
 
   int? _selected = 300;
-  bool _loading  = false;
+  bool _loading = false;
 
   final _customController = TextEditingController();
-  final _focusNode        = FocusNode();
+  final _focusNode = FocusNode();
 
   int? get _resolvedAmount {
     if (_selected != null) return _selected;
@@ -1681,7 +1151,7 @@ class _TopupSheetState extends State<_TopupSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final amount   = _resolvedAmount;
+    final amount = _resolvedAmount;
     final canSubmit =
         amount != null && amount >= _minAmount && amount <= _maxAmount;
     final buttonLabel =
@@ -1699,7 +1169,6 @@ class _TopupSheetState extends State<_TopupSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Drag handle
           Center(
             child: Container(
               width: 40,
@@ -1710,7 +1179,6 @@ class _TopupSheetState extends State<_TopupSheet> {
             ),
           ),
           const SizedBox(height: 20),
-
           const Text('Пополнить баланс',
               style: TextStyle(
                   color: DS.textPrimary,
@@ -1718,11 +1186,8 @@ class _TopupSheetState extends State<_TopupSheet> {
                   fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           const Text('Выберите сумму или введите свою',
-              style:
-                  TextStyle(color: DS.textSecondary, fontSize: 14)),
+              style: TextStyle(color: DS.textSecondary, fontSize: 14)),
           const SizedBox(height: 20),
-
-          // Preset chips
           Wrap(spacing: 10, runSpacing: 10, children: [
             for (final a in _amounts)
               GestureDetector(
@@ -1757,13 +1222,12 @@ class _TopupSheetState extends State<_TopupSheet> {
               ),
           ]),
           const SizedBox(height: 16),
-
-          // Custom amount
           TextField(
             controller: _customController,
             focusNode: _focusNode,
             keyboardType: TextInputType.number,
-            style: const TextStyle(color: DS.textPrimary, fontSize: 15),
+            style:
+                const TextStyle(color: DS.textPrimary, fontSize: 15),
             decoration: InputDecoration(
               hintText: 'Другая сумма, ₽',
               prefixIcon: const Icon(Icons.edit_rounded,
@@ -1786,8 +1250,6 @@ class _TopupSheetState extends State<_TopupSheet> {
             ),
           ),
           const SizedBox(height: 20),
-
-          // Submit button
           GestureDetector(
             onTap: (canSubmit && !_loading) ? _onTopup : null,
             child: AnimatedContainer(
@@ -1830,6 +1292,79 @@ class _TopupSheetState extends State<_TopupSheet> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Autopay card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AutopayCard extends StatelessWidget {
+  final bool enabled;
+  final bool loading;
+  final Future<void> Function(bool) onToggle;
+
+  const _AutopayCard({
+    required this.enabled,
+    required this.loading,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(DS.radius),
+        border: Border.all(color: DS.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+                color: (enabled ? DS.violet : DS.textMuted)
+                    .withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(DS.radiusSm)),
+            child: Icon(Icons.autorenew_rounded,
+                color: enabled ? DS.violet : DS.textMuted, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Автопродление',
+                      style: TextStyle(
+                          color: DS.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500)),
+                  Text(
+                    enabled
+                        ? 'Подписка продлевается автоматически'
+                        : 'Автопродление отключено',
+                    style: const TextStyle(
+                        color: DS.textSecondary, fontSize: 12),
+                  ),
+                ]),
+          ),
+          if (loading)
+            const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: DS.violet))
+          else
+            Switch(
+              value: enabled,
+              onChanged: (v) => onToggle(v),
+            ),
+        ]),
       ),
     );
   }

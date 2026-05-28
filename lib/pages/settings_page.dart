@@ -11,6 +11,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/app_config.dart';
 import '../services/app_logger.dart';
 import '../services/apps_repository.dart';
+import '../services/auth_service.dart';
+import '../services/auth_state.dart';
+import '../services/me_service.dart';
 import '../utils/core_info_parser.dart';
 import '../services/remnawave_service.dart';
 import '../main.dart' show DS;
@@ -28,6 +31,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  // ── VPN settings ────────────────────────────────────────────────────────────
   bool _proxyOnly = false;
   List<String> _dnsServers = ['8.8.8.8', '114.114.114.114'];
   bool _useCustomDns = false;
@@ -35,13 +39,19 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _fragmentEnabled = false;
   String _pingTestUrl = 'https://www.gstatic.com/generate_204';
   CoreInfo _coreInfo = CoreInfo(
-      name: 'Xray', version: '…',
-      architecture: '', goVersion: '', fullString: '');
+      name: 'Xray',
+      version: '…',
+      architecture: '',
+      goVersion: '',
+      fullString: '');
   bool _loading = true;
 
-  // Badge: количество тикетов с ответом от поддержки
+  // ── Support badge ────────────────────────────────────────────────────────────
   int _answeredTickets = 0;
   Timer? _ticketPollTimer;
+
+  // ── Subscription / billing ───────────────────────────────────────────────────
+  bool _urlCopied = false;
 
   late final FlutterV2ray _v2ray;
 
@@ -59,17 +69,23 @@ class _SettingsPageState extends State<SettingsPage> {
     _load();
     _loadCoreInfo();
     _pollTickets();
-    _ticketPollTimer = Timer.periodic(
-        const Duration(seconds: 60), (_) => _pollTickets());
+    _ticketPollTimer =
+        Timer.periodic(const Duration(seconds: 60), (_) => _pollTickets());
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       AppsRepository.instance.preload();
     }
+    meNotifier.addListener(_onMeChanged);
   }
 
   @override
   void dispose() {
     _ticketPollTimer?.cancel();
+    meNotifier.removeListener(_onMeChanged);
     super.dispose();
+  }
+
+  void _onMeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _pollTickets() async {
@@ -77,9 +93,8 @@ class _SettingsPageState extends State<SettingsPage> {
       final tickets = await SupportApiService.getTickets();
       if (mounted) {
         setState(() {
-          _answeredTickets = tickets
-              .where((t) => t.status == 'answered')
-              .length;
+          _answeredTickets =
+              tickets.where((t) => t.status == 'answered').length;
         });
       }
     } catch (_) {}
@@ -94,18 +109,22 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
-    _proxyOnly      = p.getBool(_kProxyOnly)  ?? false;
-    _useCustomDns   = p.getBool(_kCustomDns)  ?? false;
-    _fragmentEnabled = p.getBool(_kFragment)  ?? false;
-    _pingTestUrl    = p.getString(_kPingUrl)  ?? 'https://www.gstatic.com/generate_204';
+    _proxyOnly       = p.getBool(_kProxyOnly)  ?? false;
+    _useCustomDns    = p.getBool(_kCustomDns)  ?? false;
+    _fragmentEnabled = p.getBool(_kFragment)   ?? false;
+    _pingTestUrl     = p.getString(_kPingUrl)  ?? 'https://www.gstatic.com/generate_204';
 
     final dnsRaw = p.getString(_kDnsServers);
     if (dnsRaw != null) {
-      try { _dnsServers = List<String>.from(jsonDecode(dnsRaw) as List); } catch (_) {}
+      try {
+        _dnsServers = List<String>.from(jsonDecode(dnsRaw) as List);
+      } catch (_) {}
     }
     final blockedRaw = p.getString(_kBlockedApps);
     if (blockedRaw != null) {
-      try { _blockedApps = Set<String>.from(jsonDecode(blockedRaw) as List); } catch (_) {}
+      try {
+        _blockedApps = Set<String>.from(jsonDecode(blockedRaw) as List);
+      } catch (_) {}
     } else {
       _blockedApps = Set<String>.from(AppConfig.defaultBlockedApps);
       await p.setString(_kBlockedApps, jsonEncode(_blockedApps.toList()));
@@ -123,82 +142,119 @@ class _SettingsPageState extends State<SettingsPage> {
     await p.setString(_kBlockedApps, jsonEncode(_blockedApps.toList()));
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // ── Build ───────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
       return const Scaffold(
           backgroundColor: DS.surface0,
-          body: Center(child: CircularProgressIndicator(color: DS.violet)));
+          body:
+              Center(child: CircularProgressIndicator(color: DS.violet)));
     }
     final top = MediaQuery.of(context).padding.top;
+    final me = meNotifier.value;
+    final sub = me?.subscription;
+    final subUrl = sub?.subscriptionUrl;
+    final isLoggedIn = authStateNotifier.value.isLoggedIn;
+
     return Scaffold(
       backgroundColor: DS.surface0,
       body: CustomScrollView(
         slivers: [
-          // Header
+          // ── Header ─────────────────────────────────────────────────────────
           SliverToBoxAdapter(
             child: Padding(
               padding: EdgeInsets.fromLTRB(20, top + 20, 20, 24),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Настройки', style: TextStyle(
-                    color: DS.textPrimary, fontSize: 28,
-                    fontWeight: FontWeight.w700, letterSpacing: -0.5, height: 1)),
-                const SizedBox(height: 6),
-                const Text('Параметры приложения',
-                    style: TextStyle(color: DS.textSecondary, fontSize: 15)),
-              ]),
+              child: const Text(
+                'Настройки',
+                style: TextStyle(
+                    color: DS.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600),
+              ),
             ),
           ),
 
-          // Account
+          // ── ПОДПИСКА ────────────────────────────────────────────────────────
           _pad(_Section(
-            title: 'Аккаунт',
-            icon: Icons.person_rounded,
-            child: _SettingsTile(
-              icon: Icons.card_membership_rounded,
-              label: 'Управление подпиской',
-              value: 'Статус, трафик и устройства',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => SubscriptionPage(
-                    onGoToPremium: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const PremiumPage()),
+            title: 'Подписка',
+            icon: Icons.card_membership_rounded,
+            child: Column(children: [
+              // Мой аккаунт → SubscriptionPage
+              _SettingsTile(
+                icon: Icons.person_rounded,
+                label: 'Мой аккаунт',
+                value: sub != null
+                    ? (sub.planName != null
+                        ? 'Тариф «${sub.planName}»'
+                        : 'Подписка активна')
+                    : isLoggedIn
+                        ? 'Нет активной подписки'
+                        : 'Войдите для управления',
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => SubscriptionPage(
+                      onGoToPremium: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const PremiumPage()),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
+
+              if (isLoggedIn && sub != null && subUrl != null) ...[
+                const Divider(height: 1, color: DS.border),
+                _CopyTile(
+                  icon: Icons.link_rounded,
+                  label: 'URL подписки',
+                  value: subUrl,
+                  copied: _urlCopied,
+                  onCopy: _copySubUrl,
+                ),
+              ],
+            ]),
           )),
           _gap,
 
-          // Core card
+          // ── Core card ───────────────────────────────────────────────────────
           _pad(_CoreCard(info: _coreInfo)),
           _gap,
 
-          // Connection mode
+          // ── Режим подключения ───────────────────────────────────────────────
           _pad(_Section(
             title: 'Режим подключения',
             icon: Icons.vpn_lock_rounded,
             child: Column(children: [
               _RadioTile<bool>(
-                  value: false, groupValue: _proxyOnly,
-                  label: 'VPN-туннель',
-                  subtitle: 'Весь трафик проходит через VPN',
-                  onChanged: (v) async { setState(() => _proxyOnly = v!); await _save(); }),
+                value: false,
+                groupValue: _proxyOnly,
+                label: 'VPN-туннель',
+                subtitle: 'Весь трафик проходит через VPN',
+                onChanged: (v) async {
+                  setState(() => _proxyOnly = v!);
+                  await _save();
+                },
+              ),
               const Divider(height: 1, color: DS.border),
               _RadioTile<bool>(
-                  value: true, groupValue: _proxyOnly,
-                  label: 'Только прокси',
-                  subtitle: 'SOCKS5/HTTP без VPN-туннеля. Порт: 10808',
-                  onChanged: (v) async { setState(() => _proxyOnly = v!); await _save(); }),
+                value: true,
+                groupValue: _proxyOnly,
+                label: 'Только прокси',
+                subtitle: 'SOCKS5/HTTP без VPN-туннеля. Порт: 10808',
+                onChanged: (v) async {
+                  setState(() => _proxyOnly = v!);
+                  await _save();
+                },
+              ),
             ]),
           )),
           _gap,
 
-          // Excluded apps (Android only)
+          // ── Исключение приложений (Android only) ────────────────────────────
           if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ...[
             _pad(_Section(
               title: 'Исключение приложений',
@@ -215,7 +271,7 @@ class _SettingsPageState extends State<SettingsPage> {
             _gap,
           ],
 
-          // DPI bypass
+          // ── Обход фильтрации ────────────────────────────────────────────────
           _pad(_Section(
             title: 'Обход фильтрации',
             icon: Icons.security_rounded,
@@ -227,13 +283,15 @@ class _SettingsPageState extends State<SettingsPage> {
               onChanged: (v) async {
                 setState(() => _fragmentEnabled = v);
                 await _save();
-                _snack(v ? 'TLS Fragment включён' : 'TLS Fragment выключен');
+                _snack(v
+                    ? 'TLS Fragment включён'
+                    : 'TLS Fragment выключен');
               },
             ),
           )),
           _gap,
 
-          // DNS
+          // ── DNS ─────────────────────────────────────────────────────────────
           _pad(_Section(
             title: 'DNS-серверы',
             icon: Icons.dns_rounded,
@@ -243,57 +301,80 @@ class _SettingsPageState extends State<SettingsPage> {
                 label: 'Свои DNS-серверы',
                 subtitle: 'По умолчанию: 8.8.8.8, 114.114.114.114',
                 value: _useCustomDns,
-                onChanged: (v) async { setState(() => _useCustomDns = v); await _save(); },
+                onChanged: (v) async {
+                  setState(() => _useCustomDns = v);
+                  await _save();
+                },
               ),
               if (_useCustomDns) ...[
                 const Divider(height: 1, color: DS.border),
                 ..._dnsServers.asMap().entries.map((e) => Column(children: [
-                  _DnsTile(index: e.key, server: e.value,
-                      onEdit: () => _editDns(e.key, e.value)),
-                  if (e.key < _dnsServers.length - 1)
-                    const Divider(height: 1, indent: 16, endIndent: 16, color: DS.border),
-                ])),
+                      _DnsTile(
+                          index: e.key,
+                          server: e.value,
+                          onEdit: () => _editDns(e.key, e.value)),
+                      if (e.key < _dnsServers.length - 1)
+                        const Divider(
+                            height: 1,
+                            indent: 16,
+                            endIndent: 16,
+                            color: DS.border),
+                    ])),
                 const Divider(height: 1, color: DS.border),
-                // Add button
                 GestureDetector(
                   onTap: () => _editDns(null, ''),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
                     child: Row(children: [
-                      Container(width: 36, height: 36,
+                      Container(
+                          width: 36,
+                          height: 36,
                           decoration: BoxDecoration(
                               color: DS.emerald.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(DS.radiusSm)),
-                          child: const Icon(Icons.add_rounded, color: DS.emerald, size: 18)),
+                              borderRadius:
+                                  BorderRadius.circular(DS.radiusSm)),
+                          child: const Icon(Icons.add_rounded,
+                              color: DS.emerald, size: 18)),
                       const SizedBox(width: 12),
                       const Text('Добавить DNS-сервер',
-                          style: TextStyle(color: DS.emerald, fontSize: 14, fontWeight: FontWeight.w500)),
+                          style: TextStyle(
+                              color: DS.emerald,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500)),
                     ]),
                   ),
                 ),
                 const Divider(height: 1, color: DS.border),
-                // Presets
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('БЫСТРЫЙ ВЫБОР', style: TextStyle(
-                        color: DS.textMuted, fontSize: 10,
-                        fontWeight: FontWeight.w700, letterSpacing: 1.0)),
-                    const SizedBox(height: 8),
-                    Wrap(spacing: 8, runSpacing: 6, children: [
-                      _dnsPreset('Google',     ['8.8.8.8', '8.8.4.4']),
-                      _dnsPreset('Cloudflare', ['1.1.1.1', '1.0.0.1']),
-                      _dnsPreset('AdGuard',    ['94.140.14.14', '94.140.15.15']),
-                      _dnsPreset('Quad9',      ['9.9.9.9', '149.112.112.112']),
-                    ]),
-                  ]),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('БЫСТРЫЙ ВЫБОР',
+                            style: TextStyle(
+                                color: DS.textMuted,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.0)),
+                        const SizedBox(height: 8),
+                        Wrap(spacing: 8, runSpacing: 6, children: [
+                          _dnsPreset('Google', ['8.8.8.8', '8.8.4.4']),
+                          _dnsPreset(
+                              'Cloudflare', ['1.1.1.1', '1.0.0.1']),
+                          _dnsPreset('AdGuard',
+                              ['94.140.14.14', '94.140.15.15']),
+                          _dnsPreset(
+                              'Quad9', ['9.9.9.9', '149.112.112.112']),
+                        ]),
+                      ]),
                 ),
               ],
             ]),
           )),
           _gap,
 
-          // Advanced
+          // ── Дополнительно ───────────────────────────────────────────────────
           _pad(_Section(
             title: 'Дополнительно',
             icon: Icons.tune_rounded,
@@ -306,7 +387,7 @@ class _SettingsPageState extends State<SettingsPage> {
           )),
           _gap,
 
-          // Diagnostics / Logs
+          // ── Диагностика ─────────────────────────────────────────────────────
           _pad(_Section(
             title: 'Диагностика',
             icon: Icons.monitor_heart_rounded,
@@ -338,7 +419,7 @@ class _SettingsPageState extends State<SettingsPage> {
           )),
           _gap,
 
-          // Support
+          // ── Поддержка ───────────────────────────────────────────────────────
           _pad(_Section(
             title: 'Поддержка',
             icon: Icons.support_agent_rounded,
@@ -359,6 +440,21 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ]),
           )),
+          _gap,
+
+          // ── Аккаунт (logout) — только если залогинен ────────────────────────
+          if (isLoggedIn) ...[
+            _pad(_Section(
+              title: 'Аккаунт',
+              icon: Icons.manage_accounts_rounded,
+              child: _DangerTile(
+                icon: Icons.logout_rounded,
+                label: 'Выйти из аккаунта',
+                onTap: _onLogout,
+              ),
+            )),
+            _gap,
+          ],
 
           const SliverPadding(padding: EdgeInsets.only(bottom: 110)),
         ],
@@ -366,49 +462,106 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
   SliverToBoxAdapter _pad(Widget child) => SliverToBoxAdapter(
-      child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: child));
+      child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: child));
 
   static const _gap = SliverPadding(padding: EdgeInsets.only(top: 12));
 
   Widget _dnsPreset(String label, List<String> servers) => GestureDetector(
-    onTap: () async {
-      setState(() => _dnsServers = List.from(servers));
-      await _save();
-      _snack('DNS: $label (${servers.join(', ')})');
-    },
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-      decoration: BoxDecoration(
-          color: DS.surface2, borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: DS.border)),
-      child: Text(label, style: const TextStyle(
-          color: DS.textSecondary, fontSize: 12, fontWeight: FontWeight.w500)),
-    ),
-  );
+        onTap: () async {
+          setState(() => _dnsServers = List.from(servers));
+          await _save();
+          _snack('DNS: $label (${servers.join(', ')})');
+        },
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+              color: DS.surface2,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: DS.border)),
+          child: Text(label,
+              style: const TextStyle(
+                  color: DS.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500)),
+        ),
+      );
 
-  // ── Dialogs ────────────────────────────────────────────────────────────────
+  Future<void> _copySubUrl() async {
+    final url = meNotifier.value?.subscription?.subscriptionUrl;
+    if (url == null) return;
+    await Clipboard.setData(ClipboardData(text: url));
+    setState(() => _urlCopied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _urlCopied = false);
+    });
+  }
+
+  Future<void> _onLogout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: DS.surface2,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(DS.radius)),
+        title: const Text('Выйти из аккаунта?',
+            style: TextStyle(
+                color: DS.textPrimary, fontWeight: FontWeight.w700)),
+        content: const Text('Данные подписки будут сброшены.',
+            style: TextStyle(color: DS.textSecondary)),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Выйти',
+                style: TextStyle(color: DS.rose)),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) await AuthService.logout();
+  }
+
+  // ── Dialogs ─────────────────────────────────────────────────────────────────
+
   void _showPingUrlDialog() {
     final ctrl = TextEditingController(text: _pingTestUrl);
     _dialog(
       title: 'URL для проверки пинга',
       content: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(controller: ctrl, keyboardType: TextInputType.url,
+        TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.url,
             style: const TextStyle(color: DS.textPrimary)),
         const SizedBox(height: 12),
         Wrap(spacing: 8, runSpacing: 6, children: [
-          ActionChip(label: const Text('gstatic'),
-              onPressed: () => ctrl.text = 'https://www.gstatic.com/generate_204'),
-          ActionChip(label: const Text('Cloudflare'),
-              onPressed: () => ctrl.text = 'http://cp.cloudflare.com'),
-          ActionChip(label: const Text('Google'),
-              onPressed: () => ctrl.text = 'http://www.google.com/generate_204'),
+          ActionChip(
+              label: const Text('gstatic'),
+              onPressed: () => ctrl.text =
+                  'https://www.gstatic.com/generate_204'),
+          ActionChip(
+              label: const Text('Cloudflare'),
+              onPressed: () =>
+                  ctrl.text = 'http://cp.cloudflare.com'),
+          ActionChip(
+              label: const Text('Google'),
+              onPressed: () =>
+                  ctrl.text = 'http://www.google.com/generate_204'),
         ]),
       ]),
       onSave: () async {
         final url = ctrl.text.trim();
-        if (url.isNotEmpty) { setState(() => _pingTestUrl = url); await _save(); }
+        if (url.isNotEmpty) {
+          setState(() => _pingTestUrl = url);
+          await _save();
+        }
       },
     );
   }
@@ -421,7 +574,8 @@ class _SettingsPageState extends State<SettingsPage> {
         TextField(
           controller: ctrl,
           keyboardType: TextInputType.number,
-          style: const TextStyle(color: DS.textPrimary, fontFamily: 'monospace'),
+          style: const TextStyle(
+              color: DS.textPrimary, fontFamily: 'monospace'),
           decoration: const InputDecoration(
               hintText: '1.1.1.1',
               prefixIcon: Icon(Icons.dns_rounded, color: DS.textMuted)),
@@ -439,14 +593,22 @@ class _SettingsPageState extends State<SettingsPage> {
               padding: const EdgeInsets.symmetric(vertical: 11),
               decoration: BoxDecoration(
                   color: DS.rose.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(DS.radiusSm),
-                  border: Border.all(color: DS.rose.withValues(alpha: 0.28))),
-              child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.delete_outline_rounded, color: DS.rose, size: 16),
-                SizedBox(width: 6),
-                Text('Удалить', style: TextStyle(
-                    color: DS.rose, fontWeight: FontWeight.w600, fontSize: 13)),
-              ]),
+                  borderRadius:
+                      BorderRadius.circular(DS.radiusSm),
+                  border: Border.all(
+                      color: DS.rose.withValues(alpha: 0.28))),
+              child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.delete_outline_rounded,
+                        color: DS.rose, size: 16),
+                    SizedBox(width: 6),
+                    Text('Удалить',
+                        style: TextStyle(
+                            color: DS.rose,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13)),
+                  ]),
             ),
           ),
         ],
@@ -454,28 +616,43 @@ class _SettingsPageState extends State<SettingsPage> {
       onSave: () async {
         final val = ctrl.text.trim();
         if (val.isNotEmpty) {
-          setState(() { index == null ? _dnsServers.add(val) : _dnsServers[index] = val; });
+          setState(() {
+            index == null
+                ? _dnsServers.add(val)
+                : _dnsServers[index] = val;
+          });
           await _save();
         }
       },
     );
   }
 
-  void _dialog({required String title, required Widget content,
-    required Future<void> Function() onSave}) {
+  void _dialog({
+    required String title,
+    required Widget content,
+    required Future<void> Function() onSave,
+  }) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title, style: const TextStyle(
-            color: DS.textPrimary, fontWeight: FontWeight.w700)),
+        title: Text(title,
+            style: const TextStyle(
+                color: DS.textPrimary, fontWeight: FontWeight.w700)),
         content: content,
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx),
-              child: const Text('Отмена', style: TextStyle(color: DS.textSecondary))),
           TextButton(
-              onPressed: () async { await onSave(); if (ctx.mounted) Navigator.pop(ctx); },
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Отмена',
+                  style: TextStyle(color: DS.textSecondary))),
+          TextButton(
+              onPressed: () async {
+                await onSave();
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
               child: const Text('Сохранить',
-                  style: TextStyle(color: DS.violet, fontWeight: FontWeight.w600))),
+                  style: TextStyle(
+                      color: DS.violet,
+                      fontWeight: FontWeight.w600))),
         ],
       ),
     );
@@ -488,14 +665,12 @@ class _SettingsPageState extends State<SettingsPage> {
       backgroundColor: Colors.transparent,
       builder: (_) => BlockedAppsSheet(
         initialBlocked: Set<String>.from(_blockedApps),
-        onSave: (updated) { setState(() => _blockedApps = updated); _save(); },
+        onSave: (updated) {
+          setState(() => _blockedApps = updated);
+          _save();
+        },
       ),
     );
-  }
-
-  void _clearLogs() {
-    appLogger.clear();
-    _snack('Логи очищены');
   }
 
   Future<void> _clearCache() async {
@@ -546,33 +721,37 @@ class _Section extends StatelessWidget {
   final String title;
   final IconData icon;
   final Widget child;
-  const _Section({required this.title, required this.icon, required this.child});
+  const _Section(
+      {required this.title, required this.icon, required this.child});
 
   @override
   Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Padding(
-        padding: const EdgeInsets.only(left: 2, bottom: 8),
-        child: Row(children: [
-          Icon(icon, size: 13, color: DS.textMuted),
-          const SizedBox(width: 5),
-          Text(title.toUpperCase(), style: const TextStyle(
-              color: DS.textMuted, fontSize: 10,
-              fontWeight: FontWeight.w700, letterSpacing: 1.0)),
-        ]),
-      ),
-      Container(
-        decoration: BoxDecoration(
-          color: DS.surface1,
-          borderRadius: BorderRadius.circular(DS.radius),
-          border: Border.all(color: DS.border),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: child,
-      ),
-    ],
-  );
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            child: Row(children: [
+              Icon(icon, size: 13, color: DS.textMuted),
+              const SizedBox(width: 5),
+              Text(title.toUpperCase(),
+                  style: const TextStyle(
+                      color: DS.textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.0)),
+            ]),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              color: DS.surface1,
+              borderRadius: BorderRadius.circular(DS.radius),
+              border: Border.all(color: DS.border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: child,
+          ),
+        ],
+      );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -584,7 +763,7 @@ class _SettingsTile extends StatelessWidget {
   final String label;
   final String value;
   final VoidCallback? onTap;
-  final int badge; // 0 = no badge
+  final int badge;
 
   const _SettingsTile({
     required this.icon,
@@ -596,60 +775,74 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: Colors.transparent,
-    child: InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(children: [
-          // Icon with optional badge dot
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Container(
-                  width: 36, height: 36,
-                  decoration: BoxDecoration(
-                      color: DS.violet.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(DS.radiusSm)),
-                  child: Icon(icon, color: DS.violet, size: 18)),
-              if (badge > 0)
-                Positioned(
-                  top: -3, right: -3,
-                  child: Container(
-                    width: 16, height: 16,
-                    decoration: const BoxDecoration(
-                      color: DS.rose,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Center(
-                      child: Text(
-                        badge > 9 ? '9+' : '$badge',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w800,
-                          height: 1,
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 14),
+            child: Row(children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                          color: DS.violet.withValues(alpha: 0.1),
+                          borderRadius:
+                              BorderRadius.circular(DS.radiusSm)),
+                      child: Icon(icon, color: DS.violet, size: 18)),
+                  if (badge > 0)
+                    Positioned(
+                      top: -3,
+                      right: -3,
+                      child: Container(
+                        width: 16,
+                        height: 16,
+                        decoration: const BoxDecoration(
+                          color: DS.rose,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Text(
+                            badge > 9 ? '9+' : '$badge',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              height: 1,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-            ],
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(label,
+                        style: const TextStyle(
+                            color: DS.textPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500)),
+                    const SizedBox(height: 2),
+                    Text(value,
+                        style: const TextStyle(
+                            color: DS.textSecondary, fontSize: 12),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1),
+                  ])),
+              if (onTap != null)
+                const Icon(Icons.chevron_right_rounded,
+                    color: DS.textMuted, size: 18),
+            ]),
           ),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: const TextStyle(
-                color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
-            const SizedBox(height: 2),
-            Text(value, style: const TextStyle(color: DS.textSecondary, fontSize: 12),
-                overflow: TextOverflow.ellipsis, maxLines: 1),
-          ])),
-          if (onTap != null)
-            const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 18),
-        ]),
-      ),
-    ),
-  );
+        ),
+      );
 }
 
 class _SwitchTile extends StatelessWidget {
@@ -658,29 +851,174 @@ class _SwitchTile extends StatelessWidget {
   final String subtitle;
   final bool value;
   final ValueChanged<bool> onChanged;
-  const _SwitchTile({required this.icon, required this.label, required this.subtitle,
-    required this.value, required this.onChanged});
+  const _SwitchTile(
+      {required this.icon,
+      required this.label,
+      required this.subtitle,
+      required this.value,
+      required this.onChanged});
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-    child: Row(children: [
-      AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: 36, height: 36,
-          decoration: BoxDecoration(
-              color: (value ? DS.violet : DS.textMuted).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(DS.radiusSm)),
-          child: Icon(icon, color: value ? DS.violet : DS.textMuted, size: 18)),
-      const SizedBox(width: 12),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(label, style: const TextStyle(
-            color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
-        Text(subtitle, style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
-      ])),
-      Switch(value: value, onChanged: onChanged),
-    ]),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(children: [
+          AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                  color:
+                      (value ? DS.violet : DS.textMuted).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(DS.radiusSm)),
+              child: Icon(icon,
+                  color: value ? DS.violet : DS.textMuted, size: 18)),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(label,
+                    style: const TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500)),
+                Text(subtitle,
+                    style: const TextStyle(
+                        color: DS.textSecondary, fontSize: 12)),
+              ])),
+          Switch(value: value, onChanged: onChanged),
+        ]),
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy tile — для URL подписки
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CopyTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool copied;
+  final VoidCallback onCopy;
+
+  const _CopyTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.copied,
+    required this.onCopy,
+  });
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+                color: DS.violet.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(DS.radiusSm)),
+            child: Icon(icon, color: DS.violet, size: 18),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: const TextStyle(
+                          color: DS.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    style: const TextStyle(
+                        color: DS.textSecondary,
+                        fontSize: 11,
+                        fontFamily: 'monospace'),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ]),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onCopy,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: copied
+                    ? DS.emerald.withValues(alpha: 0.12)
+                    : DS.violet.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(
+                    copied
+                        ? Icons.check_rounded
+                        : Icons.copy_rounded,
+                    size: 13,
+                    color: copied ? DS.emerald : DS.violet),
+                const SizedBox(width: 4),
+                Text(
+                  copied ? 'Скопировано' : 'Копировать',
+                  style: TextStyle(
+                      color: copied ? DS.emerald : DS.violet,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600),
+                ),
+              ]),
+            ),
+          ),
+        ]),
+      );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Danger tile — для выхода из аккаунта
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DangerTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _DangerTile(
+      {required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 14),
+            child: Row(children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                    color: DS.rose.withValues(alpha: 0.10),
+                    borderRadius:
+                        BorderRadius.circular(DS.radiusSm)),
+                child: Icon(icon, color: DS.rose, size: 18),
+              ),
+              const SizedBox(width: 12),
+              Text(label,
+                  style: const TextStyle(
+                      color: DS.rose,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500)),
+            ]),
+          ),
+        ),
+      );
 }
 
 class _RadioTile<T> extends StatelessWidget {
@@ -689,8 +1027,12 @@ class _RadioTile<T> extends StatelessWidget {
   final String label;
   final String subtitle;
   final ValueChanged<T?> onChanged;
-  const _RadioTile({required this.value, required this.groupValue,
-    required this.label, required this.subtitle, required this.onChanged});
+  const _RadioTile(
+      {required this.value,
+      required this.groupValue,
+      required this.label,
+      required this.subtitle,
+      required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -698,11 +1040,13 @@ class _RadioTile<T> extends StatelessWidget {
     return GestureDetector(
       onTap: () => onChanged(value),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
         child: Row(children: [
           AnimatedContainer(
             duration: const Duration(milliseconds: 200),
-            width: 20, height: 20,
+            width: 20,
+            height: 20,
             decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
@@ -711,12 +1055,23 @@ class _RadioTile<T> extends StatelessWidget {
                 color: sel ? DS.surface0 : Colors.transparent),
           ),
           const SizedBox(width: 14),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(label, style: TextStyle(
-                color: sel ? DS.textPrimary : DS.textSecondary,
-                fontSize: 14, fontWeight: sel ? FontWeight.w600 : FontWeight.w400)),
-            Text(subtitle, style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
-          ])),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(label,
+                    style: TextStyle(
+                        color: sel
+                            ? DS.textPrimary
+                            : DS.textSecondary,
+                        fontSize: 14,
+                        fontWeight: sel
+                            ? FontWeight.w600
+                            : FontWeight.w400)),
+                Text(subtitle,
+                    style: const TextStyle(
+                        color: DS.textSecondary, fontSize: 12)),
+              ])),
         ]),
       ),
     );
@@ -727,31 +1082,49 @@ class _DnsTile extends StatelessWidget {
   final int index;
   final String server;
   final VoidCallback onEdit;
-  const _DnsTile({required this.index, required this.server, required this.onEdit});
+  const _DnsTile(
+      {required this.index,
+      required this.server,
+      required this.onEdit});
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-    child: Row(children: [
-      Container(width: 24, height: 24,
-          decoration: BoxDecoration(
-              color: DS.violet.withValues(alpha: 0.12), shape: BoxShape.circle),
-          child: Center(child: Text('${index + 1}', style: const TextStyle(
-              color: DS.violet, fontSize: 11, fontWeight: FontWeight.w700)))),
-      const SizedBox(width: 12),
-      Expanded(child: Text(server, style: const TextStyle(
-          color: DS.textPrimary, fontSize: 14, fontFamily: 'monospace'))),
-      GestureDetector(
-        onTap: onEdit,
-        child: Container(
-            width: 32, height: 32,
-            decoration: BoxDecoration(color: DS.surface2,
-                borderRadius: BorderRadius.circular(DS.radiusXs),
-                border: Border.all(color: DS.border)),
-            child: const Icon(Icons.edit_rounded, size: 14, color: DS.textSecondary)),
-      ),
-    ]),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(children: [
+          Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                  color: DS.violet.withValues(alpha: 0.12),
+                  shape: BoxShape.circle),
+              child: Center(
+                  child: Text('${index + 1}',
+                      style: const TextStyle(
+                          color: DS.violet,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)))),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(server,
+                  style: const TextStyle(
+                      color: DS.textPrimary,
+                      fontSize: 14,
+                      fontFamily: 'monospace'))),
+          GestureDetector(
+            onTap: onEdit,
+            child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                    color: DS.surface2,
+                    borderRadius:
+                        BorderRadius.circular(DS.radiusXs),
+                    border: Border.all(color: DS.border)),
+                child: const Icon(Icons.edit_rounded,
+                    size: 14, color: DS.textSecondary)),
+          ),
+        ]),
+      );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -764,53 +1137,73 @@ class _CoreCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: DS.surface1,
-      borderRadius: BorderRadius.circular(DS.radius),
-      border: Border.all(color: DS.border),
-    ),
-    child: Row(children: [
-      Container(width: 44, height: 44,
-          decoration: BoxDecoration(
-              color: DS.violet.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(DS.radiusSm)),
-          child: const Icon(Icons.memory_rounded, color: DS.violet, size: 22)),
-      const SizedBox(width: 14),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Text('${info.name}-core', style: const TextStyle(
-              color: DS.textPrimary, fontSize: 15, fontWeight: FontWeight.w700)),
-          if (info.architecture.isNotEmpty) ...[
-            const SizedBox(width: 6),
-            Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                    color: DS.surface2,
-                    borderRadius: BorderRadius.circular(DS.radiusXs),
-                    border: Border.all(color: DS.border)),
-                child: Text(info.shortArch, style: const TextStyle(
-                    color: DS.textMuted, fontSize: 9, fontWeight: FontWeight.w600))),
-          ],
-        ]),
-        const SizedBox(height: 5),
-        Row(children: [
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: DS.surface1,
+          borderRadius: BorderRadius.circular(DS.radius),
+          border: Border.all(color: DS.border),
+        ),
+        child: Row(children: [
           Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
-                  color: DS.emerald.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20)),
-              child: Text('v${info.version}', style: const TextStyle(
-                  color: DS.emerald, fontSize: 11, fontWeight: FontWeight.w600))),
-          if (info.goVersion.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Text(info.goVersionShort,
-                style: const TextStyle(color: DS.textMuted, fontSize: 11)),
-          ],
+                  color: DS.violet.withValues(alpha: 0.12),
+                  borderRadius:
+                      BorderRadius.circular(DS.radiusSm)),
+              child: const Icon(Icons.memory_rounded,
+                  color: DS.violet, size: 22)),
+          const SizedBox(width: 14),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Row(children: [
+                  Text('${info.name}-core',
+                      style: const TextStyle(
+                          color: DS.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700)),
+                  if (info.architecture.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                            color: DS.surface2,
+                            borderRadius:
+                                BorderRadius.circular(DS.radiusXs),
+                            border: Border.all(color: DS.border)),
+                        child: Text(info.shortArch,
+                            style: const TextStyle(
+                                color: DS.textMuted,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600))),
+                  ],
+                ]),
+                const SizedBox(height: 5),
+                Row(children: [
+                  Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 3),
+                      decoration: BoxDecoration(
+                          color: DS.emerald.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20)),
+                      child: Text('v${info.version}',
+                          style: const TextStyle(
+                              color: DS.emerald,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600))),
+                  if (info.goVersion.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Text(info.goVersionShort,
+                        style: const TextStyle(
+                            color: DS.textMuted, fontSize: 11)),
+                  ],
+                ]),
+              ])),
         ]),
-      ])),
-    ]),
-  );
+      );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -820,7 +1213,8 @@ class _CoreCard extends StatelessWidget {
 class BlockedAppsSheet extends StatefulWidget {
   final Set<String> initialBlocked;
   final void Function(Set<String>) onSave;
-  const BlockedAppsSheet({super.key, required this.initialBlocked, required this.onSave});
+  const BlockedAppsSheet(
+      {super.key, required this.initialBlocked, required this.onSave});
 
   @override
   State<BlockedAppsSheet> createState() => _BlockedAppsSheetState();
@@ -860,21 +1254,33 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
 
   void _search(String q) {
     final l = q.toLowerCase();
-    final base = l.isEmpty ? _apps : _apps.where((a) =>
-    (a['appName'] as String).toLowerCase().contains(l) ||
-        (a['packageName'] as String).toLowerCase().contains(l)).toList();
+    final base = l.isEmpty
+        ? _apps
+        : _apps
+            .where((a) =>
+                (a['appName'] as String)
+                    .toLowerCase()
+                    .contains(l) ||
+                (a['packageName'] as String)
+                    .toLowerCase()
+                    .contains(l))
+            .toList();
     setState(() => _filtered = _sort(base));
   }
 
   List<Map<String, dynamic>> _sort(List<Map<String, dynamic>> list) {
-    final blocked = list.where((a) => _blocked.contains(a['packageName']));
-    final rest    = list.where((a) => !_blocked.contains(a['packageName']));
+    final blocked =
+        list.where((a) => _blocked.contains(a['packageName']));
+    final rest =
+        list.where((a) => !_blocked.contains(a['packageName']));
     return [...blocked, ...rest];
   }
 
   void _toggle(String pkg) {
     setState(() {
-      _blocked.contains(pkg) ? _blocked.remove(pkg) : _blocked.add(pkg);
+      _blocked.contains(pkg)
+          ? _blocked.remove(pkg)
+          : _blocked.add(pkg);
       _filtered = _sort(_filtered);
     });
     widget.onSave(_blocked);
@@ -890,37 +1296,51 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
       builder: (_, scrollCtrl) => Container(
         decoration: const BoxDecoration(
           color: DS.surface1,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(DS.radius)),
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(DS.radius)),
         ),
         child: Column(children: [
           const SizedBox(height: 12),
-          Container(width: 40, height: 4,
-              decoration: BoxDecoration(color: DS.border, borderRadius: BorderRadius.circular(2))),
+          Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: DS.border,
+                  borderRadius: BorderRadius.circular(2))),
           const SizedBox(height: 16),
-
-          // Header
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Исключить приложения', style: TextStyle(
-                    color: DS.textPrimary, fontSize: 17, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
-                Text('${_blocked.length} исключено',
-                    style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
-              ])),
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    const Text('Исключить приложения',
+                        style: TextStyle(
+                            color: DS.textPrimary,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text('${_blocked.length} исключено',
+                        style: const TextStyle(
+                            color: DS.textSecondary, fontSize: 12)),
+                  ])),
               TextButton(
                   onPressed: () => Navigator.pop(context),
                   style: TextButton.styleFrom(
-                      backgroundColor: DS.violet.withValues(alpha: 0.08),
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(DS.radiusSm))),
-                  child: const Text('Готово', style: TextStyle(fontWeight: FontWeight.w600))),
+                      backgroundColor:
+                          DS.violet.withValues(alpha: 0.08),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(
+                              DS.radiusSm))),
+                  child: const Text('Готово',
+                      style:
+                          TextStyle(fontWeight: FontWeight.w600))),
             ]),
           ),
           const SizedBox(height: 12),
-
-          // Search
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: TextField(
@@ -929,18 +1349,19 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
               style: const TextStyle(color: DS.textPrimary),
               decoration: const InputDecoration(
                   hintText: 'Поиск…',
-                  prefixIcon: Icon(Icons.search_rounded, color: DS.textMuted),
-                  contentPadding: EdgeInsets.symmetric(vertical: 10)),
+                  prefixIcon: Icon(Icons.search_rounded,
+                      color: DS.textMuted),
+                  contentPadding:
+                      EdgeInsets.symmetric(vertical: 10)),
             ),
           ),
           const SizedBox(height: 8),
           const Divider(height: 1, color: DS.border),
-
-          // App list
           Expanded(
             child: Stack(children: [
               ValueListenableBuilder<int>(
-                valueListenable: AppsRepository.instance.iconsVersion,
+                valueListenable:
+                    AppsRepository.instance.iconsVersion,
                 builder: (_, _, _) => ListView.builder(
                   controller: scrollCtrl,
                   itemCount: _filtered.length,
@@ -949,29 +1370,51 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
                     final pkg = app['packageName'] as String;
                     final name = app['appName'] as String;
                     final isBlocked = _blocked.contains(pkg);
-                    final icon = AppsRepository.instance.icons[pkg];
+                    final icon =
+                        AppsRepository.instance.icons[pkg];
                     return ListTile(
                       onTap: () => _toggle(pkg),
                       leading: icon != null
-                          ? Image.memory(icon, width: 32, height: 32, gaplessPlayback: true)
-                          : Container(width: 32, height: 32,
-                          decoration: BoxDecoration(
-                              color: DS.surface2,
-                              borderRadius: BorderRadius.circular(DS.radiusXs)),
-                          child: const Icon(Icons.android_rounded, size: 20, color: DS.textMuted)),
+                          ? Image.memory(icon,
+                              width: 32,
+                              height: 32,
+                              gaplessPlayback: true)
+                          : Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                  color: DS.surface2,
+                                  borderRadius:
+                                      BorderRadius.circular(
+                                          DS.radiusXs)),
+                              child: const Icon(
+                                  Icons.android_rounded,
+                                  size: 20,
+                                  color: DS.textMuted)),
                       title: Text(name,
-                          style: const TextStyle(color: DS.textPrimary, fontSize: 14)),
-                      subtitle: Text(pkg, style: const TextStyle(
-                          color: DS.textMuted, fontSize: 11, fontFamily: 'monospace')),
-                      trailing: Checkbox(value: isBlocked, onChanged: (_) => _toggle(pkg)),
+                          style: const TextStyle(
+                              color: DS.textPrimary,
+                              fontSize: 14)),
+                      subtitle: Text(pkg,
+                          style: const TextStyle(
+                              color: DS.textMuted,
+                              fontSize: 11,
+                              fontFamily: 'monospace')),
+                      trailing: Checkbox(
+                          value: isBlocked,
+                          onChanged: (_) => _toggle(pkg)),
                     );
                   },
                 ),
               ),
               if (_appsLoading)
-                const Align(alignment: Alignment.bottomCenter,
-                    child: Padding(padding: EdgeInsets.only(bottom: 20),
-                        child: CircularProgressIndicator(strokeWidth: 2, color: DS.violet))),
+                const Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                        padding: EdgeInsets.only(bottom: 20),
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: DS.violet))),
             ]),
           ),
         ]),

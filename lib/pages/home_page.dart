@@ -76,14 +76,6 @@ class _HomePageState extends State<HomePage>
           _status.state.toUpperCase() == 'DISCONNECTING' ||
           _isConnecting;
 
-  String get _statusLabel {
-    final s = _status.state.toUpperCase();
-    if (s == 'CONNECTED') return 'Подключено';
-    if (s == 'CONNECTING' || _isConnecting) return 'Подключение…';
-    if (s == 'DISCONNECTING') return 'Отключение…';
-    return 'Отключено';
-  }
-
   // ── Lifecycle ──────────────────────────────────────────────────────────────
   @override
   void initState() {
@@ -710,23 +702,41 @@ class _HomePageState extends State<HomePage>
         color: DS.violet,
         backgroundColor: DS.surface2,
         onRefresh: _refreshAll,
-        child: CustomScrollView(
+        child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
-                  16, MediaQuery.of(context).padding.top + 20, 16, 120),
+                  16, MediaQuery.of(context).padding.top + 12, 16, 120),
               sliver: SliverList(delegate: SliverChildListDelegate([
                 _buildHeader(),
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
                 _buildConnectionCard(),
                 const SizedBox(height: 12),
-                _buildSpeedCard(),
-                const SizedBox(height: 12),
+                // Speed card появляется только при подключении, прилетая сверху
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 380),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: _isConnected
+                      ? Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _SpeedCardFlyIn(
+                            uploadSpeed: _speedCalc.uploadSpeed,
+                            downloadSpeed: _speedCalc.downloadSpeed,
+                            uploadTotal: _fmtBytes(_status.uploadSpeed),
+                            downloadTotal: _fmtBytes(_status.download),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
                 _buildSubscriptionCard(),
               ])),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -800,32 +810,8 @@ class _HomePageState extends State<HomePage>
                 blurRadius: 16, offset: const Offset(0, 4))],
       ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
         child: Column(children: [
-          // Status label
-          const Text(
-            'СТАТУС',
-            style: TextStyle(
-              color: DS.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.8,
-            ),
-          ),
-          const SizedBox(height: 8),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            child: Text(
-              key: ValueKey(_statusLabel),
-              _statusLabel,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-                color: DS.textPrimary,
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 250),
             child: Text(
@@ -835,7 +821,7 @@ class _HomePageState extends State<HomePage>
             ),
           ),
 
-          const SizedBox(height: 28),
+          const SizedBox(height: 18),
 
           // Big circle button
           _ConnectButton(
@@ -844,7 +830,7 @@ class _HomePageState extends State<HomePage>
             onTap: _toggleConnection,
           ),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 18),
 
           // Gradient separator
           Container(
@@ -906,49 +892,6 @@ class _HomePageState extends State<HomePage>
               ]),
             ),
           ),
-        ]),
-      ),
-    );
-  }
-
-  // ── Speed card ─────────────────────────────────────────────────────────────
-  Widget _buildSpeedCard() {
-    final upActive   = _speedCalc.uploadSpeed > 1024;
-    final downActive = _speedCalc.downloadSpeed > 1024;
-    return AnimatedOpacity(
-      opacity: _isConnected ? 1.0 : 0.45,
-      duration: const Duration(milliseconds: 350),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        decoration: BoxDecoration(
-          color: DS.surface1,
-          borderRadius: BorderRadius.circular(DS.radius),
-          border: Border.all(color: DS.border),
-        ),
-        child: Row(children: [
-          Expanded(child: _SpeedTile(
-            icon: Icons.arrow_upward_rounded,
-            label: 'Отдача',
-            speed: _speedCalc.uploadSpeed,
-            total: _fmtBytes(_status.uploadSpeed),
-            color: upActive ? DS.violet : DS.textMuted,
-          )),
-          Container(
-            width: 1, height: 48,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                colors: [Colors.transparent, DS.border, Colors.transparent],
-              ),
-            ),
-          ),
-          Expanded(child: _SpeedTile(
-            icon: Icons.arrow_downward_rounded,
-            label: 'Загрузка',
-            speed: _speedCalc.downloadSpeed,
-            total: _fmtBytes(_status.download),
-            color: downActive ? DS.emerald : DS.textMuted,
-          )),
         ]),
       ),
     );
@@ -1075,6 +1018,9 @@ class _HomePageState extends State<HomePage>
                 ),
                 const SizedBox(height: 14),
                 _RenewButton(onTap: widget.onGoToPremium),
+              ] else if (info.totalBytes <= 0) ...[
+                // Безлимитный трафик — особый вид
+                _UnlimitedTrafficSection(usedLabel: info.formattedUsed),
               ] else ...[
                 // Traffic stats
                 Row(
@@ -1137,33 +1083,60 @@ class _HomePageState extends State<HomePage>
           ]),
         ),
 
-        // ── Явная строка «Управление подпиской» ──────────────────────────────
-        // Показывается только залогиненному пользователю с данными подписки.
-        // Стандартный паттерн «settings row»: иконка + метка + шеврон.
+        // ── CTA «Управление подпиской» ───────────────────────────────────────
         if (canOpenDetails) ...[
-          Divider(height: 1, color: DS.border),
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: openDetails,
-              borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(DS.radius)),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                child: Row(children: [
-                  const Icon(Icons.credit_card_rounded,
-                      size: 18, color: DS.textSecondary),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text('Управление подпиской',
-                        style: TextStyle(
-                            color: DS.textPrimary,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: Material(
+              color: DS.surface2,
+              borderRadius: BorderRadius.circular(DS.radiusSm),
+              child: InkWell(
+                onTap: openDetails,
+                borderRadius: BorderRadius.circular(DS.radiusSm),
+                splashColor: DS.violet.withValues(alpha: 0.12),
+                highlightColor: DS.violet.withValues(alpha: 0.06),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(DS.radiusSm),
+                    border: Border.all(
+                        color: DS.violet.withValues(alpha: 0.40), width: 1),
                   ),
-                  const Icon(Icons.chevron_right_rounded,
-                      size: 20, color: DS.textMuted),
-                ]),
+                  child: Row(children: [
+                    Icon(Icons.manage_accounts_rounded,
+                        size: 18,
+                        color: Color.lerp(DS.violet, Colors.white, 0.28)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('Управление подпиской',
+                              style: TextStyle(
+                                color:
+                                    Color.lerp(DS.violet, Colors.white, 0.28),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                height: 1.2,
+                              )),
+                          const SizedBox(height: 2),
+                          const Text('Тариф, оплата, продление',
+                              style: TextStyle(
+                                color: DS.textMuted,
+                                fontSize: 11.5,
+                                height: 1.2,
+                              )),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(Icons.chevron_right_rounded,
+                        size: 20,
+                        color: DS.violet.withValues(alpha: 0.70)),
+                  ]),
+                ),
               ),
             ),
           ),
@@ -1252,13 +1225,8 @@ class _ConnectButtonState extends State<_ConnectButton>
           ? DS.amber
           : DS.violet;
 
-  IconData get _icon => widget.isConnected
-      ? Icons.shield_rounded
-      : widget.isLoading
-          ? Icons.refresh_rounded
-          : Icons.power_settings_new_rounded;
 
-  String get _subLabel => widget.isConnected
+  String get _hint => widget.isConnected
       ? 'Нажмите, чтобы отключить'
       : widget.isLoading
           ? 'Подождите…'
@@ -1277,8 +1245,8 @@ class _ConnectButtonState extends State<_ConnectButton>
               onTap: widget.isLoading ? null : widget.onTap,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 350),
-                width: 120,
-                height: 120,
+                width: 128,
+                height: 128,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: _color,
@@ -1292,41 +1260,55 @@ class _ConnectButtonState extends State<_ConnectButton>
                       BoxShadow(
                         color: DS.emerald.withValues(alpha: glowAlpha),
                         blurRadius: 0,
-                        spreadRadius: 16,
+                        spreadRadius: 18,
                       ),
                   ],
                 ),
                 child: widget.isLoading
                     ? RotationTransition(
                         turns: _spinCtrl,
-                        child: const Icon(
-                          Icons.refresh_rounded,
-                          color: Colors.white,
-                          size: 48,
-                        ),
+                        child: const Icon(Icons.refresh_rounded,
+                            color: Colors.white, size: 44),
                       )
                     : AnimatedSwitcher(
                         duration: const Duration(milliseconds: 250),
-                        child: Icon(
-                          key: ValueKey(_icon),
-                          _icon,
-                          color: Colors.white,
-                          size: 48,
-                        ),
+                        child: !widget.isConnected
+                            ? Column(
+                                key: const ValueKey('off'),
+                                mainAxisSize: MainAxisSize.min,
+                                children: const [
+                                  Icon(Icons.power_settings_new_rounded,
+                                      color: Colors.white, size: 38),
+                                  SizedBox(height: 4),
+                                  Text('Отключено',
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                      )),
+                                ],
+                              )
+                            : const Icon(
+                                key: ValueKey('on'),
+                                Icons.shield_rounded,
+                                color: Colors.white,
+                                size: 44,
+                              ),
                       ),
               ),
             );
           },
         ),
-        const SizedBox(height: 12),
+        // Достаточный отступ, чтобы свечение не наезжало на подпись
+        const SizedBox(height: 28),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 200),
           child: Text(
-            key: ValueKey(_subLabel),
-            _subLabel,
+            key: ValueKey(_hint),
+            _hint,
             style: const TextStyle(
               color: DS.textSecondary,
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -1675,3 +1657,152 @@ class _EmptyNodes extends StatelessWidget {
         style: TextStyle(color: DS.textSecondary, fontSize: 14)),
   ]);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _SpeedCardFlyIn — карточка скоростей, прилетающая сверху при подключении
+// ─────────────────────────────────────────────────────────────────────────────
+class _SpeedCardFlyIn extends StatefulWidget {
+  final double uploadSpeed;
+  final double downloadSpeed;
+  final String uploadTotal;
+  final String downloadTotal;
+
+  const _SpeedCardFlyIn({
+    required this.uploadSpeed,
+    required this.downloadSpeed,
+    required this.uploadTotal,
+    required this.downloadTotal,
+  });
+
+  @override
+  State<_SpeedCardFlyIn> createState() => _SpeedCardFlyInState();
+}
+
+class _SpeedCardFlyInState extends State<_SpeedCardFlyIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<Offset> _slide;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 520));
+    _slide = Tween<Offset>(
+      begin: const Offset(0, -0.8),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
+    _fade = Tween<double>(begin: 0, end: 1).animate(
+        CurvedAnimation(parent: _ctrl, curve: const Interval(0, 0.55)));
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(
+        position: _slide,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: DS.surface1,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            border: Border.all(color: DS.border),
+          ),
+          child: Row(children: [
+            Expanded(
+                child: _SpeedTile(
+              icon: Icons.arrow_upward_rounded,
+              color: DS.emerald,
+              label: 'Отдача',
+              speed: widget.uploadSpeed,
+              total: widget.uploadTotal,
+            )),
+            Container(width: 1, height: 36, color: DS.border),
+            Expanded(
+                child: _SpeedTile(
+              icon: Icons.arrow_downward_rounded,
+              color: DS.violet,
+              label: 'Загрузка',
+              speed: widget.downloadSpeed,
+              total: widget.downloadTotal,
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _UnlimitedTrafficSection — блок для безлимитного трафика
+// ─────────────────────────────────────────────────────────────────────────────
+class _UnlimitedTrafficSection extends StatelessWidget {
+  final String usedLabel;
+  const _UnlimitedTrafficSection({required this.usedLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Иконка-плашка
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: DS.cyan.withValues(alpha: 0.13),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: DS.cyan.withValues(alpha: 0.22),
+                    blurRadius: 14,
+                    spreadRadius: -3,
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.all_inclusive_rounded,
+                  size: 22, color: DS.cyan),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Безлимитный трафик',
+                  style: TextStyle(
+                    color: DS.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    height: 1.15,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'использовано $usedLabel',
+                  style: const TextStyle(
+                    color: DS.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
