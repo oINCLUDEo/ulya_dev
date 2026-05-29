@@ -180,6 +180,13 @@ class _PremiumPageState extends State<PremiumPage>
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
     globalRefreshNotifier.addListener(_onGlobalRefresh);
+    // Pre-populate from global in-memory cache so the page never flashes
+    // an empty state — a background network refresh follows right after.
+    final cachedTariffs = tarifsNotifier.value;
+    final cachedOptions = optionsNotifier.value;
+    if (cachedTariffs != null || cachedOptions != null) {
+      _applyOptionsData(cachedOptions, cachedTariffs);
+    }
     _loadOptions();
   }
 
@@ -208,6 +215,87 @@ class _PremiumPageState extends State<PremiumPage>
 
   // ── Data ───────────────────────────────────────────────────────────────────
 
+  /// Applies fetched/cached opts+tariffs into state.  Call from [_loadOptions]
+  /// and from [initState] when the global cache is already populated.
+  void _applyOptionsData(SubscriptionOptions? opts, List<TariffInfo>? tariffs) {
+    if (!mounted) return;
+    setState(() {
+      if (opts != null) _options = opts;
+
+      // ── Tariff catalog ────────────────────────────────────────────────
+      if (tariffs != null && tariffs.isNotEmpty) {
+        final sorted = [...tariffs]..sort((a, b) {
+          final ap = a.cheapestPeriod?.priceKopeks ?? 0;
+          final bp = b.cheapestPeriod?.priceKopeks ?? 0;
+          return ap.compareTo(bp);
+        });
+        _tariffs = sorted;
+
+        if (_selectedTariffId == null ||
+            !sorted.any((t) => t.id == _selectedTariffId)) {
+          _selectedTariffId = sorted.first.id;
+        }
+        final selTariff = sorted.firstWhere(
+            (t) => t.id == _selectedTariffId,
+            orElse: () => sorted.first);
+        if ((_selectedTariffPeriodId == null ||
+                !selTariff.periods.any((p) => p.id == _selectedTariffPeriodId)) &&
+            selTariff.periods.isNotEmpty) {
+          _selectedTariffPeriodId =
+              selTariff.cheapestPeriod?.id ?? selTariff.periods.first.id;
+        }
+
+        final allUniqueDays = sorted
+            .expand((t) => t.periods.map((p) => p.days))
+            .toSet();
+        final preferredDays =
+            selTariff.cheapestPeriod?.days ??
+            (selTariff.periods.isNotEmpty ? selTariff.periods.first.days : null);
+        if (_selectedPeriodDays == null ||
+            !allUniqueDays.contains(_selectedPeriodDays)) {
+          _selectedPeriodDays = preferredDays;
+        }
+
+        if (_changeTariffId == null ||
+            !sorted.any((t) => t.id == _changeTariffId)) {
+          _changeTariffId = sorted.first.id;
+        }
+        final chTariff = sorted.firstWhere(
+            (t) => t.id == _changeTariffId,
+            orElse: () => sorted.first);
+        if ((_changeTariffPeriodId == null ||
+                !chTariff.periods.any((p) => p.id == _changeTariffPeriodId)) &&
+            chTariff.periods.isNotEmpty) {
+          _changeTariffPeriodId =
+              chTariff.cheapestPeriod?.id ?? chTariff.periods.first.id;
+        }
+
+        final subName =
+            (meNotifier.value?.subscription?.planName ?? '').toLowerCase().trim();
+        if (subName.isNotEmpty) {
+          final curTariff = tariffs.cast<TariffInfo?>().firstWhere(
+              (t) => t!.name.toLowerCase().trim() == subName,
+              orElse: () => null);
+          if (curTariff != null && curTariff.periods.isNotEmpty &&
+              (_renewTariffPeriodId == null ||
+                  !curTariff.periods.any((p) => p.id == _renewTariffPeriodId))) {
+            _renewTariffPeriodId =
+                curTariff.cheapestPeriod?.id ?? curTariff.periods.first.id;
+          }
+        }
+      }
+
+      // ── Legacy flow ──────────────────────────────────────────────────
+      final o = opts ?? _options;
+      if (o != null && o.periods.isNotEmpty) {
+        _selectedPeriodId ??= _bestPeriodId(o) ?? o.periods.first.id;
+        _renewPeriodId ??= o.periods.first.id;
+      }
+    });
+    final o = opts ?? _options;
+    if (o != null) _initManagePrices(o);
+  }
+
   Future<void> _loadOptions() async {
     if (!mounted) return;
     if (_loadingOptions) { _pendingOptions = true; return; }
@@ -220,98 +308,13 @@ class _PremiumPageState extends State<PremiumPage>
       ]);
       final opts    = futures[0] as SubscriptionOptions?;
       final tariffs = futures[1] as List<TariffInfo>?;
-
-      if (mounted) {
-        setState(() {
-          _options = opts;
-
-          // ── Tariff catalog ──────────────────────────────────────────────
-          if (tariffs != null && tariffs.isNotEmpty) {
-            // Sort by cheapest period price ascending
-            final sorted = [...tariffs]..sort((a, b) {
-              final ap = a.cheapestPeriod?.priceKopeks ?? 0;
-              final bp = b.cheapestPeriod?.priceKopeks ?? 0;
-              return ap.compareTo(bp);
-            });
-            _tariffs = sorted;
-
-            // Auto-select cheapest tariff for new-user buy flow
-            if (_selectedTariffId == null ||
-                !sorted.any((t) => t.id == _selectedTariffId)) {
-              _selectedTariffId = sorted.first.id;
-            }
-            final selTariff = sorted.firstWhere(
-                (t) => t.id == _selectedTariffId,
-                orElse: () => sorted.first);
-            if ((_selectedTariffPeriodId == null ||
-                    !selTariff.periods.any((p) => p.id == _selectedTariffPeriodId)) &&
-                selTariff.periods.isNotEmpty) {
-              // Default: always 1 month (cheapest period)
-              _selectedTariffPeriodId =
-                  selTariff.cheapestPeriod?.id ??
-                  selTariff.periods.first.id;
-            }
-
-            // Init global period-days selector — default 1 month (cheapest)
-            final allUniqueDays = sorted
-                .expand((t) => t.periods.map((p) => p.days))
-                .toSet();
-            final preferredDays =
-                selTariff.cheapestPeriod?.days ??
-                (selTariff.periods.isNotEmpty ? selTariff.periods.first.days : null);
-            if (_selectedPeriodDays == null ||
-                !allUniqueDays.contains(_selectedPeriodDays)) {
-              _selectedPeriodDays = preferredDays;
-            }
-
-            // Auto-select for change-tariff (active user) flow
-            if (_changeTariffId == null ||
-                !sorted.any((t) => t.id == _changeTariffId)) {
-              _changeTariffId = sorted.first.id;
-            }
-            final chTariff = sorted.firstWhere(
-                (t) => t.id == _changeTariffId,
-                orElse: () => sorted.first);
-            if ((_changeTariffPeriodId == null ||
-                    !chTariff.periods.any((p) => p.id == _changeTariffPeriodId)) &&
-                chTariff.periods.isNotEmpty) {
-              _changeTariffPeriodId =
-                  chTariff.cheapestPeriod?.id ?? chTariff.periods.first.id;
-            }
-
-            // Auto-select renew period for the current active tariff
-            final subName =
-                (meNotifier.value?.subscription?.planName ?? '').toLowerCase().trim();
-            if (subName.isNotEmpty) {
-              final curTariff = tariffs.cast<TariffInfo?>().firstWhere(
-                  (t) => t!.name.toLowerCase().trim() == subName,
-                  orElse: () => null);
-              if (curTariff != null && curTariff.periods.isNotEmpty &&
-                  (_renewTariffPeriodId == null ||
-                      !curTariff.periods.any((p) => p.id == _renewTariffPeriodId))) {
-                _renewTariffPeriodId =
-                    curTariff.cheapestPeriod?.id ?? curTariff.periods.first.id;
-              }
-            }
-          }
-
-          // ── Legacy flow ────────────────────────────────────────────────
-          if (opts != null && opts.periods.isNotEmpty) {
-            _selectedPeriodId ??= _bestPeriodId(opts) ?? opts.periods.first.id;
-            if (_renewPeriodId == null && opts.periods.isNotEmpty) {
-              _renewPeriodId = opts.periods.first.id;
-            }
-          }
-        });
-        if (opts != null) _initManagePrices(opts);
-      }
+      if (mounted) _applyOptionsData(opts, tariffs);
     } catch (e) { debugPrint('PremiumPage._loadOptions: $e'); }
     if (mounted) setState(() => _loadingOptions = false);
     if (_pendingOptions && mounted) {
       _pendingOptions = false;
       _loadOptions();
     }
-    // Staggered entrance: reveal accordion items one by one
     _triggerStaggeredEntrance();
   }
 
@@ -917,10 +920,20 @@ class _PremiumPageState extends State<PremiumPage>
           (_) => setState(() => _familyDeviceCount = familyMin));
     }
     final clampedDevices = _familyDeviceCount.clamp(familyMin, familyMax);
-    final extraDevices   = clampedDevices - familyMin;
-    final extraPriceKop  = extraDevices > 0 ? _devicesPrices[extraDevices] : 0;
-    final totalPerMonthRub = selPeriod != null
-        ? (selPeriod.priceRub + (extraPriceKop != null ? extraPriceKop / 100 : 0))
+    final extraDevices   = isFamilySel ? (clampedDevices - familyMin) : 0;
+
+    // Use tariff's own device_price_kopeks (per device / per month).
+    // This is correct for both new-buy and change-tariff flows — unlike
+    // _devicesPrices which contains a prorated upgrade price for the
+    // *current* subscription and is meaningless here.
+    final devPriceKop    = isFamilySel ? (selTariff.devicePriceKopeks ?? 0) : 0;
+    final months1        = selPeriod?.months ?? 1;
+    final extraPeriodRub = (extraDevices * devPriceKop / 100.0) * months1;
+    final totalPeriodRub = selPeriod != null
+        ? selPeriod.priceRub + extraPeriodRub
+        : null;
+    final totalPerMonthRub = (totalPeriodRub != null && months1 > 0)
+        ? totalPeriodRub / months1
         : null;
 
     String buttonLabel;
@@ -1059,12 +1072,15 @@ class _PremiumPageState extends State<PremiumPage>
     final isFam          = _isFamilyTariff(selTariff);
     final familyMin      = selTariff.deviceLimit;
     final extraDevices   = isFam ? (_familyDeviceCount - familyMin).clamp(0, 99) : 0;
-    final extraPriceKop  = extraDevices > 0 ? (_devicesPrices[extraDevices] ?? 0) : 0;
 
-    // Cost breakdown — API returns total period price, not per-month
+    // Correct device price: use tariff's own devicePriceKopeks (per device / per month),
+    // NOT _devicesPrices which is a prorated upgrade price for the current subscription.
+    final devPriceKop    = isFam ? (selTariff.devicePriceKopeks ?? 0) : 0;
+
+    // Cost breakdown — periodBaseRub is the total price for the whole period
     final months         = selPer?.months ?? 1;
-    final periodBaseRub  = selPer?.priceRub ?? 0.0;     // total from API
-    final extraMonthRub  = extraPriceKop / 100.0;        // extra per month
+    final periodBaseRub  = selPer?.priceRub ?? 0.0;
+    final extraMonthRub  = extraDevices * devPriceKop / 100.0;   // extra per month for all added devices
     final periodTotalRub = periodBaseRub + extraMonthRub * months;
 
     final balanceRub     = _options?.balanceRub ?? 0.0;
@@ -1280,10 +1296,12 @@ class _PremiumPageState extends State<PremiumPage>
               ],
 
               // ── Extra devices (family plan) ───────────────────────────
-              if (extraDevices > 0 && extraMonthRub > 0) ...[
+              if (extraDevices > 0 && devPriceKop > 0) ...[
                 const SizedBox(height: 4),
                 _BreakdownRow(
-                  label: '$extraDevices доп. устр. × $months мес',
+                  label: months > 1
+                      ? '+$extraDevices устр. × ${devPriceKop ~/ 100} ₽ × $months мес'
+                      : '+$extraDevices устр. · ${devPriceKop ~/ 100} ₽/мес',
                   value: '+${(extraMonthRub * months).toStringAsFixed(0)} ₽',
                 ),
               ],

@@ -661,34 +661,52 @@ class RemnawaveService {
         // mobile.  Keep only rules that reference a balancerTag (load-balancer
         // dispatch) and add a minimal bittorrent-block rule.  All other traffic
         // is forwarded by the balancer outbound.
-        // TODO: Уточнить нужду этих правил
         final desktopRules =
             (routing?['rules'] as List<dynamic>?)?.whereType<Map<String, dynamic>>().toList()
             ?? <Map<String, dynamic>>[];
 
-        final mobileRules = <Map<String, dynamic>>[
-          // Block torrents — simple port-based rule, no geo assets needed.
-          {'type': 'field', 'network': 'tcp,udp', 'protocol': ['bittorrent'], 'outboundTag': 'blackhole'},
-          // Keep every rule that dispatches via a balancer (load-balancing logic).
-          ...desktopRules.where((r) => r.containsKey('balancerTag')),
-        ];
+        // Keep rules from original config that don't need geo asset files.
+        // This preserves correct outbound tags (e.g. "block") and balancer rules.
+        // Geo rules (geoip:/geosite:) are dropped — those files aren't on mobile.
+        final mobileRules = desktopRules.where((r) {
+          final ip = r['ip'] as List<dynamic>?;
+          final domain = r['domain'] as List<dynamic>?;
+          if (ip != null && ip.any((e) => e.toString().startsWith('geoip:'))) return false;
+          if (domain != null && domain.any((e) => e.toString().startsWith('geosite:'))) return false;
+          return true;
+        }).toList();
 
-        final mobileJson = jsonEncode({
-          'log':      {'loglevel': 'warning'},
-          'dns':      {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
-          'inbounds': [_socksInbound],
-          'outbounds': allOutbounds,  // keep all — balancer references them
-          'routing':  {
+        // burstObservatory is required for leastLoad/leastPing balancer strategies:
+        // without it xray has no latency measurements and balancers can't pick
+        // the best outbound. Preserve from original; generate a fallback if absent.
+        final origObservatory = json['burstObservatory'] as Map<String, dynamic>?;
+        final observatory = origObservatory ?? _buildObservatory(
+            (balancers ?? []).whereType<Map<String, dynamic>>().toList());
+
+        // policy controls connection idle/handshake timeouts needed by balancers.
+        final policy = json['policy'] as Map<String, dynamic>?;
+
+        final mobileMap = <String, dynamic>{
+          'log':             {'loglevel': 'warning'},
+          'dns':             {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
+          'inbounds':        [_socksInbound],
+          'outbounds':       allOutbounds,  // keep all — balancer references them
+          'routing':         {
             'domainStrategy': routing?['domainStrategy'] ?? 'IPIfNonMatch',
             'domainMatcher':  'hybrid',
-            'rules':    mobileRules,
-            'balancers': balancers ?? [],
+            'rules':          mobileRules,
+            'balancers':      balancers ?? [],
           },
-        });
+          'burstObservatory': observatory,
+        };
+        if (policy != null) mobileMap['policy'] = policy;
 
-        final name = rawRemarks.isNotEmpty ? _cleanServerName(rawRemarks) : 'Авто-выбор';
+        final mobileJson = jsonEncode(mobileMap);
+
+        final name     = _parseAutoName(rawRemarks);
+        final autoType = _parseAutoType(rawRemarks);
         return ServerNode(
-          uuid:        mobileJson,
+          uuid:        'auto:$rawRemarks',
           name:        name,
           address:     '',
           serverPort:  443,
@@ -697,7 +715,9 @@ class RemnawaveService {
           isDisabled:  false,
           link:        mobileJson,
           protocol:    'auto',
-          description: serverDescription ?? rawRemarks,
+          // description stores the connection type label ("Wi-Fi | 4G") so
+          // the UI can show it as a subtitle under the server name.
+          description: autoType ?? serverDescription ?? rawRemarks,
         );
       }
 
@@ -823,5 +843,64 @@ class RemnawaveService {
     if (prefixMatch != null) return prefixMatch.group(1)!;
 
     return '';
+  }
+
+  // ── Auto-server name helpers ──────────────────────────────────────────────
+
+  /// Extracts the display name for an auto/balanced server from its remarks.
+  ///
+  /// Input:  "🇪🇺 Wi-Fi | 4G  · Авто-Подключение"
+  /// Output: "Авто-подключение"
+  static String _parseAutoName(String remarks) {
+    if (remarks.isEmpty) return 'Авто-подключение';
+    final cleaned = _cleanServerName(remarks); // strips flag emoji
+    final dot = cleaned.indexOf('·');
+    if (dot >= 0) {
+      final after = cleaned.substring(dot + 1).trim();
+      if (after.isNotEmpty) return after;
+    }
+    return cleaned.isNotEmpty ? cleaned : 'Авто-подключение';
+  }
+
+  /// Extracts the connection-type subtitle for an auto server (e.g. "Wi-Fi | 4G").
+  ///
+  /// Input:  "🇪🇺 Wi-Fi | 4G  · Авто-Подключение"
+  /// Output: "Wi-Fi | 4G"
+  static String? _parseAutoType(String remarks) {
+    if (remarks.isEmpty) return null;
+    final cleaned = _cleanServerName(remarks);
+    final dot = cleaned.indexOf('·');
+    if (dot > 0) {
+      final before = cleaned.substring(0, dot).trim();
+      if (before.isNotEmpty) return before;
+    }
+    return null;
+  }
+
+  // ── Observatory builder ───────────────────────────────────────────────────
+
+  /// Builds a `burstObservatory` config from balancer definitions.
+  ///
+  /// Xray's `leastLoad` and `leastPing` balancer strategies require an
+  /// observatory to measure outbound latency. The `subjectSelector` is the
+  /// union of all balancer `selector` arrays — xray matches outbound tags by
+  /// prefix, so `["wifi", "mobile"]` covers `wifi`, `wifi-2`, `mobile`, etc.
+  static Map<String, dynamic> _buildObservatory(
+      List<Map<String, dynamic>> balancers) {
+    final selectors = <String>{};
+    for (final b in balancers) {
+      final sel = b['selector'] as List<dynamic>?;
+      if (sel != null) selectors.addAll(sel.whereType<String>());
+    }
+    return {
+      'pingConfig': {
+        'connectivity': '',
+        'destination':  'http://www.gstatic.com/generate_204',
+        'interval':     '15s',
+        'sampling':     1,
+        'timeout':      '3s',
+      },
+      'subjectSelector': selectors.toList(),
+    };
   }
 }

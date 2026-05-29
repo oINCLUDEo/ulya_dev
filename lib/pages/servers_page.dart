@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
 import '../services/auth_state.dart';
+import '../services/favorites_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
@@ -51,6 +52,7 @@ class _ServersPageState extends State<ServersPage> {
     selectedServerNotifier.addListener(_onSelectionChanged);
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
+    favoritesNotifier.addListener(_onFavoritesChanged);
     _loadNodes();
   }
 
@@ -59,10 +61,12 @@ class _ServersPageState extends State<ServersPage> {
     selectedServerNotifier.removeListener(_onSelectionChanged);
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
+    favoritesNotifier.removeListener(_onFavoritesChanged);
     super.dispose();
   }
 
   void _onSelectionChanged() { if (mounted) setState(() {}); }
+  void _onFavoritesChanged() { if (mounted) setState(() {}); }
   void _onAuthChanged() => _loadNodes();
   void _onMeChanged() {
     final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
@@ -195,6 +199,7 @@ class _ServersPageState extends State<ServersPage> {
   List<Widget> _buildSections() {
     final groups = _grouped();
     final selectedUuid = selectedServerNotifier.value?.uuid;
+    final favorites = favoritesNotifier.value;
     final slivers = <Widget>[];
 
     Future<void> onSelect(ServerNode node) async {
@@ -230,6 +235,31 @@ class _ServersPageState extends State<ServersPage> {
           onPing: _tcpPingNode, color: color,
           selectedUuid: selectedUuid, onSelect: onSelect,
           isPublicCatalog: _isPublicCatalog,
+          favorites: favorites,
+        )),
+      ));
+    }
+
+    // Избранное — всегда первым, если не пустое
+    final favoriteNodes = _nodes.where((n) => favorites.contains(n.uuid)).toList();
+    if (favoriteNodes.isNotEmpty && !_isPublicCatalog) {
+      slivers.add(SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
+        sliver: SliverToBoxAdapter(child: _SectionHeader(
+          title: 'Избранное', subtitle: 'Закреплённые серверы',
+          color: DS.amber, icon: Icons.star_rounded,
+          expanded: true, nodeCount: favoriteNodes.length,
+          onTap: () {},
+        )),
+      ));
+      slivers.add(SliverPadding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+        sliver: SliverToBoxAdapter(child: _ServerGroup(
+          expanded: true, nodes: favoriteNodes, pings: _pings,
+          onPing: _tcpPingNode, color: DS.amber,
+          selectedUuid: selectedUuid, onSelect: onSelect,
+          isPublicCatalog: false,
+          favorites: favorites,
         )),
       ));
     }
@@ -428,11 +458,13 @@ class _ServerGroup extends StatefulWidget {
   final String? selectedUuid;
   final Future<void> Function(ServerNode)? onSelect;
   final bool isPublicCatalog;
+  final Set<String> favorites;
 
   const _ServerGroup({
     required this.expanded, required this.nodes, required this.pings,
     required this.onPing, required this.color, this.selectedUuid,
     this.onSelect, this.isPublicCatalog = false,
+    this.favorites = const {},
   });
 
   @override
@@ -488,6 +520,7 @@ class _ServerGroupState extends State<_ServerGroup>
                         ? () => widget.onSelect!(node) : null,
                     isPublicCatalog: widget.isPublicCatalog,
                     accentColor: widget.color,
+                    isFavorite: widget.favorites.contains(node.uuid),
                   ),
                   if (i != widget.nodes.length - 1)
                     const Divider(height: 1, indent: 16, endIndent: 16,
@@ -506,7 +539,7 @@ class _ServerGroupState extends State<_ServerGroup>
 // Node tile
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _NodeTile extends StatelessWidget {
+class _NodeTile extends StatefulWidget {
   final ServerNode node;
   final int? ping;
   final VoidCallback? onPing;
@@ -514,15 +547,109 @@ class _NodeTile extends StatelessWidget {
   final VoidCallback? onSelect;
   final bool isPublicCatalog;
   final Color accentColor;
+  final bool isFavorite;
 
   const _NodeTile({
     required this.node, this.ping, this.onPing,
     this.isSelected = false, this.onSelect,
     this.isPublicCatalog = false, required this.accentColor,
+    this.isFavorite = false,
   });
 
   @override
+  State<_NodeTile> createState() => _NodeTileState();
+}
+
+class _NodeTileState extends State<_NodeTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _swipeCtrl;
+  late final Animation<double> _revealAnim;
+  static const _revealWidth = 72.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _swipeCtrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 260));
+    _revealAnim = CurvedAnimation(parent: _swipeCtrl, curve: Curves.easeOutCubic);
+  }
+
+  @override
+  void dispose() {
+    _swipeCtrl.dispose();
+    super.dispose();
+  }
+
+  void _handleDragUpdate(DragUpdateDetails d) {
+    if (widget.isPublicCatalog) return;
+    // Swipe left (negative delta) reveals the star on the right
+    _swipeCtrl.value =
+        (_swipeCtrl.value - d.primaryDelta! / _revealWidth).clamp(0.0, 1.0);
+  }
+
+  void _handleDragEnd(DragEndDetails d) {
+    if (widget.isPublicCatalog) return;
+    if (_swipeCtrl.value > 0.35) {
+      // Immediately toggle favorite and snap back
+      toggleFavorite(widget.node.uuid);
+    }
+    _swipeCtrl.animateBack(0.0);
+  }
+
+  void _closeStar() => _swipeCtrl.animateBack(0.0);
+
+  @override
   Widget build(BuildContext context) {
+    return GestureDetector(
+      onHorizontalDragUpdate: _handleDragUpdate,
+      onHorizontalDragEnd: _handleDragEnd,
+      child: AnimatedBuilder(
+        animation: _revealAnim,
+        builder: (_, child) {
+          final offset = _revealAnim.value * _revealWidth;
+          return Stack(clipBehavior: Clip.hardEdge, children: [
+            // Star reveal — right side, exposed when tile slides left
+            Positioned.fill(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Opacity(
+                  opacity: _revealAnim.value,
+                  child: Container(
+                    width: _revealWidth,
+                    alignment: Alignment.center,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      child: Icon(
+                        widget.isFavorite
+                            ? Icons.star_rounded
+                            : Icons.star_border_rounded,
+                        key: ValueKey(widget.isFavorite),
+                        color: DS.amber,
+                        size: 26,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Tile itself, shifted left to expose star
+            Transform.translate(
+              offset: Offset(-offset, 0),
+              child: child,
+            ),
+          ]);
+        },
+        child: _buildTileContent(),
+      ),
+    );
+  }
+
+  Widget _buildTileContent() {
+    final node = widget.node;
+    final isSelected = widget.isSelected;
+    final accentColor = widget.accentColor;
+    final ping = widget.ping;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
@@ -531,7 +658,13 @@ class _NodeTile extends StatelessWidget {
       ),
       child: Material(color: Colors.transparent,
         child: InkWell(
-          onTap: onSelect,
+          onTap: () {
+            if (_swipeCtrl.value > 0) {
+              _closeStar();
+            } else {
+              widget.onSelect?.call();
+            }
+          },
           onLongPress: node.link != null ? () => _showConfigDialog(context, node) : null,
           borderRadius: BorderRadius.circular(DS.radius),
           splashColor: accentColor.withValues(alpha: 0.08),
@@ -562,10 +695,16 @@ class _NodeTile extends StatelessWidget {
               const SizedBox(width: 12),
               // Info
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(node.name, style: TextStyle(
-                    fontWeight: FontWeight.w600, fontSize: 14,
-                    color: isSelected ? accentColor : DS.textPrimary),
-                    overflow: TextOverflow.ellipsis),
+                Row(children: [
+                  if (widget.isFavorite) ...[
+                    const Icon(Icons.star_rounded, size: 11, color: DS.amber),
+                    const SizedBox(width: 4),
+                  ],
+                  Expanded(child: Text(node.name, style: TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 14,
+                      color: isSelected ? accentColor : DS.textPrimary),
+                      overflow: TextOverflow.ellipsis)),
+                ]),
                 const SizedBox(height: 3),
                 if ((node.protocol ?? '').isNotEmpty)
                   Row(children: [
@@ -576,7 +715,7 @@ class _NodeTile extends StatelessWidget {
               // Trailing
               if (isSelected)
                 Icon(Icons.check_circle_rounded, color: accentColor, size: 20)
-              else if (isPublicCatalog)
+              else if (widget.isPublicCatalog)
                 Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                     decoration: BoxDecoration(color: DS.surface2, borderRadius: BorderRadius.circular(DS.radiusXs),
@@ -584,7 +723,7 @@ class _NodeTile extends StatelessWidget {
                     child: const Icon(Icons.lock_outline_rounded, size: 14, color: DS.textMuted))
               else
                 GestureDetector(
-                  onTap: (ping == -2 || node.link == null) ? null : onPing,
+                  onTap: (ping == -2 || node.link == null) ? null : widget.onPing,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(

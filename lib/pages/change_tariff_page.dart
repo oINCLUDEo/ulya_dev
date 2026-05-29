@@ -772,6 +772,8 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
       ctaEnabled = !_pollingForPayment;
     }
 
+    final isFamilySwitch = _isFamilyTariff(t);
+
     return ListView(
       key: const ValueKey('step2-switch'),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -781,13 +783,27 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
         const SizedBox(height: 8),
         _CheckoutTariffCard(
           tariff: t,
-          deviceCount: t.deviceLimit,
+          deviceCount: isFamilySwitch ? _familyDevices : t.deviceLimit,
           onEdit: () => setState(() {
             _checkoutMode = false;
             _switchPreview = null;
           }),
         ),
         const SizedBox(height: 14),
+
+        // ── Степпер устройств (только для семейного тарифа) ──
+        if (isFamilySwitch) ...[
+          const _SectionLabel(text: 'Устройства'),
+          const SizedBox(height: 8),
+          _FamilyStepper(
+            count: _familyDevices,
+            max: _kFamilyMaxDevices,
+            base: _kFamilyBaseDevices,
+            onDecrement: _familyDecrement,
+            onIncrement: _familyIncrement,
+          ),
+          const SizedBox(height: 14),
+        ],
 
         // ── Расчёт ──
         const _SectionLabel(text: 'Расчёт'),
@@ -848,7 +864,11 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
             ),
           )
         else if (preview != null)
-          _SwitchBreakdownCard(preview: preview),
+          _SwitchBreakdownCard(
+            preview: preview,
+            deviceCount: isFamilySwitch ? _familyDevices : null,
+            baseDeviceLimit: isFamilySwitch ? t.deviceLimit : 0,
+          ),
         const SizedBox(height: 16),
 
         _CTAButton(
@@ -1749,7 +1769,16 @@ class _SecureCaption extends StatelessWidget {
 
 class _SwitchBreakdownCard extends StatelessWidget {
   final TariffSwitchPreview? preview;
-  const _SwitchBreakdownCard({this.preview});
+  /// Общее кол-во устройств (для семейного тарифа). null — не семейный.
+  final int? deviceCount;
+  /// Базовый лимит устройств тарифа (напр. 5 для «Семейный»).
+  final int baseDeviceLimit;
+
+  const _SwitchBreakdownCard({
+    this.preview,
+    this.deviceCount,
+    this.baseDeviceLimit = 0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1770,14 +1799,25 @@ class _SwitchBreakdownCard extends StatelessWidget {
 
     final p = preview!;
     final isFree = p.isFree;
+    final showDevices = deviceCount != null && deviceCount! > 0;
 
-    // Build price breakdown rows
-    final String tariffCostLabel;
+    // Базовый и дополнительный счётчики устройств
+    final int baseDev = showDevices
+        ? (baseDeviceLimit > 0 ? baseDeviceLimit : deviceCount!)
+        : 0;
+    final int extraDev =
+        showDevices ? (deviceCount! - baseDev).clamp(0, 99) : 0;
+
+    // Всегда показываем две строки когда устройств > базы
+    final bool showDeviceSplit = showDevices && extraDev > 0;
+
+    // Лейблы стоимости строк
+    final String baseCostLabel;
     if (p.hasDeviceBreakdown) {
       final base = p.baseSwitchCostKopeks ?? 0;
-      tariffCostLabel = base == 0 ? 'Бесплатно' : '${(base / 100).round()} ₽';
+      baseCostLabel = base == 0 ? 'Бесплатно' : '${(base / 100).round()} ₽';
     } else {
-      tariffCostLabel = isFree ? 'Бесплатно' : p.upgradeCostLabel;
+      baseCostLabel = isFree ? 'Бесплатно' : p.upgradeCostLabel;
     }
 
     return Container(
@@ -1793,29 +1833,36 @@ class _SwitchBreakdownCard extends StatelessWidget {
             _Row(label: 'Текущий тариф', value: p.currentTariffName!),
           // Новый тариф
           _Row(label: 'Новый тариф', value: p.newTariffName),
-          // Остаток дней
-          _Row(label: 'Осталось дней', value: '${p.remainingDays} дн.'),
 
           // ── Разбивка стоимости ───────────────────────────────────────────
-          if (p.hasDeviceBreakdown) ...[
-            // Базовая доплата за тариф
+          if (showDeviceSplit) ...[
+            // Базовая часть (5 устр.)
             _Row(
-              label: p.isUpgrade ? 'Доплата за тариф' : 'Стоимость тарифа',
-              value: tariffCostLabel,
+              label: '$baseDev устр. · ${p.remainingDays} дн.',
+              value: baseCostLabel,
             ),
-            // Доп. устройства
+            // Доп. устройства — стоимость если задана, иначе «В тариф»
             _Row(
-              label: '+${(p.devicesRequested ?? 0)} устр. · ${p.remainingDays} дн.',
-              value: '+${((p.extraDeviceCostKopeks ?? 0) / 100).round()} ₽',
+              label: '+$extraDev устр. · ${p.remainingDays} дн.',
+              value: p.hasDeviceBreakdown
+                  ? '+${((p.extraDeviceCostKopeks ?? 0) / 100).round()} ₽'
+                  : 'В тариф',
               labelColor: DS.violet.withValues(alpha: 0.85),
-              valueColor: DS.violet,
+              valueColor: p.hasDeviceBreakdown ? DS.violet : _t2,
             ),
-          ] else
-            // Без разбивки — одна строка
+          ] else if (showDevices) ...[
+            // Семейный тариф на базовом кол-ве устройств
             _Row(
-              label: p.isUpgrade ? 'Доплата' : 'Стоимость',
-              value: tariffCostLabel,
+              label: '$deviceCount устр. · ${p.remainingDays} дн.',
+              value: baseCostLabel,
             ),
+          ] else ...[
+            // Не семейный — строка с остатком дней
+            _Row(
+              label: '${p.remainingDays} дн. · ${p.isUpgrade ? "доплата" : "стоимость"}',
+              value: baseCostLabel,
+            ),
+          ],
 
           // Баланс
           _Row(

@@ -1095,52 +1095,118 @@ class SubscriptionApiService {
 
 class DeviceItem {
   final String hwid;
-  /// Raw name / userAgent string from the API.
+  /// Raw name / userAgent string from the API (legacy fallback).
   final String? rawName;
+  /// OS platform returned directly by RemnaWave (Android, iOS, Windows, …).
+  final String? apiPlatform;
+  /// Hardware model returned directly by RemnaWave (Redmi Note 10 Pro, iPhone 14, …).
+  final String? apiDeviceModel;
   final DateTime? createdAt;
 
-  const DeviceItem({required this.hwid, this.rawName, this.createdAt});
+  const DeviceItem({
+    required this.hwid,
+    this.rawName,
+    this.apiPlatform,
+    this.apiDeviceModel,
+    this.createdAt,
+  });
 
-  /// Human-readable device label derived from rawName / userAgent.
-  String get displayName {
+  /// VPN-client app name (first line in device row).
+  String get clientName {
     final s = (rawName ?? '').toLowerCase();
     if (s.isEmpty) return '';
-    // VPN client patterns
     if (s.contains('sing-box') || s.contains('singbox')) return 'sing-box';
-    if (s.contains('happ')) return 'Happ (Android)';
-    if (s.contains('v2rayng') || s.contains('v2ray-ng')) return 'v2rayNG (Android)';
-    if (s.contains('v2rayn')) return 'v2rayN (Windows)';
-    if (s.contains('nekoray') || s.contains('nekobox')) return 'Nekoray';
-    if (s.contains('clash')) return 'Clash';
-    if (s.contains('shadowrocket')) return 'Shadowrocket (iOS)';
-    if (s.contains('quantumult')) return 'Quantumult (iOS)';
-    if (s.contains('streisand')) return 'Streisand (iOS)';
+    if (s.contains('happ')) return 'Happ';
+    if (s.contains('v2rayng') || s.contains('v2ray-ng')) return 'v2rayNG';
+    if (s.contains('v2rayn')) return 'v2rayN';
+    if (s.contains('nekoray')) return 'Nekoray';
+    if (s.contains('nekobox')) return 'NekoBox';
+    if (s.contains('clashx')) return 'ClashX';
     if (s.contains('flclash')) return 'FlClash';
+    if (s.contains('clash')) return 'Clash';
+    if (s.contains('shadowrocket')) return 'Shadowrocket';
+    if (s.contains('quantumult')) return 'Quantumult';
+    if (s.contains('streisand')) return 'Streisand';
     if (s.contains('karing')) return 'Karing';
-    // OS / platform patterns
+    if (s.contains('mihomo')) return 'Mihomo';
+    // No known client — platform becomes the primary label
+    return '';
+  }
+
+  /// OS / platform: uses direct API field first, falls back to UA parsing.
+  String get platformName {
+    // Direct from RemnaWave API
+    final api = (apiPlatform ?? '').trim();
+    if (api.isNotEmpty) return api;
+    // Fallback: parse from UA string
+    final s = (rawName ?? '').toLowerCase();
+    if (s.isEmpty) return '';
     if (s.contains('iphone')) return 'iPhone';
     if (s.contains('ipad')) return 'iPad';
     if (s.contains('ios')) return 'iOS';
     if (s.contains('android')) return 'Android';
     if (s.contains('windows')) return 'Windows';
-    if (s.contains('mac os') || s.contains('macos')) return 'macOS';
+    if (s.contains('mac os x') || s.contains('macos')) return 'macOS';
     if (s.contains('linux')) return 'Linux';
-    // Generic HTTP clients — likely Android
     if (s.contains('okhttp') || s.contains('dart:io')) return 'Android';
-    // Unknown but not empty: return shortened raw string
+    return '';
+  }
+
+  /// Hardware model: uses direct API field first, falls back to UA parsing.
+  String? get deviceModel {
+    // Direct from RemnaWave API
+    final api = (apiDeviceModel ?? '').trim();
+    if (api.isNotEmpty) return api;
+    // Fallback: parse Android UA format
+    final s = rawName ?? '';
+    if (s.isEmpty) return null;
+    final m = RegExp(
+      r'\((?:Linux;\s*)?Android[^;]*;\s*([^;)]+?)(?:\s+Build[/;][^)]+)?\)',
+      caseSensitive: false,
+    ).firstMatch(s);
+    if (m != null) {
+      final raw = (m.group(1) ?? '').trim();
+      if (raw.isNotEmpty &&
+          !raw.toLowerCase().startsWith('android') &&
+          !RegExp(r'^[a-z]{2}-[A-Z]{2}$').hasMatch(raw)) {
+        return raw;
+      }
+    }
+    return null;
+  }
+
+  /// Primary display label — model > platform > client > raw fallback.
+  String get displayName {
+    final model = deviceModel;
+    if (model != null && model.isNotEmpty) return model;
+    final p = platformName;
+    if (p.isNotEmpty) return p;
+    final c = clientName;
+    if (c.isNotEmpty) return c;
     final trimmed = rawName?.trim() ?? '';
     return trimmed.length > 24 ? '${trimmed.substring(0, 22)}…' : trimmed;
   }
 
+  /// Subtitle hint — platform when different from [displayName], null otherwise.
+  String? get displaySubtitle {
+    final client = clientName;
+    final platform = platformName;
+    if (client.isEmpty || platform.isEmpty) return null;
+    if (client.toLowerCase() == platform.toLowerCase()) return null;
+    return platform;
+  }
+
   factory DeviceItem.fromJson(Map<String, dynamic> j) {
     DateTime? dt;
-    final raw = j['created_at'] as String?;
-    if (raw != null) {
-      try { dt = DateTime.parse(raw); } catch (_) {}
+    final rawDate = j['created_at'] as String?;
+    if (rawDate != null) {
+      try { dt = DateTime.parse(rawDate); } catch (_) {}
     }
     return DeviceItem(
       hwid: j['hwid'] as String? ?? '',
       rawName: j['name'] as String?,
+      apiPlatform: j['platform'] as String?,
+      apiDeviceModel: j['device_model'] as String?,
       createdAt: dt,
     );
   }

@@ -1557,10 +1557,23 @@ class _DevicesCardState extends State<_DevicesCard> {
               itemBuilder: (_, i) {
                 final device = result!.devices[i];
                 final hwid = device.hwid;
-                final label = device.displayName.isNotEmpty
-                    ? device.displayName
-                    : 'Устройство ${i + 1}';
+                final client = device.clientName;
+                final platform = device.platformName;
+                final model = device.deviceModel;
                 final isDeleting = _deletingMap[hwid] == true;
+
+                // Main title: hardware model → OS platform → app name → fallback
+                final title = (model?.isNotEmpty == true)
+                    ? model!
+                    : platform.isNotEmpty
+                        ? platform
+                        : client.isNotEmpty
+                            ? client
+                            : 'Устройство ${i + 1}';
+
+                // Chips shown below title (don't repeat what's already the title)
+                final showPlatform = platform.isNotEmpty && platform != title;
+                final showClient  = client.isNotEmpty  && client  != title;
 
                 return Container(
                   padding: const EdgeInsets.symmetric(
@@ -1571,46 +1584,68 @@ class _DevicesCardState extends State<_DevicesCard> {
                   ),
                   child: Row(
                     children: [
+                      // ── Platform icon ───────────────────────────────────
                       Container(
-                        width: 32,
-                        height: 32,
+                        width: 36,
+                        height: 36,
                         decoration: BoxDecoration(
                           color: DS.violet.withValues(alpha: 0.10),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(9),
                         ),
                         child: Icon(
                           _deviceIcon(device.rawName),
-                          size: 16,
+                          size: 18,
                           color: DS.violet.withValues(alpha: 0.75),
                         ),
                       ),
                       const SizedBox(width: 10),
+                      // ── Text + chips ────────────────────────────────────
                       Expanded(
-                        child: Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: DS.textPrimary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: DS.textPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500),
+                            ),
+                            if (showPlatform || showClient) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  if (showPlatform)
+                                    _DeviceChip(
+                                        label: platform, isClient: false),
+                                  if (showPlatform && showClient)
+                                    const SizedBox(width: 4),
+                                  if (showClient)
+                                    _DeviceChip(
+                                        label: client, isClient: true),
+                                ],
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-                      // Delete button
+                      // ── Delete button ───────────────────────────────────
                       GestureDetector(
                         onTap: isDeleting
                             ? null
                             : () => _onDeleteDevice(hwid),
                         behavior: HitTestBehavior.opaque,
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 4, 0, 4),
+                          padding: const EdgeInsets.fromLTRB(10, 4, 0, 4),
                           child: isDeleting
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
                                   child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: DS.rose))
+                                      strokeWidth: 2, color: DS.rose))
                               : Icon(Icons.link_off_rounded,
                                   size: 18,
                                   color: DS.rose.withValues(alpha: 0.70)),
@@ -1685,6 +1720,43 @@ class _DevicesCardState extends State<_DevicesCard> {
     if (last == 1) return 'устройство';
     if (last >= 2 && last <= 4) return 'устройства';
     return 'устройств';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Device chip — маленький чип-бейдж в строке устройства
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DeviceChip extends StatelessWidget {
+  final String label;
+  /// true = VPN-приложение (фиолетовый акцент), false = OS/платформа (нейтральный)
+  final bool isClient;
+
+  const _DeviceChip({required this.label, required this.isClient});
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isClient
+        ? DS.violet.withValues(alpha: 0.13)
+        : DS.surface3;
+    final fg = isClient
+        ? DS.violet.withValues(alpha: 0.90)
+        : DS.textSecondary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: fg,
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
   }
 }
 

@@ -9,6 +9,7 @@ import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
 import 'services/app_logger.dart';
 import 'services/auth_state.dart';
+import 'services/favorites_state.dart';
 import 'services/me_service.dart';
 import 'services/notification_service.dart';
 import 'widgets/notification_banner.dart';
@@ -70,6 +71,10 @@ void main() async {
   await notificationService.init();
   appLogger.info('App', 'Application started');
   await loadAuthState();
+  await loadFavorites();
+  // Restore cached /me so pages never flash an empty state on first render.
+  await MeService.loadFromCache();
+  // Background refresh — does NOT block startup.
   MeService.refresh();
   runApp(const UlyaVpnApp());
 }

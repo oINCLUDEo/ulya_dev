@@ -68,6 +68,9 @@ class _HomePageState extends State<HomePage>
   late final SpeedCalculator _speedCalc;
   bool _initialized = false;
   bool _isConnecting = false;
+  static const _historyMax = 60;
+  final List<double> _uploadHistory   = [];
+  final List<double> _downloadHistory = [];
 
   // ── Computed ───────────────────────────────────────────────────────────────
   bool get _isConnected => _status.state.toUpperCase() == 'CONNECTED';
@@ -113,8 +116,14 @@ class _HomePageState extends State<HomePage>
       vpnConnectedNotifier.value = connected;
       if (connected) {
         _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
+        _uploadHistory.add(_speedCalc.uploadSpeed);
+        _downloadHistory.add(_speedCalc.downloadSpeed);
+        if (_uploadHistory.length > _historyMax) _uploadHistory.removeAt(0);
+        if (_downloadHistory.length > _historyMax) _downloadHistory.removeAt(0);
       } else {
         _speedCalc.reset();
+        _uploadHistory.clear();
+        _downloadHistory.clear();
       }
       setState(() => _status = s);
     });
@@ -209,6 +218,15 @@ class _HomePageState extends State<HomePage>
       if (_selectedNode == null && savedUuid != null) {
         _selectedNode = nodes.cast<ServerNode?>()
             .firstWhere((n) => n?.uuid == savedUuid, orElse: () => null);
+      }
+      // Default selection: auto node first, then any non-disabled node.
+      if (_selectedNode == null && !isPublic) {
+        _selectedNode = nodes.cast<ServerNode?>().firstWhere(
+            (n) => n?.protocol == 'auto' && !(n?.isDisabled ?? true),
+            orElse: () => null);
+        _selectedNode ??= nodes.cast<ServerNode?>().firstWhere(
+            (n) => !(n?.isDisabled ?? true),
+            orElse: () => null);
       }
       if (_selectedNode != null &&
           selectedServerNotifier.value?.uuid != _selectedNode!.uuid) {
@@ -652,14 +670,6 @@ class _HomePageState extends State<HomePage>
     ));
   }
 
-  String _fmtBytes(int b) {
-    if (b < 0) b = 0;
-    if (b < 1024) return '${b}B';
-    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)}KB';
-    if (b < 1024 * 1024 * 1024) return '${(b / (1024 * 1024)).toStringAsFixed(1)}MB';
-    return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)}GB';
-  }
-
   String _fmtDuration(int sec) {
     final h = sec ~/ 3600, m = (sec % 3600) ~/ 60, s = sec % 60;
     if (h > 0) return '$hч ${m.toString().padLeft(2, '0')}м';
@@ -715,23 +725,6 @@ class _HomePageState extends State<HomePage>
                 const SizedBox(height: 14),
                 _buildConnectionCard(),
                 const SizedBox(height: 12),
-                // Speed card появляется только при подключении, прилетая сверху
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 380),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment.topCenter,
-                  child: _isConnected
-                      ? Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _SpeedCardFlyIn(
-                            uploadSpeed: _speedCalc.uploadSpeed,
-                            downloadSpeed: _speedCalc.downloadSpeed,
-                            uploadTotal: _fmtBytes(_status.uploadSpeed),
-                            downloadTotal: _fmtBytes(_status.download),
-                          ),
-                        )
-                      : const SizedBox.shrink(),
-                ),
                 _buildSubscriptionCard(),
               ])),
             ),
@@ -809,39 +802,41 @@ class _HomePageState extends State<HomePage>
                 color: Colors.black.withValues(alpha: 0.20),
                 blurRadius: 16, offset: const Offset(0, 4))],
       ),
-      child: Padding(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(DS.radius - 1),
+        child: Stack(children: [
+          // Speed graph background — only visible when connected
+          if (connected)
+            Positioned(
+              left: 0, right: 0, top: 0, bottom: 0,
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: SizedBox(
+                  height: 120,
+                  child: Opacity(
+                    opacity: 0.22,
+                    child: _SmoothSpeedGraph(
+                      uploadHistory: _uploadHistory,
+                      downloadHistory: _downloadHistory,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // Card content
+          Padding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
         child: Column(children: [
           // Статус / время сессии
           if (connected)
-            // При активном соединении — только таймер «тикает» слайдом вверх,
-            // а префикс/суффикс остаются на месте (не моргают)
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text('Сессия: ',
                     style: TextStyle(fontSize: 13, color: DS.textSecondary)),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 320),
-                  transitionBuilder: (child, anim) => SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, 0.6),
-                      end: Offset.zero,
-                    ).animate(CurvedAnimation(
-                        parent: anim, curve: Curves.easeOutCubic)),
-                    child: FadeTransition(
-                        opacity: CurvedAnimation(
-                            parent: anim, curve: Curves.easeOut),
-                        child: child),
-                  ),
-                  child: Text(
-                    key: ValueKey(_fmtDuration(_status.duration)),
-                    _fmtDuration(_status.duration),
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: DS.textSecondary,
-                        fontVariations: [FontVariation('wght', 600)]),
-                  ),
+                _RollingTimer(
+                  text: _fmtDuration(_status.duration),
                 ),
                 const Text(' · IP скрыт',
                     style: TextStyle(fontSize: 13, color: DS.textSecondary)),
@@ -866,7 +861,36 @@ class _HomePageState extends State<HomePage>
             onTap: _toggleConnection,
           ),
 
-          const SizedBox(height: 18),
+          const SizedBox(height: 12),
+
+          // Speed numbers — shown only when connected
+          AnimatedSize(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            child: connected
+                ? Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _InlineSpeedChip(
+                          icon: Icons.arrow_downward_rounded,
+                          color: DS.violet,
+                          speed: _speedCalc.downloadSpeed,
+                        ),
+                        const SizedBox(width: 16),
+                        _InlineSpeedChip(
+                          icon: Icons.arrow_upward_rounded,
+                          color: DS.emerald,
+                          speed: _speedCalc.uploadSpeed,
+                        ),
+                      ],
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+
+          const SizedBox(height: 6),
 
           // Gradient separator
           Container(
@@ -890,7 +914,25 @@ class _HomePageState extends State<HomePage>
                 border: Border.all(color: DS.border),
               ),
               child: Row(children: [
-                if (_selectedNode != null && _selectedNode!.countryCode.isNotEmpty)
+                // Icon: bolt for auto nodes, flag for manual, globe for unknown
+                if (_selectedNode?.protocol == 'auto')
+                  Container(
+                    width: 36, height: 26,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF1E1B4B), Color(0xFF1A1760)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                          color: DS.indigoLight.withValues(alpha: 0.40)),
+                    ),
+                    child: const Icon(Icons.bolt_rounded,
+                        size: 16, color: DS.indigoLight),
+                  )
+                else if (_selectedNode != null &&
+                    _selectedNode!.countryCode.isNotEmpty)
                   CountryFlag.fromCountryCode(
                     _selectedNode!.countryCode,
                     theme: const ImageTheme(
@@ -907,29 +949,49 @@ class _HomePageState extends State<HomePage>
                   ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(
-                      _selectedNode?.name ?? 'Выберите сервер',
-                      style: TextStyle(
-                        color: _selectedNode != null ? DS.textPrimary : DS.violet,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                    if (_selectedNode != null &&
-                        (_selectedNode!.protocol ?? '').isNotEmpty)
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       Text(
-                        _selectedNode!.protocol!.toUpperCase(),
-                        style: const TextStyle(color: DS.textSecondary, fontSize: 12),
+                        _selectedNode?.name ?? 'Выберите сервер',
+                        style: TextStyle(
+                          color: _selectedNode != null ? DS.textPrimary : DS.violet,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
-                  ]),
+                      if (_selectedNode != null)
+                        Text(
+                          _selectedNode!.protocol == 'auto'
+                              ? (_selectedNode!.description?.isNotEmpty == true
+                                  ? _selectedNode!.description!
+                                  : 'Авто-выбор сервера')
+                              : ((_selectedNode!.protocol ?? '').isNotEmpty
+                                  ? _selectedNode!.protocol!.toUpperCase()
+                                  : ''),
+                          style: TextStyle(
+                            color: _selectedNode!.protocol == 'auto'
+                                ? DS.indigoLight.withValues(alpha: 0.75)
+                                : DS.textSecondary,
+                            fontSize: 12,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                    ],
+                  ),
                 ),
                 const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 20),
               ]),
             ),
           ),
         ]),
-      ),
+          ),   // Padding
+        ]),    // Stack
+      ),       // ClipRRect
     );
   }
 
@@ -1275,7 +1337,7 @@ class _ConnectButtonState extends State<_ConnectButton>
       children: [
         AnimatedBuilder(
           animation: Listenable.merge([_glowAnim, _spinCtrl]),
-          builder: (_, __) {
+          builder: (_, child) {
             final glowAlpha = widget.isConnected ? _glowAnim.value : 0.0;
             return GestureDetector(
               onTap: widget.isLoading ? null : widget.onTap,
@@ -1352,41 +1414,6 @@ class _ConnectButtonState extends State<_ConnectButton>
       ],
     );
   }
-}
-
-class _SpeedTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final double speed;
-  final String total;
-  final Color color;
-  const _SpeedTile({required this.icon, required this.label, required this.speed,
-    required this.total, required this.color});
-
-  String _fmt(double bps) {
-    if (bps < 1024) return '${bps.toStringAsFixed(0)} B/s';
-    if (bps < 1024 * 1024) return '${(bps / 1024).toStringAsFixed(1)} KB/s';
-    return '${(bps / (1024 * 1024)).toStringAsFixed(2)} MB/s';
-  }
-
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Icon(icon, color: color, size: 13),
-      const SizedBox(width: 5),
-      Text(label, style: const TextStyle(color: DS.textSecondary, fontSize: 11)),
-    ]),
-    const SizedBox(height: 6),
-    TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: speed),
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOutCubic,
-      builder: (_, v, _) => Text(_fmt(v), style: TextStyle(
-          color: color, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
-    ),
-    const SizedBox(height: 3),
-    Text(total, style: const TextStyle(color: DS.textMuted, fontSize: 11)),
-  ]);
 }
 
 class _TelegramStrip extends StatelessWidget {
@@ -1682,6 +1709,66 @@ class VpnInfoBanner extends StatelessWidget {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// _RollingTimer — таймер сессии с поразрядной анимацией (как флип-клок).
+// Каждая цифра анимируется независимо: только изменившиеся цифры «прокручиваются»
+// снизу вверх. Разделители «:», «ч», «м» отображаются статично.
+// ─────────────────────────────────────────────────────────────────────────────
+class _RollingTimer extends StatelessWidget {
+  final String text;
+  const _RollingTimer({required this.text});
+
+  static const _digitStyle = TextStyle(
+    fontSize: 13,
+    color: DS.textSecondary,
+    fontVariations: [FontVariation('wght', 600)],
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+  static const _sepStyle = TextStyle(
+    fontSize: 13,
+    color: DS.textMuted,
+    fontVariations: [FontVariation('wght', 500)],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final chars = text.split('');
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        for (int i = 0; i < chars.length; i++) _buildChar(chars[i], i),
+      ],
+    );
+  }
+
+  Widget _buildChar(String c, int pos) {
+    final isDigit = c.codeUnitAt(0) >= 0x30 && c.codeUnitAt(0) <= 0x39;
+    if (!isDigit) return Text(c, style: _sepStyle);
+
+    return ClipRect(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        transitionBuilder: (child, anim) => SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 1.0),
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
+          child: FadeTransition(
+            opacity: CurvedAnimation(parent: anim, curve: const Interval(0, 0.6)),
+            child: child,
+          ),
+        ),
+        child: Text(
+          c,
+          key: ValueKey('$pos:$c'),
+          style: _digitStyle,
+        ),
+      ),
+    );
+  }
+}
+
 class _EmptyNodes extends StatelessWidget {
   const _EmptyNodes();
 
@@ -1695,87 +1782,205 @@ class _EmptyNodes extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _SpeedCardFlyIn — карточка скоростей, прилетающая сверху при подключении
+// _InlineSpeedChip — маленький чип скорости внутри карточки подключения
 // ─────────────────────────────────────────────────────────────────────────────
-class _SpeedCardFlyIn extends StatefulWidget {
-  final double uploadSpeed;
-  final double downloadSpeed;
-  final String uploadTotal;
-  final String downloadTotal;
+class _InlineSpeedChip extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final double speed;
 
-  const _SpeedCardFlyIn({
-    required this.uploadSpeed,
-    required this.downloadSpeed,
-    required this.uploadTotal,
-    required this.downloadTotal,
+  const _InlineSpeedChip({required this.icon, required this.color, required this.speed});
+
+  String _fmt(double bps) {
+    if (bps < 1024) return '${bps.toStringAsFixed(0)} B/s';
+    if (bps < 1024 * 1024) return '${(bps / 1024).toStringAsFixed(1)} KB/s';
+    return '${(bps / (1024 * 1024)).toStringAsFixed(1)} MB/s';
+  }
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, color: color, size: 13),
+      const SizedBox(width: 5),
+      TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: speed),
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOutCubic,
+        builder: (_, v, _) => Text(
+          _fmt(v),
+          style: TextStyle(
+            color: color, fontSize: 14,
+            fontWeight: FontWeight.w700, letterSpacing: 0.1,
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _SmoothSpeedGraph — 60fps graph drawn as background of the connection card
+// ─────────────────────────────────────────────────────────────────────────────
+class _SmoothSpeedGraph extends StatefulWidget {
+  final List<double> uploadHistory;
+  final List<double> downloadHistory;
+
+  const _SmoothSpeedGraph({
+    required this.uploadHistory,
+    required this.downloadHistory,
   });
 
   @override
-  State<_SpeedCardFlyIn> createState() => _SpeedCardFlyInState();
+  State<_SmoothSpeedGraph> createState() => _SmoothSpeedGraphState();
 }
 
-class _SpeedCardFlyInState extends State<_SpeedCardFlyIn>
+class _SmoothSpeedGraphState extends State<_SmoothSpeedGraph>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  late final Animation<Offset> _slide;
-  late final Animation<double> _fade;
+  late final AnimationController _ticker;
+  double _tipUpload = 0;
+  double _tipDownload = 0;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 520));
-    _slide = Tween<Offset>(
-      begin: const Offset(0, -0.8),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
-    _fade = Tween<double>(begin: 0, end: 1).animate(
-        CurvedAnimation(parent: _ctrl, curve: const Interval(0, 0.55)));
-    _ctrl.forward();
+    _ticker = AnimationController(vsync: this, duration: const Duration(seconds: 1))
+      ..addListener(_onTick)
+      ..repeat();
+  }
+
+  void _onTick() {
+    final targetU = widget.uploadHistory.isNotEmpty ? widget.uploadHistory.last : 0.0;
+    final targetD = widget.downloadHistory.isNotEmpty ? widget.downloadHistory.last : 0.0;
+    final newU = _tipUpload + (targetU - _tipUpload) * 0.10;
+    final newD = _tipDownload + (targetD - _tipDownload) * 0.10;
+    if ((newU - _tipUpload).abs() > 0.5 || (newD - _tipDownload).abs() > 0.5) {
+      setState(() {
+        _tipUpload = newU;
+        _tipDownload = newD;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_SmoothSpeedGraph old) {
+    super.didUpdateWidget(old);
+    if (widget.uploadHistory.isEmpty) {
+      _tipUpload = 0;
+      _tipDownload = 0;
+    }
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _ticker.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fade,
-      child: SlideTransition(
-        position: _slide,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: DS.surface1,
-            borderRadius: BorderRadius.circular(DS.radiusSm),
-            border: Border.all(color: DS.border),
-          ),
-          child: Row(children: [
-            Expanded(
-                child: _SpeedTile(
-              icon: Icons.arrow_upward_rounded,
-              color: DS.emerald,
-              label: 'Отдача',
-              speed: widget.uploadSpeed,
-              total: widget.uploadTotal,
-            )),
-            Container(width: 1, height: 36, color: DS.border),
-            Expanded(
-                child: _SpeedTile(
-              icon: Icons.arrow_downward_rounded,
-              color: DS.violet,
-              label: 'Загрузка',
-              speed: widget.downloadSpeed,
-              total: widget.downloadTotal,
-            )),
-          ]),
-        ),
+    // Build display lists: history without last item + smoothed tip as last point
+    final upDisplay = [
+      ...widget.uploadHistory.take(
+          (widget.uploadHistory.length - 1).clamp(0, widget.uploadHistory.length)),
+      _tipUpload,
+    ];
+    final downDisplay = [
+      ...widget.downloadHistory.take(
+          (widget.downloadHistory.length - 1).clamp(0, widget.downloadHistory.length)),
+      _tipDownload,
+    ];
+
+    return CustomPaint(
+      painter: _SpeedWavePainter(
+        uploadSamples: upDisplay,
+        downloadSamples: downDisplay,
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _SpeedWavePainter — рисует две кривые (download + upload) с градиентом
+// ─────────────────────────────────────────────────────────────────────────────
+class _SpeedWavePainter extends CustomPainter {
+  final List<double> uploadSamples;
+  final List<double> downloadSamples;
+
+  const _SpeedWavePainter({
+    required this.uploadSamples,
+    required this.downloadSamples,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (uploadSamples.isEmpty && downloadSamples.isEmpty) return;
+
+    final allValues = [...uploadSamples, ...downloadSamples];
+    final maxVal = allValues.fold<double>(0, (m, v) => v > m ? v : m);
+    final scale = maxVal > 0 ? maxVal : 1.0;
+
+    _drawCurve(canvas, size,
+      samples: downloadSamples, scale: scale,
+      lineColor: const Color(0xFF7C6BFF),
+      fillColors: [const Color(0x887C6BFF), const Color(0x007C6BFF)],
+    );
+    _drawCurve(canvas, size,
+      samples: uploadSamples, scale: scale,
+      lineColor: const Color(0xFF1DC97A),
+      fillColors: [const Color(0x881DC97A), const Color(0x001DC97A)],
+    );
+  }
+
+  void _drawCurve(Canvas canvas, Size size, {
+    required List<double> samples,
+    required double scale,
+    required Color lineColor,
+    required List<Color> fillColors,
+  }) {
+    if (samples.isEmpty) return;
+    final count = samples.length;
+    final w = size.width;
+    final h = size.height;
+    final vPad = h * 0.06;
+
+    Offset pt(int i) {
+      final x = count == 1 ? w : i / (count - 1) * w;
+      final y = h - vPad - (samples[i] / scale) * (h - vPad * 2);
+      return Offset(x, y.clamp(0.0, h));
+    }
+
+    final path = Path()..moveTo(0, pt(0).dy);
+    for (int i = 0; i < count - 1; i++) {
+      final p0 = pt(i);
+      final p1 = pt(i + 1);
+      final cx = (p0.dx + p1.dx) / 2;
+      path.cubicTo(cx, p0.dy, cx, p1.dy, p1.dx, p1.dy);
+    }
+
+    canvas.drawPath(
+      Path.from(path)
+        ..lineTo(w, h)
+        ..lineTo(0, h)
+        ..close(),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: fillColors,
+        ).createShader(Rect.fromLTWH(0, 0, w, h)),
+    );
+    canvas.drawPath(path, Paint()
+      ..color = lineColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round);
+  }
+
+  @override
+  bool shouldRepaint(_SpeedWavePainter old) =>
+      old.uploadSamples != uploadSamples ||
+      old.downloadSamples != downloadSamples;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
