@@ -1771,6 +1771,15 @@ class _SwitchBreakdownCard extends StatelessWidget {
     final p = preview!;
     final isFree = p.isFree;
 
+    // Build price breakdown rows
+    final String tariffCostLabel;
+    if (p.hasDeviceBreakdown) {
+      final base = p.baseSwitchCostKopeks ?? 0;
+      tariffCostLabel = base == 0 ? 'Бесплатно' : '${(base / 100).round()} ₽';
+    } else {
+      tariffCostLabel = isFree ? 'Бесплатно' : p.upgradeCostLabel;
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
@@ -1781,25 +1790,33 @@ class _SwitchBreakdownCard extends StatelessWidget {
         children: [
           // Текущий тариф
           if (p.currentTariffName != null)
-            _Row(
-              label: 'Текущий тариф',
-              value: p.currentTariffName!,
-            ),
+            _Row(label: 'Текущий тариф', value: p.currentTariffName!),
           // Новый тариф
-          _Row(
-            label: 'Новый тариф',
-            value: p.newTariffName,
-          ),
+          _Row(label: 'Новый тариф', value: p.newTariffName),
           // Остаток дней
-          _Row(
-            label: 'Осталось дней',
-            value: '${p.remainingDays} дн.',
-          ),
-          // Стоимость переключения
-          _Row(
-            label: p.isUpgrade ? 'Доплата' : 'Стоимость',
-            value: isFree ? 'Бесплатно' : p.upgradeCostLabel,
-          ),
+          _Row(label: 'Осталось дней', value: '${p.remainingDays} дн.'),
+
+          // ── Разбивка стоимости ───────────────────────────────────────────
+          if (p.hasDeviceBreakdown) ...[
+            // Базовая доплата за тариф
+            _Row(
+              label: p.isUpgrade ? 'Доплата за тариф' : 'Стоимость тарифа',
+              value: tariffCostLabel,
+            ),
+            // Доп. устройства
+            _Row(
+              label: '+${(p.devicesRequested ?? 0)} устр. · ${p.remainingDays} дн.',
+              value: '+${((p.extraDeviceCostKopeks ?? 0) / 100).round()} ₽',
+              labelColor: DS.violet.withValues(alpha: 0.85),
+              valueColor: DS.violet,
+            ),
+          ] else
+            // Без разбивки — одна строка
+            _Row(
+              label: p.isUpgrade ? 'Доплата' : 'Стоимость',
+              value: tariffCostLabel,
+            ),
+
           // Баланс
           _Row(
             label: 'Баланс',

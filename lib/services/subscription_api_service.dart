@@ -462,6 +462,10 @@ class TariffSwitchPreview {
   final int missingAmountKopeks;
   final String missingAmountLabel;
   final bool isUpgrade;
+  // Device surcharge breakdown (non-null only when devices param was passed)
+  final int? baseSwitchCostKopeks;
+  final int? extraDeviceCostKopeks;
+  final int? devicesRequested;
 
   const TariffSwitchPreview({
     required this.canSwitch,
@@ -478,10 +482,15 @@ class TariffSwitchPreview {
     required this.missingAmountKopeks,
     required this.missingAmountLabel,
     required this.isUpgrade,
+    this.baseSwitchCostKopeks,
+    this.extraDeviceCostKopeks,
+    this.devicesRequested,
   });
 
   double get upgradeCostRub => upgradeCostKopeks / 100;
   bool get isFree => upgradeCostKopeks == 0;
+  bool get hasDeviceBreakdown =>
+      extraDeviceCostKopeks != null && extraDeviceCostKopeks! > 0;
 
   factory TariffSwitchPreview.fromJson(Map<String, dynamic> json) {
     return TariffSwitchPreview(
@@ -499,6 +508,10 @@ class TariffSwitchPreview {
       missingAmountKopeks: (json['missing_amount_kopeks'] as num?)?.toInt() ?? 0,
       missingAmountLabel: json['missing_amount_label'] as String? ?? '',
       isUpgrade: json['is_upgrade'] as bool? ?? false,
+      baseSwitchCostKopeks: (json['base_switch_cost_kopeks'] as num?)?.toInt(),
+      extraDeviceCostKopeks:
+          (json['extra_device_cost_kopeks'] as num?)?.toInt(),
+      devicesRequested: (json['devices_requested'] as num?)?.toInt(),
     );
   }
 }
@@ -1054,6 +1067,26 @@ class SubscriptionApiService {
       return false;
     }
   }
+
+  /// POST /mobile/v1/devices/delete — удалить одно устройство по hwid
+  static Future<bool> deleteDevice({required String hwid}) async {
+    try {
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/devices/delete'),
+        jsonEncode({'hwid': hwid}),
+        timeout: const Duration(seconds: 15),
+      );
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        return json['success'] as bool? ?? false;
+      }
+      debugPrint('SubscriptionApiService.deleteDevice: ${resp.statusCode}');
+      return false;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.deleteDevice error: $e');
+      return false;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1062,10 +1095,42 @@ class SubscriptionApiService {
 
 class DeviceItem {
   final String hwid;
-  final String? name;
+  /// Raw name / userAgent string from the API.
+  final String? rawName;
   final DateTime? createdAt;
 
-  const DeviceItem({required this.hwid, this.name, this.createdAt});
+  const DeviceItem({required this.hwid, this.rawName, this.createdAt});
+
+  /// Human-readable device label derived from rawName / userAgent.
+  String get displayName {
+    final s = (rawName ?? '').toLowerCase();
+    if (s.isEmpty) return '';
+    // VPN client patterns
+    if (s.contains('sing-box') || s.contains('singbox')) return 'sing-box';
+    if (s.contains('happ')) return 'Happ (Android)';
+    if (s.contains('v2rayng') || s.contains('v2ray-ng')) return 'v2rayNG (Android)';
+    if (s.contains('v2rayn')) return 'v2rayN (Windows)';
+    if (s.contains('nekoray') || s.contains('nekobox')) return 'Nekoray';
+    if (s.contains('clash')) return 'Clash';
+    if (s.contains('shadowrocket')) return 'Shadowrocket (iOS)';
+    if (s.contains('quantumult')) return 'Quantumult (iOS)';
+    if (s.contains('streisand')) return 'Streisand (iOS)';
+    if (s.contains('flclash')) return 'FlClash';
+    if (s.contains('karing')) return 'Karing';
+    // OS / platform patterns
+    if (s.contains('iphone')) return 'iPhone';
+    if (s.contains('ipad')) return 'iPad';
+    if (s.contains('ios')) return 'iOS';
+    if (s.contains('android')) return 'Android';
+    if (s.contains('windows')) return 'Windows';
+    if (s.contains('mac os') || s.contains('macos')) return 'macOS';
+    if (s.contains('linux')) return 'Linux';
+    // Generic HTTP clients — likely Android
+    if (s.contains('okhttp') || s.contains('dart:io')) return 'Android';
+    // Unknown but not empty: return shortened raw string
+    final trimmed = rawName?.trim() ?? '';
+    return trimmed.length > 24 ? '${trimmed.substring(0, 22)}…' : trimmed;
+  }
 
   factory DeviceItem.fromJson(Map<String, dynamic> j) {
     DateTime? dt;
@@ -1075,7 +1140,7 @@ class DeviceItem {
     }
     return DeviceItem(
       hwid: j['hwid'] as String? ?? '',
-      name: j['name'] as String?,
+      rawName: j['name'] as String?,
       createdAt: dt,
     );
   }

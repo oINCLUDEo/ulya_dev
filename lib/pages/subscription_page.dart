@@ -1319,6 +1319,8 @@ class _DevicesCardState extends State<_DevicesCard> {
   DevicesResult? _result;
   bool _loading = true;
   bool _resetting = false;
+  // HWID → true when that row is being deleted
+  final Map<String, bool> _deletingMap = {};
 
   @override
   void initState() {
@@ -1381,6 +1383,50 @@ class _DevicesCardState extends State<_DevicesCard> {
       if (mounted) _showSnack('Ошибка соединения с сервером');
     }
     if (mounted) setState(() => _resetting = false);
+  }
+
+  Future<void> _onDeleteDevice(String hwid) async {
+    if (_deletingMap[hwid] == true) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: DS.surface2,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(DS.radius)),
+        title: const Text('Отключить устройство?',
+            style: TextStyle(
+                color: DS.textPrimary, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'Устройство будет отвязано. Для повторного подключения нужно будет переподключить VPN на этом устройстве.',
+          style: TextStyle(color: DS.textSecondary, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Отключить',
+                  style: TextStyle(color: DS.rose))),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deletingMap[hwid] = true);
+    try {
+      final ok = await SubscriptionApiService.deleteDevice(hwid: hwid);
+      if (!mounted) return;
+      if (ok) {
+        _showSnack('Устройство отключено', ok: true);
+        await _loadDevices();
+      } else {
+        _showSnack('Не удалось отключить устройство');
+      }
+    } catch (_) {
+      if (mounted) _showSnack('Ошибка соединения с сервером');
+    }
+    if (mounted) setState(() => _deletingMap.remove(hwid));
   }
 
   void _showSnack(String msg, {bool ok = false}) {
@@ -1511,47 +1557,63 @@ class _DevicesCardState extends State<_DevicesCard> {
               itemBuilder: (_, i) {
                 final device = result!.devices[i];
                 final hwid = device.hwid;
-                // Show last 12 chars of hwid as fingerprint hint
-                final hint = hwid.length > 12
-                    ? '…${hwid.substring(hwid.length - 12)}'
-                    : hwid;
-                final name = device.name;
+                final label = device.displayName.isNotEmpty
+                    ? device.displayName
+                    : 'Устройство ${i + 1}';
+                final isDeleting = _deletingMap[hwid] == true;
+
                 return Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 9),
+                      horizontal: 12, vertical: 10),
                   decoration: BoxDecoration(
                     color: DS.surface2,
                     borderRadius: BorderRadius.circular(DS.radiusSm),
                   ),
                   child: Row(
                     children: [
-                      Icon(
-                        _deviceIcon(name),
-                        size: 16,
-                        color: DS.textMuted,
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: DS.violet.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          _deviceIcon(device.rawName),
+                          size: 16,
+                          color: DS.violet.withValues(alpha: 0.75),
+                        ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              name ?? 'Устройство ${i + 1}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  color: DS.textPrimary,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w500),
-                            ),
-                            Text(
-                              hint,
-                              style: const TextStyle(
-                                  color: DS.textMuted,
-                                  fontSize: 11,
-                                  fontFamily: 'monospace'),
-                            ),
-                          ],
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: DS.textPrimary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      // Delete button
+                      GestureDetector(
+                        onTap: isDeleting
+                            ? null
+                            : () => _onDeleteDevice(hwid),
+                        behavior: HitTestBehavior.opaque,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(8, 4, 0, 4),
+                          child: isDeleting
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: DS.rose))
+                              : Icon(Icons.link_off_rounded,
+                                  size: 18,
+                                  color: DS.rose.withValues(alpha: 0.70)),
                         ),
                       ),
                     ],
