@@ -43,12 +43,10 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
     globalRefreshNotifier.addListener(_onGlobalRefresh);
-    _loadCachedMe();
+    // Cache is loaded in main() before runApp — no per-page cache call needed.
     _refresh();
     _autopayEnabled = meNotifier.value?.subscription?.autopayEnabled ?? false;
   }
-
-  Future<void> _loadCachedMe() async => MeService.loadFromCache();
 
   @override
   void dispose() {
@@ -138,7 +136,9 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                         onLoginTap: () => showAuthBottomSheet(context)),
                     const SizedBox(height: 12),
                     _GoPremiumBanner(onTap: _onPremiumTap),
-                  ] else if (_loading && me == null) ...[
+                  ] else if (me == null && _loading) ...[
+                    // Only show full-screen spinner when there is absolutely no
+                    // cached data yet (very first launch after install).
                     const SizedBox(height: 140),
                     const Center(
                       child: CircularProgressIndicator(
@@ -169,6 +169,8 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                         loading: _autopayLoading,
                         onToggle: _onAutopayToggle,
                       ),
+                      const SizedBox(height: 12),
+                      const _DevicesCard(),
                     ],
                     const SizedBox(height: 24),
                     _LogoutButton(onTap: _onLogout),
@@ -1299,6 +1301,328 @@ class _TopupSheetState extends State<_TopupSheet> {
         ],
       ),
     );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Devices card
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _DevicesCard extends StatefulWidget {
+  const _DevicesCard();
+
+  @override
+  State<_DevicesCard> createState() => _DevicesCardState();
+}
+
+class _DevicesCardState extends State<_DevicesCard> {
+  DevicesResult? _result;
+  bool _loading = true;
+  bool _resetting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDevices();
+  }
+
+  Future<void> _loadDevices() async {
+    if (!mounted) return;
+    setState(() => _loading = true);
+    try {
+      final r = await SubscriptionApiService.listDevices();
+      if (mounted) setState(() => _result = r);
+    } catch (_) {}
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _onResetTap() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: DS.surface2,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(DS.radius)),
+        title: const Text(
+          'Сбросить устройства?',
+          style: TextStyle(
+              color: DS.textPrimary, fontWeight: FontWeight.w700),
+        ),
+        content: const Text(
+          'Все подключённые устройства будут отвязаны. После этого вам нужно будет заново подключить каждое устройство.',
+          style: TextStyle(color: DS.textSecondary, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Сбросить',
+                style: TextStyle(color: DS.rose)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _resetting = true);
+    try {
+      final ok = await SubscriptionApiService.resetDevices();
+      if (!mounted) return;
+      if (ok) {
+        _showSnack('Все устройства сброшены', ok: true);
+        await _loadDevices();
+      } else {
+        _showSnack('Не удалось сбросить устройства');
+      }
+    } catch (_) {
+      if (mounted) _showSnack('Ошибка соединения с сервером');
+    }
+    if (mounted) setState(() => _resetting = false);
+  }
+
+  void _showSnack(String msg, {bool ok = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: ok ? DS.emerald : DS.rose,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(DS.radiusSm)),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final result = _result;
+    final count = result?.count ?? 0;
+    final limit = result?.deviceLimit ?? 0;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(DS.radius),
+        border: Border.all(color: DS.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Header row ───────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                      color: DS.violet.withValues(alpha: 0.12),
+                      borderRadius:
+                          BorderRadius.circular(DS.radiusSm)),
+                  child:
+                      const Icon(Icons.devices_rounded, color: DS.violet, size: 18),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Подключённые устройства',
+                          style: TextStyle(
+                              color: DS.textPrimary,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500)),
+                      if (!_loading && result != null)
+                        Text(
+                          limit > 0
+                              ? '$count из $limit устр.'
+                              : '$count ${_devWord(count)}',
+                          style: const TextStyle(
+                              color: DS.textSecondary, fontSize: 12),
+                        ),
+                    ],
+                  ),
+                ),
+                // Refresh button
+                GestureDetector(
+                  onTap: _loading ? null : _loadDevices,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: _loading && result == null
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2, color: DS.violet))
+                        : Icon(Icons.refresh_rounded,
+                            size: 18,
+                            color: _loading ? DS.textMuted : DS.textSecondary),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Divider ──────────────────────────────────────────────────────
+          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // ── Body ─────────────────────────────────────────────────────────
+          if (_loading && result == null)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                  child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.5, color: DS.violet))),
+            )
+          else if (result == null)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+              child: Text('Не удалось загрузить список устройств',
+                  style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+            )
+          else if (count == 0)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline_rounded,
+                      size: 15, color: DS.textMuted),
+                  SizedBox(width: 8),
+                  Text('Нет подключённых устройств',
+                      style: TextStyle(
+                          color: DS.textSecondary, fontSize: 13)),
+                ],
+              ),
+            )
+          else ...[
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              itemCount: count,
+              separatorBuilder: (_, __) => const SizedBox(height: 6),
+              itemBuilder: (_, i) {
+                final device = result!.devices[i];
+                final hwid = device.hwid;
+                // Show last 12 chars of hwid as fingerprint hint
+                final hint = hwid.length > 12
+                    ? '…${hwid.substring(hwid.length - 12)}'
+                    : hwid;
+                final name = device.name;
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: DS.surface2,
+                    borderRadius: BorderRadius.circular(DS.radiusSm),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _deviceIcon(name),
+                        size: 16,
+                        color: DS.textMuted,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name ?? 'Устройство ${i + 1}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: DS.textPrimary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500),
+                            ),
+                            Text(
+                              hint,
+                              style: const TextStyle(
+                                  color: DS.textMuted,
+                                  fontSize: 11,
+                                  fontFamily: 'monospace'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+
+          // ── Reset button ─────────────────────────────────────────────────
+          if (count > 0) ...[
+            const Divider(height: 1, indent: 16, endIndent: 16),
+            GestureDetector(
+              onTap: (_resetting || _loading) ? null : _onResetTap,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_resetting)
+                      const SizedBox(
+                          width: 15,
+                          height: 15,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: DS.rose))
+                    else
+                      const Icon(Icons.link_off_rounded,
+                          size: 16, color: DS.rose),
+                    const SizedBox(width: 7),
+                    Text(
+                      _resetting ? 'Сброс...' : 'Сбросить все устройства',
+                      style: TextStyle(
+                          color: _resetting ? DS.textMuted : DS.rose,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ] else
+            const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  static IconData _deviceIcon(String? name) {
+    if (name == null) return Icons.devices_rounded;
+    final n = name.toLowerCase();
+    if (n.contains('android') || n.contains('pixel') || n.contains('samsung')) {
+      return Icons.phone_android_rounded;
+    }
+    if (n.contains('iphone') || n.contains('ios') || n.contains('ipad')) {
+      return Icons.phone_iphone_rounded;
+    }
+    if (n.contains('mac') || n.contains('windows') || n.contains('linux')) {
+      return Icons.computer_rounded;
+    }
+    return Icons.devices_rounded;
+  }
+
+  static String _devWord(int n) {
+    final abs = n.abs() % 100;
+    final last = abs % 10;
+    if (abs >= 11 && abs <= 19) return 'устройств';
+    if (last == 1) return 'устройство';
+    if (last >= 2 && last <= 4) return 'устройства';
+    return 'устройств';
   }
 }
 

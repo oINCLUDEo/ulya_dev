@@ -396,6 +396,8 @@ class TariffInfo {
   final int deviceLimit;
   final int tierLevel;
   final List<TariffPeriod> periods;
+  /// Price per extra device per month, in kopeks. Null = not configurable.
+  final int? devicePriceKopeks;
 
   const TariffInfo({
     required this.id,
@@ -405,6 +407,7 @@ class TariffInfo {
     required this.deviceLimit,
     required this.tierLevel,
     required this.periods,
+    this.devicePriceKopeks,
   });
 
   /// Cheapest period (lowest total price — usually 1 month).
@@ -434,6 +437,7 @@ class TariffInfo {
       trafficLimitGb: (json['traffic_limit_gb'] as num?)?.toInt() ?? 0,
       deviceLimit: (json['device_limit'] as num?)?.toInt() ?? 1,
       tierLevel: (json['tier_level'] as num?)?.toInt() ?? 1,
+      devicePriceKopeks: (json['device_price_kopeks'] as num?)?.toInt(),
       periods: rawPeriods
           .whereType<Map<String, dynamic>>()
           .map(TariffPeriod.fromJson)
@@ -499,6 +503,22 @@ class TariffSwitchPreview {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// In-memory cache notifiers — populated once on startup, shared across pages
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Last successfully fetched tariff list.  Pages read this immediately on
+/// mount so they never flash an empty state while the network request is in
+/// flight.
+final ValueNotifier<List<TariffInfo>?> tarifsNotifier =
+    ValueNotifier<List<TariffInfo>?>(null);
+
+/// Last successfully fetched subscription options (balance, periods, …).
+final ValueNotifier<SubscriptionOptions?> optionsNotifier =
+    ValueNotifier<SubscriptionOptions?>(null);
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Service for the mobile subscription API.
 class SubscriptionApiService {
   SubscriptionApiService._();
@@ -559,6 +579,17 @@ class SubscriptionApiService {
     }
   }
 
+  static Future<http.Response> _delete(Uri uri) async {
+    final c = _makeClient();
+    try {
+      return await c
+          .delete(uri, headers: _headers())
+          .timeout(const Duration(seconds: 15));
+    } finally {
+      c.close();
+    }
+  }
+
   /// GET /mobile/v1/subscription/options
   static Future<SubscriptionOptions?> getOptions() async {
     try {
@@ -566,9 +597,11 @@ class SubscriptionApiService {
         Uri.parse('$_base/mobile/v1/subscription/options'),
       );
       if (resp.statusCode == 200) {
-        return SubscriptionOptions.fromJson(
+        final opts = SubscriptionOptions.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        optionsNotifier.value = opts;
+        return opts;
       }
       debugPrint('SubscriptionApiService.getOptions: ${resp.statusCode}');
       return null;
@@ -778,6 +811,7 @@ class SubscriptionApiService {
             .map(TariffInfo.fromJson)
             .toList();
         debugPrint('SubscriptionApiService.getTariffs: parsed ${result.length} tariffs');
+        tarifsNotifier.value = result;
         return result;
       }
       return null;
@@ -898,11 +932,14 @@ class SubscriptionApiService {
   /// Returns cost preview without committing anything.
   static Future<TariffSwitchPreview?> previewTariffSwitch({
     required int tariffId,
+    int? devices,
   }) async {
     try {
+      final body = <String, dynamic>{'tariff_id': tariffId};
+      if (devices != null) body['devices'] = devices;
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/tariff/switch/preview'),
-        jsonEncode({'tariff_id': tariffId}),
+        jsonEncode(body),
         timeout: const Duration(seconds: 15),
       );
       if (resp.statusCode == 200) {
@@ -920,11 +957,16 @@ class SubscriptionApiService {
 
   /// POST /mobile/v1/subscription/tariff/switch
   /// Executes tariff switch. Keeps existing end_date; charges difference for upgrades.
-  static Future<BuyResult?> switchTariff({required int tariffId}) async {
+  static Future<BuyResult?> switchTariff({
+    required int tariffId,
+    int? devices,
+  }) async {
     try {
+      final body = <String, dynamic>{'tariff_id': tariffId};
+      if (devices != null) body['devices'] = devices;
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/tariff/switch'),
-        jsonEncode({'tariff_id': tariffId}),
+        jsonEncode(body),
       );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -974,5 +1016,91 @@ class SubscriptionApiService {
       debugPrint('SubscriptionApiService.setAutopay error: $e');
       return null;
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Device management
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// GET /mobile/v1/devices
+  static Future<DevicesResult?> listDevices() async {
+    try {
+      final resp = await _get(Uri.parse('$_base/mobile/v1/devices'));
+      if (resp.statusCode == 200) {
+        return DevicesResult.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      debugPrint('SubscriptionApiService.listDevices: ${resp.statusCode}');
+      return null;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.listDevices error: $e');
+      return null;
+    }
+  }
+
+  /// DELETE /mobile/v1/devices — сбросить все устройства
+  static Future<bool> resetDevices() async {
+    try {
+      final resp = await _delete(Uri.parse('$_base/mobile/v1/devices'));
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        return json['success'] as bool? ?? false;
+      }
+      debugPrint('SubscriptionApiService.resetDevices: ${resp.statusCode}');
+      return false;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.resetDevices error: $e');
+      return false;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Device management models
+// ─────────────────────────────────────────────────────────────────────────────
+
+class DeviceItem {
+  final String hwid;
+  final String? name;
+  final DateTime? createdAt;
+
+  const DeviceItem({required this.hwid, this.name, this.createdAt});
+
+  factory DeviceItem.fromJson(Map<String, dynamic> j) {
+    DateTime? dt;
+    final raw = j['created_at'] as String?;
+    if (raw != null) {
+      try { dt = DateTime.parse(raw); } catch (_) {}
+    }
+    return DeviceItem(
+      hwid: j['hwid'] as String? ?? '',
+      name: j['name'] as String?,
+      createdAt: dt,
+    );
+  }
+}
+
+class DevicesResult {
+  final List<DeviceItem> devices;
+  final int count;
+  final int deviceLimit;
+
+  const DevicesResult({
+    required this.devices,
+    required this.count,
+    required this.deviceLimit,
+  });
+
+  factory DevicesResult.fromJson(Map<String, dynamic> j) {
+    final raw = j['devices'] as List<dynamic>? ?? [];
+    return DevicesResult(
+      devices: raw
+          .whereType<Map<String, dynamic>>()
+          .map(DeviceItem.fromJson)
+          .toList(),
+      count: (j['count'] as num?)?.toInt() ?? 0,
+      deviceLimit: (j['device_limit'] as num?)?.toInt() ?? 0,
+    );
   }
 }
