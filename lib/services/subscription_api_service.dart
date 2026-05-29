@@ -834,6 +834,55 @@ class SubscriptionApiService {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Trial subscription
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// GET /mobile/v1/subscription/trial — check trial availability.
+  /// Returns null when the endpoint is unavailable or an error occurs.
+  static Future<Map<String, dynamic>?> getTrialInfo() async {
+    try {
+      final resp = await _get(Uri.parse('$_base/mobile/v1/subscription/trial'));
+      if (resp.statusCode == 200) {
+        return jsonDecode(resp.body) as Map<String, dynamic>;
+      }
+      debugPrint('SubscriptionApiService.getTrialInfo: ${resp.statusCode}');
+      return null;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.getTrialInfo error: $e');
+      return null;
+    }
+  }
+
+  /// POST /mobile/v1/subscription/trial — activate free trial.
+  static Future<BuyResult?> activateTrial() async {
+    try {
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/trial'),
+        '{}',
+      );
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        final success = json['success'] as bool? ?? false;
+        return BuyResult(
+          status: success ? 'success' : 'error',
+          message: json['message'] as String?,
+          subscription: json['subscription'] as Map<String, dynamic>?,
+        );
+      }
+      debugPrint('SubscriptionApiService.activateTrial: ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+      } catch (_) {}
+      return const BuyResult(status: 'error', message: 'Ошибка активации пробного периода');
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.activateTrial error: $e');
+      return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
   /// POST /mobile/v1/subscription/buy-tariff
   static Future<BuyResult?> buyTariff({
     required int tariffId,

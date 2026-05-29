@@ -191,6 +191,53 @@ class AuthService {
     }
   }
 
+  // ── Google OAuth ──────────────────────────────────────────────────────────
+
+  /// Initiates Google OAuth: calls `/mobile/v1/auth/google/init`, gets a
+  /// token + the Google authorize URL, then opens the URL in the browser.
+  ///
+  /// Returns the token string on success, or null if something failed.
+  /// After calling this, poll [pollStatus] with the returned token.
+  static Future<String?> startGoogleLogin({
+    required void Function(String message) onError,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/google/init'),
+            headers: {'Content-Type': 'application/json'},
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        appLogger.error('AuthService', 'google/init failed: HTTP ${response.statusCode}');
+        onError('Ошибка сервера (${response.statusCode}). Попробуйте позже.');
+        return null;
+      }
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final token = body['token'] as String?;
+      final authorizeUrl = body['authorize_url'] as String?;
+
+      if (token == null || authorizeUrl == null) {
+        onError('Неверный ответ сервера.');
+        return null;
+      }
+
+      final uri = Uri.parse(authorizeUrl);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        onError('Не удалось открыть браузер.');
+        return null;
+      }
+
+      appLogger.info('AuthService', 'google auth init succeeded, token received');
+      return token;
+    } on Exception catch (e) {
+      onError('Ошибка соединения с сервером: $e');
+      return null;
+    }
+  }
+
   // ── Logout ────────────────────────────────────────────────────────────────
 
   /// Clear the authenticated session and subscription URL.

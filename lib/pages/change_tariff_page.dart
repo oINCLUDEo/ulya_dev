@@ -92,11 +92,6 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
   bool _checkoutMode = false;
   TariffPeriod? _selectedPeriod;
 
-  // ── Tariff switch preview (used when user has active subscription) ──────────
-  TariffSwitchPreview? _switchPreview;
-  bool _loadingPreview = false;
-  bool _previewLoadFailed = false;
-
   // ── Payment ─────────────────────────────────────────────────────────────────
   bool _purchasing = false;
   bool _pendingPaymentPoll = false;
@@ -195,13 +190,11 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     }
   }
 
-  /// True when the user already has an active (non-expired) tariff subscription.
-  /// In this case we use /tariff/switch instead of /buy-tariff.
-  bool get _hasActiveSubscription {
+  /// True when the user has any existing plan (active or expired).
+  /// In this case we use /change-tariff instead of /buy-tariff.
+  bool get _hasExistingPlan {
     final sub = meNotifier.value?.subscription;
     return sub != null &&
-        sub.isActive &&
-        !sub.isExpired &&
         sub.planName != null &&
         sub.planName!.isNotEmpty;
   }
@@ -210,35 +203,6 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     if (t.periods.isEmpty) return null;
     final sorted = [...t.periods]..sort((a, b) => a.months.compareTo(b.months));
     return sorted.first;
-  }
-
-  Future<void> _loadSwitchPreview() async {
-    final t = _selectedTariff;
-    if (t == null || !mounted) return;
-    setState(() {
-      _loadingPreview = true;
-      _switchPreview = null;
-      _previewLoadFailed = false;
-    });
-    try {
-      final isFamily = _isFamilyTariff(t);
-      final devicesArg = (isFamily && _familyDevices > _kFamilyBaseDevices)
-          ? _familyDevices
-          : null;
-      final preview = await SubscriptionApiService.previewTariffSwitch(
-        tariffId: t.id,
-        devices: devicesArg,
-      );
-      if (mounted) setState(() {
-        _switchPreview = preview;
-        _previewLoadFailed = preview == null;
-      });
-    } catch (e) {
-      debugPrint('ChangeTariffPage._loadSwitchPreview: $e');
-      if (mounted) setState(() => _previewLoadFailed = true);
-    } finally {
-      if (mounted) setState(() => _loadingPreview = false);
-    }
   }
 
   List<TariffPeriod> _sortedPeriods(TariffInfo t) {
@@ -373,8 +337,6 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     if (_familyDevices > _kFamilyBaseDevices) {
       HapticFeedback.selectionClick();
       setState(() => _familyDevices--);
-      // Refresh switch preview if we're already on checkout screen
-      if (_checkoutMode && _hasActiveSubscription) _loadSwitchPreview();
     } else {
       HapticFeedback.heavyImpact();
     }
@@ -384,8 +346,6 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     if (_familyDevices < _kFamilyMaxDevices) {
       HapticFeedback.selectionClick();
       setState(() => _familyDevices++);
-      // Refresh switch preview if we're already on checkout screen
-      if (_checkoutMode && _hasActiveSubscription) _loadSwitchPreview();
     } else {
       HapticFeedback.heavyImpact();
     }
@@ -394,31 +354,27 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
   Future<void> _onPayTapped() async {
     final t = _selectedTariff;
     final p = _selectedPeriod;
-    if (t == null) return;
+    if (t == null || p == null) {
+      _snack('Выберите период');
+      return;
+    }
 
     setState(() => _purchasing = true);
     try {
       BuyResult? r;
 
-      if (_hasActiveSubscription) {
-        // ── Смена тарифа: пропорциональная доплата, сохраняет дату ──
-        final isFamily = _isFamilyTariff(t);
-        final devicesArg = (isFamily && _familyDevices > _kFamilyBaseDevices)
-            ? _familyDevices
-            : null;
-        r = await SubscriptionApiService.switchTariff(
+      if (_hasExistingPlan) {
+        // ── Смена тарифа через /change-tariff (работает и для активных, и для истёкших) ──
+        r = await SubscriptionApiService.changeTariff(
           tariffId: t.id,
-          devices: devicesArg,
+          periodDays: p.days,
         );
       } else {
-        // ── Покупка нового тарифа ──
-        if (p == null) {
-          _snack('Выберите период');
-          setState(() => _purchasing = false);
-          return;
-        }
+        // ── Первая покупка тарифа ──
         r = await SubscriptionApiService.buyTariff(
-            tariffId: t.id, periodDays: p.days);
+          tariffId: t.id,
+          periodDays: p.days,
+        );
       }
 
       if (!mounted) return;
@@ -426,12 +382,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
         _snack('Ошибка соединения с сервером');
       } else if (r.isSuccess) {
         await MeService.refreshAll();
-        _snack(
-          _hasActiveSubscription
-              ? 'Тариф успешно изменён!'
-              : 'Тариф успешно оформлен!',
-          ok: true,
-        );
+        _snack('Тариф успешно оформлен!', ok: true);
         await Future.delayed(const Duration(milliseconds: 900));
         if (mounted) Navigator.of(context).pop();
       } else if (r.requiresPayment && r.paymentUrl != null) {
@@ -641,21 +592,15 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
                 onPressed: _selectedTariff != null
                     ? () {
                         HapticFeedback.mediumImpact();
-                        setState(() {
-                          _checkoutMode = true;
-                          _switchPreview = null;
-                        });
-                        if (_hasActiveSubscription) _loadSwitchPreview();
+                        setState(() => _checkoutMode = true);
                       }
                     : null,
                 loading: false,
               ),
               const SizedBox(height: 10),
-              Text(
-                _hasActiveSubscription
-                    ? 'Переход сохраняет текущий срок действия'
-                    : 'Выбор периода — на следующем шаге',
-                style: const TextStyle(color: _t2, fontSize: 11),
+              const Text(
+                'Выбор периода — на следующем шаге',
+                style: TextStyle(color: _t2, fontSize: 11),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -673,12 +618,6 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     final t = _selectedTariff;
     if (t == null) return const SizedBox.shrink();
 
-    // ── Switch mode: user has active subscription → prorated cost ──
-    if (_hasActiveSubscription) {
-      return _buildSwitchCheckout(t);
-    }
-
-    // ── Buy mode: new subscription ──
     final periods = _sortedPeriods(t);
     final p = _selectedPeriod ?? (periods.isNotEmpty ? periods.first : null);
 
@@ -694,7 +633,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
         balance > 0 ? max(0.0, periodTotal - balance) : periodTotal;
 
     return ListView(
-      key: const ValueKey('step2-buy'),
+      key: const ValueKey('step2'),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
         // ── Тариф ──
@@ -706,6 +645,20 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
           onEdit: () => setState(() => _checkoutMode = false),
         ),
         const SizedBox(height: 14),
+
+        // ── Степпер устройств (только для семейного тарифа) ──
+        if (isFamily) ...[
+          const _SectionLabel(text: 'Устройства'),
+          const SizedBox(height: 8),
+          _FamilyStepper(
+            count: _familyDevices,
+            max: _kFamilyMaxDevices,
+            base: _kFamilyBaseDevices,
+            onDecrement: _familyDecrement,
+            onIncrement: _familyIncrement,
+          ),
+          const SizedBox(height: 14),
+        ],
 
         // ── Период ──
         const _SectionLabel(text: 'Период'),
@@ -739,141 +692,6 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
           label: 'Оплатить ${finalPrice.round()} ₽',
           onPressed:
               (p != null && !_pollingForPayment) ? _onPayTapped : null,
-          loading: _purchasing || _pollingForPayment,
-        ),
-        const SizedBox(height: 10),
-        const _SecureCaption(),
-      ],
-    );
-  }
-
-  /// Checkout when switching an existing active subscription (prorated cost).
-  Widget _buildSwitchCheckout(TariffInfo t) {
-    final preview = _switchPreview;
-    final isLoading = _loadingPreview;
-
-    // Determine button label and whether it's enabled
-    final String ctaLabel;
-    final bool ctaEnabled;
-    if (isLoading) {
-      ctaLabel = 'Загрузка...';
-      ctaEnabled = false;
-    } else if (preview == null) {
-      ctaLabel = 'Сменить тариф';
-      ctaEnabled = !_pollingForPayment;
-    } else if (preview.isFree) {
-      ctaLabel = 'Перейти бесплатно';
-      ctaEnabled = !_pollingForPayment;
-    } else if (!preview.hasEnoughBalance) {
-      ctaLabel = 'Пополнить баланс (не хватает ${preview.missingAmountLabel})';
-      ctaEnabled = false;
-    } else {
-      ctaLabel = 'Сменить за ${preview.upgradeCostLabel}';
-      ctaEnabled = !_pollingForPayment;
-    }
-
-    final isFamilySwitch = _isFamilyTariff(t);
-
-    return ListView(
-      key: const ValueKey('step2-switch'),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      children: [
-        // ── Тариф ──
-        const _SectionLabel(text: 'Тариф'),
-        const SizedBox(height: 8),
-        _CheckoutTariffCard(
-          tariff: t,
-          deviceCount: isFamilySwitch ? _familyDevices : t.deviceLimit,
-          onEdit: () => setState(() {
-            _checkoutMode = false;
-            _switchPreview = null;
-          }),
-        ),
-        const SizedBox(height: 14),
-
-        // ── Степпер устройств (только для семейного тарифа) ──
-        if (isFamilySwitch) ...[
-          const _SectionLabel(text: 'Устройства'),
-          const SizedBox(height: 8),
-          _FamilyStepper(
-            count: _familyDevices,
-            max: _kFamilyMaxDevices,
-            base: _kFamilyBaseDevices,
-            onDecrement: _familyDecrement,
-            onIncrement: _familyIncrement,
-          ),
-          const SizedBox(height: 14),
-        ],
-
-        // ── Расчёт ──
-        const _SectionLabel(text: 'Расчёт'),
-        const SizedBox(height: 8),
-        if (isLoading)
-          Container(
-            height: 80,
-            decoration: BoxDecoration(
-              color: _surf,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Center(
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                    color: DS.violet, strokeWidth: 2.5),
-              ),
-            ),
-          )
-        else if (preview == null && _previewLoadFailed)
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: _surf,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.info_outline_rounded,
-                    size: 16, color: _t2),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Не удалось загрузить расчёт',
-                    style: TextStyle(color: _t1, fontSize: 13),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: _loadSwitchPreview,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: DS.violet.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Text(
-                      'Повторить',
-                      style: TextStyle(
-                          color: DS.violet,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          )
-        else if (preview != null)
-          _SwitchBreakdownCard(
-            preview: preview,
-            deviceCount: isFamilySwitch ? _familyDevices : null,
-            baseDeviceLimit: isFamilySwitch ? t.deviceLimit : 0,
-          ),
-        const SizedBox(height: 16),
-
-        _CTAButton(
-          label: ctaLabel,
-          onPressed: ctaEnabled ? _onPayTapped : null,
           loading: _purchasing || _pollingForPayment,
         ),
         const SizedBox(height: 10),
@@ -1759,152 +1577,6 @@ class _SecureCaption extends StatelessWidget {
         Text('Безопасная оплата · YooKassa',
             style: TextStyle(color: _t2, fontSize: 11)),
       ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  _SwitchBreakdownCard — расчёт для смены тарифа (пропорциональная доплата)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _SwitchBreakdownCard extends StatelessWidget {
-  final TariffSwitchPreview? preview;
-  /// Общее кол-во устройств (для семейного тарифа). null — не семейный.
-  final int? deviceCount;
-  /// Базовый лимит устройств тарифа (напр. 5 для «Семейный»).
-  final int baseDeviceLimit;
-
-  const _SwitchBreakdownCard({
-    this.preview,
-    this.deviceCount,
-    this.baseDeviceLimit = 0,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (preview == null) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: _surf,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: const Text(
-          'Не удалось рассчитать стоимость. Попробуйте позже.',
-          style: TextStyle(color: _t1, fontSize: 13),
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
-
-    final p = preview!;
-    final isFree = p.isFree;
-    final showDevices = deviceCount != null && deviceCount! > 0;
-
-    // Базовый и дополнительный счётчики устройств
-    final int baseDev = showDevices
-        ? (baseDeviceLimit > 0 ? baseDeviceLimit : deviceCount!)
-        : 0;
-    final int extraDev =
-        showDevices ? (deviceCount! - baseDev).clamp(0, 99) : 0;
-
-    // Всегда показываем две строки когда устройств > базы
-    final bool showDeviceSplit = showDevices && extraDev > 0;
-
-    // Лейблы стоимости строк
-    final String baseCostLabel;
-    if (p.hasDeviceBreakdown) {
-      final base = p.baseSwitchCostKopeks ?? 0;
-      baseCostLabel = base == 0 ? 'Бесплатно' : '${(base / 100).round()} ₽';
-    } else {
-      baseCostLabel = isFree ? 'Бесплатно' : p.upgradeCostLabel;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: _surf,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        children: [
-          // Текущий тариф
-          if (p.currentTariffName != null)
-            _Row(label: 'Текущий тариф', value: p.currentTariffName!),
-          // Новый тариф
-          _Row(label: 'Новый тариф', value: p.newTariffName),
-
-          // ── Разбивка стоимости ───────────────────────────────────────────
-          if (showDeviceSplit) ...[
-            // Базовая часть (5 устр.)
-            _Row(
-              label: '$baseDev устр. · ${p.remainingDays} дн.',
-              value: baseCostLabel,
-            ),
-            // Доп. устройства — стоимость если задана, иначе «В тариф»
-            _Row(
-              label: '+$extraDev устр. · ${p.remainingDays} дн.',
-              value: p.hasDeviceBreakdown
-                  ? '+${((p.extraDeviceCostKopeks ?? 0) / 100).round()} ₽'
-                  : 'В тариф',
-              labelColor: DS.violet.withValues(alpha: 0.85),
-              valueColor: p.hasDeviceBreakdown ? DS.violet : _t2,
-            ),
-          ] else if (showDevices) ...[
-            // Семейный тариф на базовом кол-ве устройств
-            _Row(
-              label: '$deviceCount устр. · ${p.remainingDays} дн.',
-              value: baseCostLabel,
-            ),
-          ] else ...[
-            // Не семейный — строка с остатком дней
-            _Row(
-              label: '${p.remainingDays} дн. · ${p.isUpgrade ? "доплата" : "стоимость"}',
-              value: baseCostLabel,
-            ),
-          ],
-
-          // Баланс
-          _Row(
-            label: 'Баланс',
-            value: p.balanceLabel,
-            valueColor: p.hasEnoughBalance ? DS.emerald : DS.rose,
-          ),
-          // Не хватает — только если недостаточно
-          if (!p.hasEnoughBalance && p.missingAmountKopeks > 0)
-            _Row(
-              label: 'Не хватает',
-              value: p.missingAmountLabel,
-              labelColor: DS.rose,
-              valueColor: DS.rose,
-            ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: Divider(height: 1, thickness: 0.5, color: Color(0xFF2A2A38)),
-          ),
-          // К оплате
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              const Text('К оплате',
-                  style: TextStyle(
-                      color: _t0,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500)),
-              Text(
-                isFree ? 'Бесплатно' : p.upgradeCostLabel,
-                style: TextStyle(
-                  color: isFree ? DS.emerald : _t0,
-                  fontSize: 22,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 }

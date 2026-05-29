@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'pages/home_page.dart';
+import 'pages/onboarding_page.dart';
 import 'pages/premium_page.dart';
 import 'pages/servers_page.dart';
 import 'pages/settings_page.dart';
@@ -76,11 +77,15 @@ void main() async {
   await MeService.loadFromCache();
   // Background refresh — does NOT block startup.
   MeService.refresh();
-  runApp(const UlyaVpnApp());
+  // Check whether to show onboarding on first launch.
+  final showOnboarding = await shouldShowOnboarding();
+  runApp(UlyaVpnApp(showOnboarding: showOnboarding));
 }
 
 class UlyaVpnApp extends StatelessWidget {
-  const UlyaVpnApp({super.key});
+  const UlyaVpnApp({super.key, this.showOnboarding = false});
+
+  final bool showOnboarding;
 
   @override
   Widget build(BuildContext context) {
@@ -88,7 +93,9 @@ class UlyaVpnApp extends StatelessWidget {
       title: 'Ulya VPN',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
-      home: const InAppNotificationOverlay(child: MainShell()),
+      home: showOnboarding
+          ? const OnboardingPage()
+          : const InAppNotificationOverlay(child: MainShell()),
     );
   }
 

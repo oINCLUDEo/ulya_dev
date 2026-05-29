@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -68,9 +69,6 @@ class _HomePageState extends State<HomePage>
   late final SpeedCalculator _speedCalc;
   bool _initialized = false;
   bool _isConnecting = false;
-  static const _historyMax = 60;
-  final List<double> _uploadHistory   = [];
-  final List<double> _downloadHistory = [];
 
   // ── Computed ───────────────────────────────────────────────────────────────
   bool get _isConnected => _status.state.toUpperCase() == 'CONNECTED';
@@ -113,17 +111,16 @@ class _HomePageState extends State<HomePage>
     _statusSub = _v2ray.onStatusChanged.listen((s) {
       if (!mounted) return;
       final connected = s.state.toUpperCase() == 'CONNECTED';
+      final wasConnected = vpnConnectedNotifier.value;
       vpnConnectedNotifier.value = connected;
       if (connected) {
         _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
-        _uploadHistory.add(_speedCalc.uploadSpeed);
-        _downloadHistory.add(_speedCalc.downloadSpeed);
-        if (_uploadHistory.length > _historyMax) _uploadHistory.removeAt(0);
-        if (_downloadHistory.length > _historyMax) _downloadHistory.removeAt(0);
+        // Haptic when VPN just connected
+        if (!wasConnected) HapticFeedback.mediumImpact();
       } else {
         _speedCalc.reset();
-        _uploadHistory.clear();
-        _downloadHistory.clear();
+        // Haptic when VPN just disconnected
+        if (wasConnected) HapticFeedback.lightImpact();
       }
       setState(() => _status = s);
     });
@@ -306,6 +303,7 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _toggleConnection() async {
     if (_isTransitioning) return;
+    HapticFeedback.heavyImpact();
     if (_isConnected) {
       appLogger.info('HomePage', 'disconnecting from ${_selectedNode?.name ?? "unknown"}');
       await _v2ray.stopVless();
@@ -450,6 +448,7 @@ class _HomePageState extends State<HomePage>
                   }
                   return;
                 }
+                HapticFeedback.selectionClick();
                 setState(() => _selectedNode = node);
                 selectedServerNotifier.value = node;
                 final p = await SharedPreferences.getInstance();
@@ -670,6 +669,14 @@ class _HomePageState extends State<HomePage>
     ));
   }
 
+  String _fmtBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} ГБ';
+  }
+
   String _fmtDuration(int sec) {
     final h = sec ~/ 3600, m = (sec % 3600) ~/ 60, s = sec % 60;
     if (h > 0) return '$hч ${m.toString().padLeft(2, '0')}м';
@@ -725,6 +732,22 @@ class _HomePageState extends State<HomePage>
                 const SizedBox(height: 14),
                 _buildConnectionCard(),
                 const SizedBox(height: 12),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 380),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: _isConnected
+                      ? Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _SpeedCardFlyIn(
+                            uploadSpeed: _speedCalc.uploadSpeed,
+                            downloadSpeed: _speedCalc.downloadSpeed,
+                            uploadTotal: _fmtBytes(_status.upload),
+                            downloadTotal: _fmtBytes(_status.download),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
                 _buildSubscriptionCard(),
               ])),
             ),
@@ -805,25 +828,6 @@ class _HomePageState extends State<HomePage>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(DS.radius - 1),
         child: Stack(children: [
-          // Speed graph background — only visible when connected
-          if (connected)
-            Positioned(
-              left: 0, right: 0, top: 0, bottom: 0,
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                child: SizedBox(
-                  height: 120,
-                  child: Opacity(
-                    opacity: 0.22,
-                    child: _SmoothSpeedGraph(
-                      uploadHistory: _uploadHistory,
-                      downloadHistory: _downloadHistory,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-
           // Card content
           Padding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
@@ -854,43 +858,14 @@ class _HomePageState extends State<HomePage>
 
           const SizedBox(height: 18),
 
-          // Big circle button
+          // Button — no wrapper Stack needed, graph is in the card Stack above
           _ConnectButton(
             isConnected: connected,
             isLoading: transitioning,
             onTap: _toggleConnection,
           ),
 
-          const SizedBox(height: 12),
-
-          // Speed numbers — shown only when connected
-          AnimatedSize(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOutCubic,
-            child: connected
-                ? Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _InlineSpeedChip(
-                          icon: Icons.arrow_downward_rounded,
-                          color: DS.violet,
-                          speed: _speedCalc.downloadSpeed,
-                        ),
-                        const SizedBox(width: 16),
-                        _InlineSpeedChip(
-                          icon: Icons.arrow_upward_rounded,
-                          color: DS.emerald,
-                          speed: _speedCalc.uploadSpeed,
-                        ),
-                      ],
-                    ),
-                  )
-                : const SizedBox.shrink(),
-          ),
-
-          const SizedBox(height: 6),
+          const SizedBox(height: 18),
 
           // Gradient separator
           Container(
@@ -1782,14 +1757,98 @@ class _EmptyNodes extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _InlineSpeedChip — маленький чип скорости внутри карточки подключения
+// _SpeedCardFlyIn — карточка скоростей, прилетающая сверху при подключении
 // ─────────────────────────────────────────────────────────────────────────────
-class _InlineSpeedChip extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final double speed;
+class _SpeedCardFlyIn extends StatefulWidget {
+  final double uploadSpeed;
+  final double downloadSpeed;
+  final String uploadTotal;
+  final String downloadTotal;
 
-  const _InlineSpeedChip({required this.icon, required this.color, required this.speed});
+  const _SpeedCardFlyIn({
+    required this.uploadSpeed,
+    required this.downloadSpeed,
+    required this.uploadTotal,
+    required this.downloadTotal,
+  });
+
+  @override
+  State<_SpeedCardFlyIn> createState() => _SpeedCardFlyInState();
+}
+
+class _SpeedCardFlyInState extends State<_SpeedCardFlyIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<Offset> _slide;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 520));
+    _slide = Tween<Offset>(
+      begin: const Offset(0, -0.8),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutBack));
+    _fade = Tween<double>(begin: 0, end: 1).animate(
+        CurvedAnimation(parent: _ctrl, curve: const Interval(0, 0.55)));
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(
+        position: _slide,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: DS.surface1,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            border: Border.all(color: DS.border),
+          ),
+          child: Row(children: [
+            Expanded(child: _SpeedTile(
+              icon: Icons.arrow_downward_rounded,
+              color: DS.violet,
+              label: 'Загрузка',
+              speed: widget.downloadSpeed,
+              total: widget.downloadTotal,
+            )),
+            Container(width: 1, height: 36, color: DS.border),
+            Expanded(child: _SpeedTile(
+              icon: Icons.arrow_upward_rounded,
+              color: DS.emerald,
+              label: 'Отдача',
+              speed: widget.uploadSpeed,
+              total: widget.uploadTotal,
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _SpeedTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final double speed;
+  final String total;
+  final Color color;
+
+  const _SpeedTile({
+    required this.icon, required this.label,
+    required this.speed, required this.total, required this.color,
+  });
 
   String _fmt(double bps) {
     if (bps < 1024) return '${bps.toStringAsFixed(0)} B/s';
@@ -1798,189 +1857,24 @@ class _InlineSpeedChip extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
+  Widget build(BuildContext context) => Column(children: [
+    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
       Icon(icon, color: color, size: 13),
       const SizedBox(width: 5),
-      TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0, end: speed),
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOutCubic,
-        builder: (_, v, _) => Text(
-          _fmt(v),
-          style: TextStyle(
-            color: color, fontSize: 14,
-            fontWeight: FontWeight.w700, letterSpacing: 0.1,
-          ),
-        ),
-      ),
-    ],
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _SmoothSpeedGraph — 60fps graph drawn as background of the connection card
-// ─────────────────────────────────────────────────────────────────────────────
-class _SmoothSpeedGraph extends StatefulWidget {
-  final List<double> uploadHistory;
-  final List<double> downloadHistory;
-
-  const _SmoothSpeedGraph({
-    required this.uploadHistory,
-    required this.downloadHistory,
-  });
-
-  @override
-  State<_SmoothSpeedGraph> createState() => _SmoothSpeedGraphState();
-}
-
-class _SmoothSpeedGraphState extends State<_SmoothSpeedGraph>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ticker;
-  double _tipUpload = 0;
-  double _tipDownload = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _ticker = AnimationController(vsync: this, duration: const Duration(seconds: 1))
-      ..addListener(_onTick)
-      ..repeat();
-  }
-
-  void _onTick() {
-    final targetU = widget.uploadHistory.isNotEmpty ? widget.uploadHistory.last : 0.0;
-    final targetD = widget.downloadHistory.isNotEmpty ? widget.downloadHistory.last : 0.0;
-    final newU = _tipUpload + (targetU - _tipUpload) * 0.10;
-    final newD = _tipDownload + (targetD - _tipDownload) * 0.10;
-    if ((newU - _tipUpload).abs() > 0.5 || (newD - _tipDownload).abs() > 0.5) {
-      setState(() {
-        _tipUpload = newU;
-        _tipDownload = newD;
-      });
-    }
-  }
-
-  @override
-  void didUpdateWidget(_SmoothSpeedGraph old) {
-    super.didUpdateWidget(old);
-    if (widget.uploadHistory.isEmpty) {
-      _tipUpload = 0;
-      _tipDownload = 0;
-    }
-  }
-
-  @override
-  void dispose() {
-    _ticker.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Build display lists: history without last item + smoothed tip as last point
-    final upDisplay = [
-      ...widget.uploadHistory.take(
-          (widget.uploadHistory.length - 1).clamp(0, widget.uploadHistory.length)),
-      _tipUpload,
-    ];
-    final downDisplay = [
-      ...widget.downloadHistory.take(
-          (widget.downloadHistory.length - 1).clamp(0, widget.downloadHistory.length)),
-      _tipDownload,
-    ];
-
-    return CustomPaint(
-      painter: _SpeedWavePainter(
-        uploadSamples: upDisplay,
-        downloadSamples: downDisplay,
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _SpeedWavePainter — рисует две кривые (download + upload) с градиентом
-// ─────────────────────────────────────────────────────────────────────────────
-class _SpeedWavePainter extends CustomPainter {
-  final List<double> uploadSamples;
-  final List<double> downloadSamples;
-
-  const _SpeedWavePainter({
-    required this.uploadSamples,
-    required this.downloadSamples,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (uploadSamples.isEmpty && downloadSamples.isEmpty) return;
-
-    final allValues = [...uploadSamples, ...downloadSamples];
-    final maxVal = allValues.fold<double>(0, (m, v) => v > m ? v : m);
-    final scale = maxVal > 0 ? maxVal : 1.0;
-
-    _drawCurve(canvas, size,
-      samples: downloadSamples, scale: scale,
-      lineColor: const Color(0xFF7C6BFF),
-      fillColors: [const Color(0x887C6BFF), const Color(0x007C6BFF)],
-    );
-    _drawCurve(canvas, size,
-      samples: uploadSamples, scale: scale,
-      lineColor: const Color(0xFF1DC97A),
-      fillColors: [const Color(0x881DC97A), const Color(0x001DC97A)],
-    );
-  }
-
-  void _drawCurve(Canvas canvas, Size size, {
-    required List<double> samples,
-    required double scale,
-    required Color lineColor,
-    required List<Color> fillColors,
-  }) {
-    if (samples.isEmpty) return;
-    final count = samples.length;
-    final w = size.width;
-    final h = size.height;
-    final vPad = h * 0.06;
-
-    Offset pt(int i) {
-      final x = count == 1 ? w : i / (count - 1) * w;
-      final y = h - vPad - (samples[i] / scale) * (h - vPad * 2);
-      return Offset(x, y.clamp(0.0, h));
-    }
-
-    final path = Path()..moveTo(0, pt(0).dy);
-    for (int i = 0; i < count - 1; i++) {
-      final p0 = pt(i);
-      final p1 = pt(i + 1);
-      final cx = (p0.dx + p1.dx) / 2;
-      path.cubicTo(cx, p0.dy, cx, p1.dy, p1.dx, p1.dy);
-    }
-
-    canvas.drawPath(
-      Path.from(path)
-        ..lineTo(w, h)
-        ..lineTo(0, h)
-        ..close(),
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: fillColors,
-        ).createShader(Rect.fromLTWH(0, 0, w, h)),
-    );
-    canvas.drawPath(path, Paint()
-      ..color = lineColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round);
-  }
-
-  @override
-  bool shouldRepaint(_SpeedWavePainter old) =>
-      old.uploadSamples != uploadSamples ||
-      old.downloadSamples != downloadSamples;
+      Text(label, style: const TextStyle(color: DS.textSecondary, fontSize: 11)),
+    ]),
+    const SizedBox(height: 6),
+    TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: speed),
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      builder: (_, v, child) => Text(_fmt(v), style: TextStyle(
+          color: color, fontSize: 18,
+          fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+    ),
+    const SizedBox(height: 3),
+    Text(total, style: const TextStyle(color: DS.textMuted, fontSize: 11)),
+  ]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

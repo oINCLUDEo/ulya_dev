@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
@@ -209,6 +210,7 @@ class _ServersPageState extends State<ServersPage> {
             : await showAuthBottomSheet(context);
         return;
       }
+      HapticFeedback.selectionClick();
       selectedServerNotifier.value = node;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('selected_node_uuid', node.uuid);
@@ -565,12 +567,14 @@ class _NodeTileState extends State<_NodeTile>
   late final AnimationController _swipeCtrl;
   late final Animation<double> _revealAnim;
   static const _revealWidth = 72.0;
+  static const _threshold = 0.40;
+  bool _hapticFired = false;
 
   @override
   void initState() {
     super.initState();
     _swipeCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 260));
+        vsync: this, duration: const Duration(milliseconds: 320));
     _revealAnim = CurvedAnimation(parent: _swipeCtrl, curve: Curves.easeOutCubic);
   }
 
@@ -582,18 +586,35 @@ class _NodeTileState extends State<_NodeTile>
 
   void _handleDragUpdate(DragUpdateDetails d) {
     if (widget.isPublicCatalog) return;
-    // Swipe left (negative delta) reveals the star on the right
-    _swipeCtrl.value =
-        (_swipeCtrl.value - d.primaryDelta! / _revealWidth).clamp(0.0, 1.0);
+    final drag = -d.primaryDelta!; // positive = swiping left
+    if (drag > 0) {
+      // Rubber-band: fast start, exponential resistance near max
+      final remaining = 1.0 - _swipeCtrl.value;
+      final factor = math.pow(remaining, 0.6).toDouble();
+      _swipeCtrl.value =
+          (_swipeCtrl.value + drag / _revealWidth * factor * 2.2).clamp(0.0, 1.0);
+    } else {
+      // Release back: linear, slightly faster
+      _swipeCtrl.value =
+          (_swipeCtrl.value + drag / (_revealWidth * 0.7)).clamp(0.0, 1.0);
+    }
+    // Haptic tick when crossing threshold
+    if (!_hapticFired && _swipeCtrl.value >= _threshold) {
+      _hapticFired = true;
+      HapticFeedback.selectionClick();
+    } else if (_swipeCtrl.value < _threshold) {
+      _hapticFired = false;
+    }
   }
 
   void _handleDragEnd(DragEndDetails d) {
     if (widget.isPublicCatalog) return;
-    if (_swipeCtrl.value > 0.35) {
-      // Immediately toggle favorite and snap back
+    if (_swipeCtrl.value >= _threshold) {
+      HapticFeedback.mediumImpact();
       toggleFavorite(widget.node.uuid);
     }
     _swipeCtrl.animateBack(0.0);
+    _hapticFired = false;
   }
 
   void _closeStar() => _swipeCtrl.animateBack(0.0);
@@ -721,9 +742,27 @@ class _NodeTileState extends State<_NodeTile>
                     decoration: BoxDecoration(color: DS.surface2, borderRadius: BorderRadius.circular(DS.radiusXs),
                         border: Border.all(color: DS.border)),
                     child: const Icon(Icons.lock_outline_rounded, size: 14, color: DS.textMuted))
+              else if (node.protocol == 'auto')
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: DS.indigoLight.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(DS.radiusXs),
+                    border: Border.all(color: DS.indigoLight.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.device_hub_rounded, size: 10, color: DS.indigoLight),
+                    const SizedBox(width: 4),
+                    const Text('Авто', style: TextStyle(
+                        color: DS.indigoLight, fontSize: 11, fontWeight: FontWeight.w700)),
+                  ]),
+                )
               else
                 GestureDetector(
-                  onTap: (ping == -2 || node.link == null) ? null : widget.onPing,
+                  onTap: (ping == -2 || node.link == null) ? null : () {
+                    HapticFeedback.selectionClick();
+                    widget.onPing?.call();
+                  },
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(

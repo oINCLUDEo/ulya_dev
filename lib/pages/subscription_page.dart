@@ -604,8 +604,11 @@ class _TrafficSectionCard extends StatelessWidget {
 
   static String _fmtGb(double gb) {
     if (gb <= 0) return '0 ГБ';
-    final s = gb.toStringAsFixed(1);
-    return '${s.endsWith('.0') ? s.substring(0, s.length - 2) : s} ГБ';
+    if (gb >= 1.0) {
+      final s = gb.toStringAsFixed(1);
+      return '${s.endsWith('.0') ? s.substring(0, s.length - 2) : s} ГБ';
+    }
+    return '${(gb * 1024).round()} МБ';
   }
 
   @override
