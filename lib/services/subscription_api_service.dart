@@ -442,6 +442,63 @@ class TariffInfo {
   }
 }
 
+/// Preview result from POST /mobile/v1/subscription/tariff/switch/preview
+class TariffSwitchPreview {
+  final bool canSwitch;
+  final int? currentTariffId;
+  final String? currentTariffName;
+  final int newTariffId;
+  final String newTariffName;
+  final int remainingDays;
+  final int upgradeCostKopeks;
+  final String upgradeCostLabel;
+  final int balanceKopeks;
+  final String balanceLabel;
+  final bool hasEnoughBalance;
+  final int missingAmountKopeks;
+  final String missingAmountLabel;
+  final bool isUpgrade;
+
+  const TariffSwitchPreview({
+    required this.canSwitch,
+    this.currentTariffId,
+    this.currentTariffName,
+    required this.newTariffId,
+    required this.newTariffName,
+    required this.remainingDays,
+    required this.upgradeCostKopeks,
+    required this.upgradeCostLabel,
+    required this.balanceKopeks,
+    required this.balanceLabel,
+    required this.hasEnoughBalance,
+    required this.missingAmountKopeks,
+    required this.missingAmountLabel,
+    required this.isUpgrade,
+  });
+
+  double get upgradeCostRub => upgradeCostKopeks / 100;
+  bool get isFree => upgradeCostKopeks == 0;
+
+  factory TariffSwitchPreview.fromJson(Map<String, dynamic> json) {
+    return TariffSwitchPreview(
+      canSwitch: json['can_switch'] as bool? ?? false,
+      currentTariffId: (json['current_tariff_id'] as num?)?.toInt(),
+      currentTariffName: json['current_tariff_name'] as String?,
+      newTariffId: (json['new_tariff_id'] as num?)?.toInt() ?? 0,
+      newTariffName: json['new_tariff_name'] as String? ?? '',
+      remainingDays: (json['remaining_days'] as num?)?.toInt() ?? 0,
+      upgradeCostKopeks: (json['upgrade_cost_kopeks'] as num?)?.toInt() ?? 0,
+      upgradeCostLabel: json['upgrade_cost_label'] as String? ?? '',
+      balanceKopeks: (json['balance_kopeks'] as num?)?.toInt() ?? 0,
+      balanceLabel: json['balance_label'] as String? ?? '',
+      hasEnoughBalance: json['has_enough_balance'] as bool? ?? false,
+      missingAmountKopeks: (json['missing_amount_kopeks'] as num?)?.toInt() ?? 0,
+      missingAmountLabel: json['missing_amount_label'] as String? ?? '',
+      isUpgrade: json['is_upgrade'] as bool? ?? false,
+    );
+  }
+}
+
 /// Service for the mobile subscription API.
 class SubscriptionApiService {
   SubscriptionApiService._();
@@ -829,6 +886,73 @@ class SubscriptionApiService {
       return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
     } on Exception catch (e) {
       debugPrint('SubscriptionApiService.changeTariff error: $e');
+      return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Tariff switch (proper prorated switch, keeps end_date)
+  // -------------------------------------------------------------------------
+
+  /// POST /mobile/v1/subscription/tariff/switch/preview
+  /// Returns cost preview without committing anything.
+  static Future<TariffSwitchPreview?> previewTariffSwitch({
+    required int tariffId,
+  }) async {
+    try {
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/tariff/switch/preview'),
+        jsonEncode({'tariff_id': tariffId}),
+        timeout: const Duration(seconds: 15),
+      );
+      if (resp.statusCode == 200) {
+        return TariffSwitchPreview.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      debugPrint('SubscriptionApiService.previewTariffSwitch: ${resp.statusCode} ${resp.body}');
+      return null;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.previewTariffSwitch error: $e');
+      return null;
+    }
+  }
+
+  /// POST /mobile/v1/subscription/tariff/switch
+  /// Executes tariff switch. Keeps existing end_date; charges difference for upgrades.
+  static Future<BuyResult?> switchTariff({required int tariffId}) async {
+    try {
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/tariff/switch'),
+        jsonEncode({'tariff_id': tariffId}),
+      );
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        // Backend returns {success, charged_kopeks, new_tariff_name, ...}
+        // Map to BuyResult for uniform handling in the UI.
+        final success = json['success'] as bool? ?? false;
+        return BuyResult(
+          status: success ? 'success' : 'error',
+          message: json['message'] as String?,
+          amountKopeks: (json['charged_kopeks'] as num?)?.toInt(),
+          subscription: json['subscription'] as Map<String, dynamic>?,
+        );
+      }
+      debugPrint('SubscriptionApiService.switchTariff: ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+        if (detail is Map) {
+          return BuyResult(
+            status: 'error',
+            message: detail['message'] as String? ?? 'Ошибка смены тарифа',
+          );
+        }
+      } catch (_) {}
+      return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.switchTariff error: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }

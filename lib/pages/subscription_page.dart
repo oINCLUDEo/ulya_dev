@@ -600,6 +600,12 @@ class _TrafficSectionCard extends StatelessWidget {
 
   const _TrafficSectionCard({required this.sub, required this.trafficInfo});
 
+  static String _fmtGb(double gb) {
+    if (gb <= 0) return '0 ГБ';
+    final s = gb.toStringAsFixed(1);
+    return '${s.endsWith('.0') ? s.substring(0, s.length - 2) : s} ГБ';
+  }
+
   @override
   Widget build(BuildContext context) {
     final unlimited = sub.trafficLimitGb == 0 &&
@@ -613,8 +619,7 @@ class _TrafficSectionCard extends StatelessWidget {
             : (sub.trafficLimitGb * 1024 * 1024 * 1024));
     final fraction =
         totalBytes > 0 ? (usedBytes / totalBytes).clamp(0.0, 1.0) : 0.0;
-    final usedLabel = trafficInfo?.formattedUsed ??
-        '${sub.trafficUsedGb.toStringAsFixed(1)} ГБ';
+    final usedLabel = trafficInfo?.formattedUsed ?? _fmtGb(sub.trafficUsedGb);
     final totalLabel = unlimited
         ? '∞'
         : (trafficInfo != null && trafficInfo!.totalBytes > 0

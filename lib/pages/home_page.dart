@@ -812,14 +812,50 @@ class _HomePageState extends State<HomePage>
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
         child: Column(children: [
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            child: Text(
-              key: ValueKey(statusSub),
-              statusSub,
-              style: const TextStyle(fontSize: 13, color: DS.textSecondary),
+          // Статус / время сессии
+          if (connected)
+            // При активном соединении — только таймер «тикает» слайдом вверх,
+            // а префикс/суффикс остаются на месте (не моргают)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Сессия: ',
+                    style: TextStyle(fontSize: 13, color: DS.textSecondary)),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 320),
+                  transitionBuilder: (child, anim) => SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.6),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(
+                        parent: anim, curve: Curves.easeOutCubic)),
+                    child: FadeTransition(
+                        opacity: CurvedAnimation(
+                            parent: anim, curve: Curves.easeOut),
+                        child: child),
+                  ),
+                  child: Text(
+                    key: ValueKey(_fmtDuration(_status.duration)),
+                    _fmtDuration(_status.duration),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        color: DS.textSecondary,
+                        fontVariations: [FontVariation('wght', 600)]),
+                  ),
+                ),
+                const Text(' · IP скрыт',
+                    style: TextStyle(fontSize: 13, color: DS.textSecondary)),
+              ],
+            )
+          else
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              child: Text(
+                key: ValueKey(statusSub),
+                statusSub,
+                style: const TextStyle(fontSize: 13, color: DS.textSecondary),
+              ),
             ),
-          ),
 
           const SizedBox(height: 18),
 

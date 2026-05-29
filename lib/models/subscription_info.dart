@@ -23,7 +23,10 @@ class SubscriptionInfo {
   static String _formatBytes(int bytes) {
     if (bytes <= 0) return '0 ГБ';
     final gb = bytes / (1024 * 1024 * 1024);
-    if (gb >= 1) return '${gb.toStringAsFixed(1)} ГБ';
+    if (gb >= 1) {
+      final s = gb.toStringAsFixed(1);
+      return '${s.endsWith('.0') ? s.substring(0, s.length - 2) : s} ГБ';
+    }
     final mb = bytes / (1024 * 1024);
     return '${mb.toStringAsFixed(0)} МБ';
   }

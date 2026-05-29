@@ -937,12 +937,6 @@ class _PremiumPageState extends State<PremiumPage>
       key: const ValueKey('change-step1'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Current tariff mini-card
-        if (sub != null) ...[
-          _CurrentTariffMini(sub: sub, tariffs: tariffs),
-          const SizedBox(height: 18),
-        ],
-
         const Text(
           'ДРУГИЕ ТАРИФЫ',
           style: TextStyle(
@@ -1067,12 +1061,11 @@ class _PremiumPageState extends State<PremiumPage>
     final extraDevices   = isFam ? (_familyDeviceCount - familyMin).clamp(0, 99) : 0;
     final extraPriceKop  = extraDevices > 0 ? (_devicesPrices[extraDevices] ?? 0) : 0;
 
-    // Cost breakdown
+    // Cost breakdown — API returns total period price, not per-month
     final months         = selPer?.months ?? 1;
-    final baseMonthRub   = selPer?.priceRub ?? 0.0;
-    final extraMonthRub  = extraPriceKop / 100.0;
-    final totalMonthRub  = baseMonthRub + extraMonthRub;
-    final periodTotalRub = totalMonthRub * months;
+    final periodBaseRub  = selPer?.priceRub ?? 0.0;     // total from API
+    final extraMonthRub  = extraPriceKop / 100.0;        // extra per month
+    final periodTotalRub = periodBaseRub + extraMonthRub * months;
 
     final balanceRub     = _options?.balanceRub ?? 0.0;
     final toPayRub       = _useBalance
@@ -1102,16 +1095,19 @@ class _PremiumPageState extends State<PremiumPage>
           ),
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
           child: Row(children: [
-            Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(
-                color: DS.violet.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Center(
-                child: Icon(Icons.shield_rounded, color: DS.violet, size: 20),
-              ),
-            ),
+            Builder(builder: (context) {
+              final (iconData, accent) = _TariffRadioCardState._tariffStyle(selTariff);
+              return Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(
+                  child: PhosphorIcon(iconData, color: accent, size: 20),
+                ),
+              );
+            }),
             const SizedBox(width: 12),
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1234,63 +1230,101 @@ class _PremiumPageState extends State<PremiumPage>
           ),
         ),
         const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: _premSurface,
-            borderRadius: BorderRadius.circular(DS.radiusSm),
-            border: Border.all(color: _b1),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Column(children: [
-            _BreakdownRow(
-              label: 'Базовая цена · ${selTariff.deviceLimit} устр.',
-              value: '${baseMonthRub.toStringAsFixed(0)} ₽/мес',
+        Builder(builder: (context) {
+          final discount     = selPer?.discountPercent ?? 0;
+          final perMonthRub  = selPer?.pricePerMonthRub;     // null when months == 1
+          final origTotalRub = selPer?.originalPriceRub ?? periodBaseRub;
+          final discountAmt  = origTotalRub - periodBaseRub; // 0 if no discount
+
+          return Container(
+            decoration: BoxDecoration(
+              color: _premSurface,
+              borderRadius: BorderRadius.circular(DS.radiusSm),
+              border: Border.all(color: _b1),
             ),
-            if (extraDevices > 0) ...[
-              const SizedBox(height: 4),
-              _BreakdownRow(
-                label: '$extraDevices доп. устр.',
-                value: '+${extraMonthRub.toStringAsFixed(0)} ₽/мес',
-              ),
-            ],
-            const SizedBox(height: 4),
-            _BreakdownRow(
-              label: '× $months ${_monthsLabel(months)}',
-              value: '${periodTotalRub.toStringAsFixed(0)} ₽',
-            ),
-            if (_useBalance && balanceRub > 0) ...[
-              const SizedBox(height: 4),
-              _BreakdownRow(
-                label: 'Списано с баланса',
-                value: '−${balanceRub.toStringAsFixed(0)} ₽',
-                accent: DS.emerald,
-              ),
-            ],
-            const SizedBox(height: 10),
-            const Divider(height: 1, color: _b0),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                const Text('К оплате',
-                    style: TextStyle(
-                        color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
-                _changeTariffCalcLoading
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: DS.violet))
-                    : Text(
-                        '${(calcResult?.amountRub ?? toPayRub).toStringAsFixed(0)} ₽',
-                        style: const TextStyle(
-                          color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
-                      ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Column(children: [
+              // ── Tariff base price rows ────────────────────────────────
+              if (months > 1 && discount > 0 && perMonthRub != null) ...[
+                // Зачёркнутая полная цена без скидки
+                _BreakdownRow(
+                  label: '${origTotalRub ~/ months} ₽/мес × $months мес',
+                  value: '${origTotalRub.toStringAsFixed(0)} ₽',
+                  strikethrough: true,
+                ),
+                const SizedBox(height: 4),
+                // Скидка зелёным
+                _BreakdownRow(
+                  label: 'Скидка −$discount%',
+                  value: '−${discountAmt.toStringAsFixed(0)} ₽',
+                  accent: DS.emerald,
+                ),
+                const SizedBox(height: 4),
+                // Тариф итого
+                _BreakdownRow(
+                  label: '${selTariff.deviceLimit} устр.',
+                  value: '${periodBaseRub.toStringAsFixed(0)} ₽',
+                ),
+              ] else if (months > 1 && perMonthRub != null) ...[
+                // Без скидки, но несколько месяцев
+                _BreakdownRow(
+                  label: '${perMonthRub.toStringAsFixed(0)} ₽/мес × $months мес',
+                  value: '${periodBaseRub.toStringAsFixed(0)} ₽',
+                ),
+              ] else ...[
+                // 1 месяц
+                _BreakdownRow(
+                  label: '1 месяц · ${selTariff.deviceLimit} устр.',
+                  value: '${periodBaseRub.toStringAsFixed(0)} ₽',
+                ),
               ],
-            ),
-          ]),
-        ),
+
+              // ── Extra devices (family plan) ───────────────────────────
+              if (extraDevices > 0 && extraMonthRub > 0) ...[
+                const SizedBox(height: 4),
+                _BreakdownRow(
+                  label: '$extraDevices доп. устр. × $months мес',
+                  value: '+${(extraMonthRub * months).toStringAsFixed(0)} ₽',
+                ),
+              ],
+
+              // ── Balance deduction ─────────────────────────────────────
+              if (_useBalance && balanceRub > 0) ...[
+                const SizedBox(height: 4),
+                _BreakdownRow(
+                  label: 'Списано с баланса',
+                  value: '−${balanceRub.toStringAsFixed(0)} ₽',
+                  accent: DS.emerald,
+                ),
+              ],
+
+              const SizedBox(height: 10),
+              const Divider(height: 1, color: _b0),
+              const SizedBox(height: 12),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  const Text('К оплате',
+                      style: TextStyle(
+                          color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
+                  _changeTariffCalcLoading
+                      ? const SizedBox(
+                          width: 18, height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: DS.violet))
+                      : Text(
+                          '${(calcResult?.amountRub ?? toPayRub).toStringAsFixed(0)} ₽',
+                          style: const TextStyle(
+                            color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
+                        ),
+                ],
+              ),
+            ]),
+          );
+        }),
 
         if (balanceRub > 0) ...[
           const SizedBox(height: 12),
@@ -1313,28 +1347,12 @@ class _PremiumPageState extends State<PremiumPage>
         ),
 
         const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.lock_rounded, size: 12, color: _t2),
-            SizedBox(width: 4),
-            Text('Безопасная оплата · YooKassa',
-                style: TextStyle(color: _t2, fontSize: 11)),
-          ],
-        ),
-        const SizedBox(height: 4),
         const _Disclaimer(),
       ],
     );
   }
 
-  static String _monthsLabel(int months) {
-    if (months >= 11 && months <= 19) return 'месяцев';
-    final last = months % 10;
-    if (last == 1) return 'месяц';
-    if (last >= 2 && last <= 4) return 'месяца';
-    return 'месяцев';
-  }
+
 
   /// Renew section for active user. Uses tariff periods when available,
   /// falls back to legacy async calc otherwise.
@@ -1361,9 +1379,11 @@ class _PremiumPageState extends State<PremiumPage>
         key: const ValueKey('renew-tariff'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Current tariff mini-card
-          _CurrentTariffMini(sub: sub, tariffs: tariffs),
-          const SizedBox(height: 18),
+          // Карточка «У вас сейчас» — только для активных (expired уже видит _ExpiredCard)
+          if (!sub.isExpired) ...[
+            _CurrentTariffMini(sub: sub, tariffs: tariffs),
+            const SizedBox(height: 18),
+          ],
 
           for (int i = 0; i < cur.periods.length; i++) ...[
             if (i > 0) const SizedBox(height: 8),
@@ -1419,8 +1439,10 @@ class _PremiumPageState extends State<PremiumPage>
       key: const ValueKey('renew-legacy'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _CurrentTariffMini(sub: sub, tariffs: tariffs),
-        const SizedBox(height: 18),
+        if (!sub.isExpired) ...[
+          _CurrentTariffMini(sub: sub, tariffs: tariffs),
+          const SizedBox(height: 18),
+        ],
 
         for (int i = 0; i < opts.periods.length; i++) ...[
           if (i > 0) const SizedBox(height: 8),
@@ -1452,16 +1474,6 @@ class _PremiumPageState extends State<PremiumPage>
           onTap: _onRenewTapped,
         ),
         const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            Icon(Icons.lock_rounded, size: 12, color: _t2),
-            SizedBox(width: 4),
-            Text('Безопасная оплата · YooKassa',
-                style: TextStyle(color: _t2, fontSize: 11)),
-          ],
-        ),
-        const SizedBox(height: 4),
         const _Disclaimer(),
       ],
     );
@@ -1593,10 +1605,37 @@ class _PremiumPageState extends State<PremiumPage>
                     ] else if (hasExpiredSub) ...[
                       _ExpiredCard(sub: sub),
                       const SizedBox(height: 12),
-                      _PlanContextStrip(sub: sub, expired: true),
+                      _PlanContextStrip(
+                        sub: sub,
+                        expired: true,
+                        cheapestPriceLabel: () {
+                          // Ищем тариф текущей подписки среди загруженных тарифов
+                          final subName = (sub.planName ?? '').toLowerCase().trim();
+                          TariffInfo? matchTariff;
+                          if (subName.isNotEmpty) {
+                            try {
+                              matchTariff = tariffs?.firstWhere(
+                                  (t) => t.name.toLowerCase().trim() == subName);
+                            } catch (_) {}
+                          }
+                          final cheapest = matchTariff?.cheapestPeriod;
+                          if (cheapest == null) return null;
+                          final perMonth = cheapest.months > 1
+                              ? '${(cheapest.priceRub / cheapest.months).round()} ₽/мес'
+                              : '${cheapest.priceRub.round()} ₽/мес';
+                          return perMonth;
+                        }(),
+                      ),
                       const SizedBox(height: 12),
 
-                      if (hasTariffs) ...[
+                      // Лоадер пока тарифы/опции ещё загружаются
+                      if (_loadingOptions && _options == null && !hasTariffs) ...[
+                        const SizedBox(height: 40),
+                        const Center(child: CircularProgressIndicator(
+                            color: DS.violet, strokeWidth: 2.5)),
+                        const SizedBox(height: 40),
+
+                      ] else if (hasTariffs) ...[
                         _ActionToggle(
                           selected: _showChangeTariff ? 1 : 0,
                           labels: const ['Продлить', 'Сменить тариф'],
@@ -1796,10 +1835,29 @@ class _Header extends StatelessWidget {
       title   = 'Выберите план';
     }
 
-    final top = MediaQuery.of(context).padding.top;
+    final top    = MediaQuery.of(context).padding.top;
+    final canPop = Navigator.canPop(context);
     return Padding(
-      padding: EdgeInsets.fromLTRB(20, top + 22, 20, 10),
-      child: Row(children: [
+      padding: EdgeInsets.fromLTRB(canPop ? 8 : 20, top + 16, 20, 10),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        if (canPop) ...[
+          GestureDetector(
+            onTap: () => Navigator.pop(context),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: _premSurface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: _b1),
+              ),
+              child: const Center(
+                child: Icon(Icons.arrow_back_ios_new_rounded, color: _t1, size: 16),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+        ],
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(
@@ -2550,33 +2608,12 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
           curve: Curves.easeInOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            // Subtle gradient background when selected
-            gradient: selected
-                ? LinearGradient(
-                    colors: [
-                      DS.violet.withValues(alpha: 0.14),
-                      _indigoD.withValues(alpha: 0.06),
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  )
-                : null,
-            color: selected ? null : _premSurface,
+            color: selected ? const Color(0x1A7C6BFF) : _premSurface,
             borderRadius: BorderRadius.circular(DS.radiusSm),
             border: Border.all(
-              color: selected ? DS.violet.withValues(alpha: 0.80) : _b1,
-              width: selected ? 1.5 : 1,
+              color: selected ? DS.violet : _b1,
+              width: selected ? 1.5 : 1.0,
             ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                        color: DS.violet.withValues(alpha: 0.20),
-                        blurRadius: 18, offset: const Offset(0, 5)),
-                    BoxShadow(
-                        color: DS.violet.withValues(alpha: 0.08),
-                        blurRadius: 40, offset: const Offset(0, 10)),
-                  ]
-                : null,
           ),
           child: Row(children: [
 
@@ -3419,50 +3456,77 @@ class _ExpiredCard extends StatelessWidget {
     final expiredAt = sub.formattedExpiry;
 
     return Container(
-      clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(_r16),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1A0A0E), Color(0xFF110810)],
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF2A1420),   // заметный тёмно-розовый — хорошо виден на фоне страницы
+            const Color(0xFF1E0E18),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        border: Border(
-          left:   BorderSide(color: DS.rose, width: 3),
-          top:    BorderSide(color: DS.rose.withValues(alpha: 0.15)),
-          right:  BorderSide(color: DS.rose.withValues(alpha: 0.15)),
-          bottom: BorderSide(color: DS.rose.withValues(alpha: 0.15)),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: DS.rose.withValues(alpha: 0.08),
-            blurRadius: 20, offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: DS.rose.withValues(alpha: 0.35), width: 1.5),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-        child: Row(children: [
-          PhosphorIcon(PhosphorIconsFill.warningCircle,
-              color: DS.rose, size: 18),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(planName,
-                    style: const TextStyle(
-                        color: _t1, fontSize: 15,
-                        fontWeight: FontWeight.w700)),
-                const SizedBox(height: 2),
-                Text('истекла $expiredAt',
-                    style: const TextStyle(
-                        color: _t2, fontSize: 12)),
-              ],
+      child: Stack(
+        children: [
+          // Лёгкое свечение сверху-слева
+          Positioned(
+            top: 0, left: 0, right: 0, height: 56,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    DS.rose.withValues(alpha: 0.10),
+                    DS.rose.withValues(alpha: 0.0),
+                  ],
+                ),
+              ),
             ),
           ),
-          _MiniChip(label: 'Доступ закрыт', color: DS.rose, bordered: true),
-        ]),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            child: Row(children: [
+              // Иконка в цветном контейнере
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(
+                  color: DS.rose.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Center(
+                  child: PhosphorIcon(
+                    PhosphorIconsFill.warningCircle,
+                    color: DS.rose, size: 20,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      planName,
+                      style: const TextStyle(
+                          color: _t0, fontSize: 15,
+                          fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'Истекла $expiredAt',
+                      style: TextStyle(
+                          color: DS.rose.withValues(alpha: 0.75),
+                          fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+            ]),
+          ),
+        ],
       ),
     );
   }
@@ -3477,37 +3541,51 @@ class _ExpiredCard extends StatelessWidget {
 class _PlanContextStrip extends StatelessWidget {
   final MeSubscription sub;
   final bool expired;
-  const _PlanContextStrip({required this.sub, this.expired = false});
+  final String? cheapestPriceLabel;   // e.g. "99 ₽/мес"
+  const _PlanContextStrip({required this.sub, this.expired = false, this.cheapestPriceLabel});
 
   @override
   Widget build(BuildContext context) {
     if (expired) {
       // "What you had" — context for renewal
-      final planName = sub.planName;
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2),
-        child: Wrap(
-          spacing: 14,
-          runSpacing: 6,
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        decoration: BoxDecoration(
+          color: _premSurface,
+          borderRadius: BorderRadius.circular(_r16),
+          border: Border.all(color: _b1),
+        ),
+        child: Row(
           children: [
-            if (planName != null && planName.isNotEmpty)
-              _CtxItem(
-                icon: PhosphorIconsRegular.sparkle,
-                label: planName,
-                color: _t1,
+            Expanded(
+              child: Wrap(
+                spacing: 16, runSpacing: 7,
+                children: [
+                  _CtxItem(
+                    icon: Icons.devices_rounded,
+                    label: '${sub.deviceLimit} ${_devWord(sub.deviceLimit)}',
+                    color: _t1,
+                  ),
+                  _CtxItem(
+                    icon: sub.trafficLimitGb == 0
+                        ? Icons.all_inclusive_rounded
+                        : Icons.storage_rounded,
+                    label: sub.trafficLimitGb == 0
+                        ? 'Без лимита'
+                        : '${sub.trafficLimitGb} ГБ',
+                    color: _t1,
+                  ),
+                ],
               ),
-            _CtxItem(
-              icon: PhosphorIconsRegular.devices,
-              label: '${sub.deviceLimit} ${_devWord(sub.deviceLimit)}',
-              color: _t2,
             ),
-            _CtxItem(
-              icon: PhosphorIconsRegular.database,
-              label: sub.trafficLimitGb == 0
-                  ? 'безлимит'
-                  : '${sub.trafficLimitGb} ГБ',
-              color: _t2,
-            ),
+            if (cheapestPriceLabel != null) ...[
+              const SizedBox(width: 12),
+              Text(
+                cheapestPriceLabel!,
+                style: const TextStyle(
+                  color: _t0, fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ],
           ],
         ),
       );
@@ -3555,16 +3633,16 @@ class _PlanContextStrip extends StatelessWidget {
 
 // One icon + label pair used in _PlanContextStrip
 class _CtxItem extends StatelessWidget {
-  final PhosphorIconData icon;
-  final String           label;
-  final Color            color;
+  final IconData icon;
+  final String   label;
+  final Color    color;
   const _CtxItem({required this.icon, required this.label, required this.color});
 
   @override
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      PhosphorIcon(icon, color: color.withValues(alpha: 0.80), size: 13),
+      Icon(icon, color: color.withValues(alpha: 0.80), size: 13),
       const SizedBox(width: 5),
       Text(
         label,
@@ -3576,35 +3654,6 @@ class _CtxItem extends StatelessWidget {
         ),
       ),
     ],
-  );
-}
-
-// Small reusable chip used in the status bands above
-class _MiniChip extends StatelessWidget {
-  final String label;
-  final Color  color;
-  final bool   bordered;
-  const _MiniChip({
-    required this.label,
-    required this.color,
-    this.bordered = false,
-  });
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(8),
-      border: bordered
-          ? Border.all(color: color.withValues(alpha: 0.30))
-          : null,
-    ),
-    child: Text(
-      label,
-      style: TextStyle(
-          color: color, fontSize: 11, fontWeight: FontWeight.w700),
-    ),
   );
 }
 
@@ -4240,22 +4289,8 @@ class _ActionBtn extends StatefulWidget {
   State<_ActionBtn> createState() => _ActionBtnState();
 }
 
-class _ActionBtnState extends State<_ActionBtn>
-    with SingleTickerProviderStateMixin {
+class _ActionBtnState extends State<_ActionBtn> {
   bool _pressed = false;
-  late final AnimationController _pulse;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() { _pulse.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
@@ -4269,33 +4304,26 @@ class _ActionBtnState extends State<_ActionBtn>
         onTapDown:  (_) { if (!widget.loading && !widget.disabled) setState(() => _pressed = true); },
         onTapUp:    (_) { widget.onTap(); setState(() => _pressed = false); },
         onTapCancel: () => setState(() => _pressed = false),
-        child: AnimatedBuilder(
-          animation: _pulse,
-          builder: (_, child) {
-            final p = widget.disabled ? 0.0 : _pulse.value;
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              height: 56, width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: widget.disabled
-                    ? null
-                    : LinearGradient(
-                        colors: [widget.color, Color.lerp(widget.color, Colors.black, 0.28)!],
-                        begin: Alignment.topLeft, end: Alignment.bottomRight),
-                color: widget.disabled ? _premSurface : null,
-                borderRadius: BorderRadius.circular(_r16),
-                border: widget.disabled ? Border.all(color: _b1) : null,
-                boxShadow: widget.disabled ? null : [
-                  BoxShadow(
-                    color: widget.color.withValues(alpha: 0.24 + 0.18 * p),
-                    blurRadius: 16 + 12 * p,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          height: 56, width: double.infinity,
+          decoration: BoxDecoration(
+            gradient: widget.disabled
+                ? null
+                : LinearGradient(
+                    colors: [widget.color, Color.lerp(widget.color, Colors.black, 0.28)!],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight),
+            color: widget.disabled ? _premSurface : null,
+            borderRadius: BorderRadius.circular(_r16),
+            border: widget.disabled ? Border.all(color: _b1) : null,
+            boxShadow: widget.disabled ? null : [
+              BoxShadow(
+                color: widget.color.withValues(alpha: 0.30),
+                blurRadius: 14,
+                offset: const Offset(0, 8),
               ),
-              child: child,
-            );
-          },
+            ],
+          ),
           child: Center(
             child: widget.loading
                 ? const SizedBox(
@@ -4773,7 +4801,7 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
     final t        = widget.tariff;
     final selected = widget.selected;
     final cheapest = t.cheapestPeriod;
-    final accent   = _TariffRadioCardState._tariffStyle(t).$2;
+    final (iconData, accent) = _TariffRadioCardState._tariffStyle(t);
 
     return Stack(
       clipBehavior: Clip.none,
@@ -4806,57 +4834,80 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Text(
-                          _TariffRadioCard._cleanTariffName(t.name),
-                          style: TextStyle(
-                            color: selected ? _t0 : _t1,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                        // Иконка тарифа в цветном контейнере
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: 40, height: 40,
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: selected ? 0.18 : 0.12),
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                          child: Center(
+                            child: PhosphorIcon(iconData,
+                                color: selected ? accent : accent.withValues(alpha: 0.75),
+                                size: 20),
                           ),
                         ),
-                        if (cheapest != null)
-                          RichText(
-                            text: TextSpan(
-                              children: [
-                                TextSpan(
-                                  text: '${cheapest.priceRub.toStringAsFixed(0)} ₽',
-                                  style: TextStyle(
-                                    color: selected ? accent : _t0,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _TariffRadioCard._cleanTariffName(t.name),
+                                style: TextStyle(
+                                  color: selected ? _t0 : _t1,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                const TextSpan(
-                                  text: '/мес',
-                                  style: TextStyle(
-                                    color: _t1,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w400,
-                                  ),
+                              ),
+                              const SizedBox(height: 6),
+                              Row(children: [
+                                _MetaChip(
+                                  icon: t.trafficLimitGb == 0
+                                      ? Icons.all_inclusive_rounded
+                                      : Icons.storage_rounded,
+                                  label: t.trafficLimitGb == 0
+                                      ? 'Без лимита'
+                                      : '${t.trafficLimitGb} ГБ',
                                 ),
-                              ],
-                            ),
+                                const SizedBox(width: 8),
+                                _MetaChip(
+                                  icon: Icons.devices_rounded,
+                                  label: '${t.deviceLimit} устр.',
+                                ),
+                              ]),
+                            ],
                           ),
+                        ),
+                        if (cheapest != null) ...[
+                          const SizedBox(width: 8),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                '${cheapest.priceRub.toStringAsFixed(0)} ₽',
+                                style: TextStyle(
+                                  color: selected ? accent : _t0,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const Text(
+                                '/мес',
+                                style: TextStyle(
+                                  color: _t1,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w400,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      _MetaChip(
-                        icon: t.trafficLimitGb == 0
-                            ? Icons.all_inclusive_rounded
-                            : Icons.storage_rounded,
-                        label: t.trafficLimitGb == 0
-                            ? 'Без лимита'
-                            : '${t.trafficLimitGb} ГБ',
-                      ),
-                      const SizedBox(width: 10),
-                      _MetaChip(
-                        icon: Icons.devices_rounded,
-                        label: '${t.deviceLimit} устр.',
-                      ),
-                    ]),
                     if (widget.showStepper) ...[
                       const SizedBox(height: 12),
                       Container(
@@ -4956,9 +5007,11 @@ class _MetaChip extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Icon(icon, size: 14, color: _t1),
+      Icon(icon, size: 13, color: _t1),
       const SizedBox(width: 4),
-      Text(label, style: const TextStyle(color: _t1, fontSize: 12)),
+      Text(label,
+          style: const TextStyle(
+              color: _t1, fontSize: 11, fontWeight: FontWeight.w500)),
     ],
   );
 }
@@ -5141,19 +5194,32 @@ class _BreakdownRow extends StatelessWidget {
   final String label;
   final String value;
   final Color? accent;
+  final bool strikethrough;
 
   const _BreakdownRow({
     required this.label,
     required this.value,
     this.accent,
+    this.strikethrough = false,
   });
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    children: [
-      Text(label, style: TextStyle(color: accent ?? _t1, fontSize: 13)),
-      Text(value, style: TextStyle(color: accent ?? _t0, fontSize: 13)),
-    ],
-  );
+  Widget build(BuildContext context) {
+    final labelColor = accent ?? (strikethrough ? _t2 : _t1);
+    final valueColor = accent ?? (strikethrough ? _t2 : _t0);
+    final decoration = strikethrough ? TextDecoration.lineThrough : TextDecoration.none;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label,
+            style: TextStyle(
+                color: labelColor, fontSize: 13, decoration: decoration,
+                decorationColor: _t2)),
+        Text(value,
+            style: TextStyle(
+                color: valueColor, fontSize: 13, decoration: decoration,
+                decorationColor: _t2)),
+      ],
+    );
+  }
 }
