@@ -6,9 +6,11 @@ import 'dart:math' as math;
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
-import 'package:flutter/services.dart' show HapticFeedback;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, HapticFeedback;
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:share_plus/share_plus.dart';
 
 import '../models/me_response.dart';
 import '../models/server_node.dart';
@@ -18,6 +20,7 @@ import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
+import '../services/referral_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../utils/speed_calculator.dart';
@@ -85,6 +88,13 @@ class _HomePageState extends State<HomePage>
   final List<double> _downloadHist = [];
   final List<double> _uploadHist = [];
 
+  // ── Referral ──────────────────────────────────────────────────────────────
+  // Loaded lazily from /cabinet/referral once we have a Cabinet JWT. The card
+  // is hidden entirely until [_referralInfo] is non-null, so failure modes
+  // (no auth / network error / disabled programme) just collapse the slot.
+  ReferralInfo? _referralInfo;
+  bool _referralCopied = false;
+
   // ── Computed ───────────────────────────────────────────────────────────────
   bool get _isConnected => _status.state.toUpperCase() == 'CONNECTED';
   bool get _isTransitioning =>
@@ -145,6 +155,41 @@ class _HomePageState extends State<HomePage>
       if (connected != wasConnected) _restartPingTimer();
       setState(() => _status = s);
     });
+  }
+
+  // ── Referral ──────────────────────────────────────────────────────────────
+  /// Pulls the referral snapshot once we have a Cabinet JWT. Idempotent —
+  /// safe to call on every auth-change tick; clears the card on logout.
+  Future<void> _loadReferral() async {
+    final token = authStateNotifier.value.cabinetAccessToken;
+    if (token == null || token.isEmpty) {
+      if (_referralInfo != null && mounted) {
+        setState(() => _referralInfo = null);
+      }
+      return;
+    }
+    final info = await ReferralService.getInfo();
+    if (!mounted) return;
+    if (info != _referralInfo) setState(() => _referralInfo = info);
+  }
+
+  Future<void> _copyReferralCode() async {
+    final info = _referralInfo;
+    if (info == null) return;
+    await Clipboard.setData(ClipboardData(text: info.referralCode));
+    HapticFeedback.selectionClick();
+    if (!mounted) return;
+    setState(() => _referralCopied = true);
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _referralCopied = false);
+    });
+  }
+
+  Future<void> _shareReferral() async {
+    final info = _referralInfo;
+    if (info == null) return;
+    HapticFeedback.selectionClick();
+    await SharePlus.instance.share(ShareParams(text: info.shareText));
   }
 
   // ── Sparkline helper ──────────────────────────────────────────────────────
@@ -222,7 +267,10 @@ class _HomePageState extends State<HomePage>
     }
   }
 
-  void _onAuthChanged() => _loadNodes();
+  void _onAuthChanged() {
+    _loadNodes();
+    _loadReferral();
+  }
 
   void _onMeChanged() {
     final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
@@ -255,6 +303,7 @@ class _HomePageState extends State<HomePage>
     _resubscribeVpnStatus();
     if (mounted) setState(() => _initialized = true);
     _loadNodes();
+    _loadReferral();
   }
 
   // ── Data ───────────────────────────────────────────────────────────────────
@@ -832,6 +881,15 @@ class _HomePageState extends State<HomePage>
                         )
                       : const SizedBox.shrink(),
                 ),
+                if (_referralInfo != null) ...[
+                  _ReferralCard(
+                    info: _referralInfo!,
+                    copied: _referralCopied,
+                    onCopy: _copyReferralCode,
+                    onShare: _shareReferral,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _buildSubscriptionCard(),
               ])),
             ),
@@ -1648,6 +1706,243 @@ class _BubblesPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_BubblesPainter old) => old.t != t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _ReferralCard — invite-friends surface for the Home screen.
+// Compact variant of the standalone referral page: code chip, share CTA,
+// progress strip ("N друзей · Y₽"). Pulls data from /cabinet/referral.
+// ─────────────────────────────────────────────────────────────────────────────
+class _ReferralCard extends StatelessWidget {
+  final ReferralInfo info;
+  final bool copied;
+  final VoidCallback onCopy;
+  final VoidCallback onShare;
+
+  const _ReferralCard({
+    required this.info,
+    required this.copied,
+    required this.onCopy,
+    required this.onShare,
+  });
+
+  String _fmtRubles(double v) {
+    if (v == v.roundToDouble()) return '${v.toInt()} ₽';
+    return '${v.toStringAsFixed(2)} ₽';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final code = info.referralCode.isEmpty ? '—' : info.referralCode;
+    final commission = info.commissionPercent;
+
+    return Container(
+      decoration: BoxDecoration(
+        // Soft brand gradient — sits between the connection card and the
+        // subscription card without competing with either.
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E1438), Color(0xFF14101F)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(DS.radius),
+        border: Border.all(color: DS.violet.withValues(alpha: 0.35)),
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: DS.violet.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: DS.violet.withValues(alpha: 0.4)),
+              ),
+              child: const Icon(Icons.card_giftcard_rounded,
+                  size: 18, color: DS.violet),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Пригласите друзей',
+                      style: TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        height: 1.15,
+                      )),
+                  const SizedBox(height: 2),
+                  Text(
+                    commission > 0
+                        ? 'Получайте $commission% с каждого их платежа'
+                        : 'Делитесь кодом и получайте бонусы',
+                    style: const TextStyle(
+                      color: DS.textSecondary,
+                      fontSize: 11.5,
+                      height: 1.25,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ]),
+          const SizedBox(height: 14),
+
+          // Code chip + copy button
+          Row(children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                decoration: BoxDecoration(
+                  color: DS.surface1,
+                  borderRadius: BorderRadius.circular(DS.radiusSm),
+                  border: Border.all(color: DS.border),
+                ),
+                child: Row(children: [
+                  const Text('ВАШ КОД',
+                      style: TextStyle(
+                        color: DS.textMuted,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                      )),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      code,
+                      style: const TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.6,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Copy pill — flips to emerald "Скопировано" briefly on tap.
+            GestureDetector(
+              onTap: onCopy,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                height: 42,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: copied ? DS.emerald : DS.violet,
+                  borderRadius: BorderRadius.circular(DS.radiusSm),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (copied ? DS.emerald : DS.violet)
+                          .withValues(alpha: 0.28),
+                      blurRadius: 12,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(children: [
+                  Icon(
+                    copied ? Icons.check_rounded : Icons.copy_rounded,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    copied ? 'Готово' : 'Копировать',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+          ]),
+
+          const SizedBox(height: 12),
+
+          // Stats strip + share button
+          Row(children: [
+            Expanded(
+              child: Row(children: [
+                _ReferralStat(
+                  icon: Icons.people_alt_rounded,
+                  value: '${info.totalReferrals}',
+                  label: info.activeReferrals == info.totalReferrals
+                      ? 'друзей'
+                      : '${info.activeReferrals} активны',
+                ),
+                const SizedBox(width: 14),
+                _ReferralStat(
+                  icon: Icons.savings_rounded,
+                  value: _fmtRubles(info.totalEarningsRubles),
+                  label: 'заработано',
+                ),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: onShare,
+              child: Container(
+                width: 42, height: 42,
+                decoration: BoxDecoration(
+                  color: DS.telegramBlue.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(DS.radiusSm),
+                  border: Border.all(
+                      color: DS.telegramBlue.withValues(alpha: 0.4)),
+                ),
+                child: const Icon(Icons.send_rounded,
+                    color: DS.telegramBlue, size: 18),
+              ),
+            ),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReferralStat extends StatelessWidget {
+  final IconData icon;
+  final String value;
+  final String label;
+  const _ReferralStat({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: DS.textSecondary),
+          const SizedBox(width: 5),
+          Text(value,
+              style: const TextStyle(
+                color: DS.textPrimary,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                fontFeatures: [FontFeature.tabularFigures()],
+              )),
+          const SizedBox(width: 4),
+          Text(label,
+              style: const TextStyle(
+                color: DS.textMuted,
+                fontSize: 11.5,
+              )),
+        ],
+      );
 }
 
 class _UserStrip extends StatelessWidget {
