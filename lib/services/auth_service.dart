@@ -327,29 +327,41 @@ class AuthService {
 
   // ── Google OAuth (Cabinet) ────────────────────────────────────────────────
 
-  /// Sign in with Google via the Cabinet OAuth flow.
+  /// Sign in with Google via the Cabinet OAuth flow, mobile variant.
   ///
-  /// 1. `GET /cabinet/auth/oauth/google/authorize` → `{authorize_url, state}`
-  /// 2. Open `authorize_url` in an in-app browser through flutter_web_auth_2.
-  /// 3. After the user grants access, Google redirects to the cabinet, which
-  ///    in turn redirects to our custom scheme [AppConfig.oauthCallback]
-  ///    with `code` and `state` in the query string.
-  /// 4. `POST /cabinet/auth/oauth/google/callback {code, state}` →
-  ///    `{access_token, refresh_token, user, …}` — full Cabinet JWT.
+  /// 1. `GET /cabinet/auth/oauth/google/authorize?mobile=1` →
+  ///    `{authorize_url, state}` — the URL is the standard Google consent
+  ///    page; the backend keeps its own HTTPS callback registered with
+  ///    Google Cloud (we don't touch Google Cloud Console for mobile).
+  /// 2. Open `authorize_url` in an in-app browser through
+  ///    flutter_web_auth_2 — we wait for any redirect into our custom
+  ///    scheme.
+  /// 3. Google → backend's HTTPS callback (as usual). The backend handles
+  ///    the OAuth code exchange itself and, *because we asked for the
+  ///    mobile variant*, instead of rendering a success page it issues a
+  ///    short-lived JWT and `302 Redirect → ulyavpn://oauth/done?token=…`.
+  /// 4. The app catches the deeplink, extracts `token` from the query.
+  /// 5. `POST /cabinet/auth/login/auto {token}` → full access/refresh pair
+  ///    and the user payload.
   ///
   /// On success persists the new auth state (including [cabinetAccessToken])
   /// and returns `null`. On failure returns a localised error string.
   ///
-  /// Prerequisite: `ulyavpn://oauth/callback` must be registered as an
-  /// "Authorized redirect URI" for the Google OAuth client in the Cabinet
-  /// admin panel.
+  /// **Backend contract requirement.** This relies on the cabinet honouring
+  /// the `mobile=1` query parameter (or equivalent) on the authorize
+  /// endpoint and redirecting to `ulyavpn://oauth/done?token=<short_jwt>`
+  /// after the Google round-trip. See [AppConfig.oauthCallback].
   static Future<String?> signInWithGoogle() async {
     try {
       // ── Step 1: ask the cabinet for the Google authorize URL ───────────
+      // mobile=1 tells the backend to switch to the deeplink-return mode
+      // instead of rendering a web success page. Also pass the expected
+      // redirect target so the backend can pin its 302 response.
       final authorizeResp = await http
           .get(
             Uri.parse(
-                '${AppConfig.backendBaseUrl}/cabinet/auth/oauth/google/authorize'),
+                '${AppConfig.backendBaseUrl}/cabinet/auth/oauth/google/authorize'
+                '?mobile=1&redirect_uri=${Uri.encodeQueryComponent(AppConfig.oauthCallback)}'),
             headers: const {'Accept': 'application/json'},
           )
           .timeout(const Duration(seconds: 12));
@@ -361,12 +373,11 @@ class AuthService {
       final authorizeJson =
           jsonDecode(authorizeResp.body) as Map<String, dynamic>;
       final authorizeUrl = authorizeJson['authorize_url'] as String?;
-      final expectedState = authorizeJson['state'] as String?;
       if (authorizeUrl == null || authorizeUrl.isEmpty) {
         return 'Неверный ответ сервера.';
       }
 
-      // ── Step 2: open the browser and wait for redirect ─────────────────
+      // ── Step 2: open the browser and wait for the deeplink redirect ────
       final String resultUrl;
       try {
         resultUrl = await FlutterWebAuth2.authenticate(
@@ -379,47 +390,56 @@ class AuthService {
         return 'Вход отменён.';
       }
 
-      // ── Step 3: extract code + state from the callback URL ─────────────
+      // ── Step 3: extract short-lived token from the deeplink ────────────
+      // The deeplink format is `ulyavpn://oauth/done?token=…` (or `error=…`).
+      // For backwards compatibility we also accept `access_token` in case
+      // the backend ever decides to deliver the full token directly.
       final cb = Uri.parse(resultUrl);
-      final code = cb.queryParameters['code'];
-      final state = cb.queryParameters['state'];
       final err = cb.queryParameters['error'];
       if (err != null && err.isNotEmpty) {
         appLogger.error('AuthService', 'google callback error: $err');
-        return 'Google отказал в доступе ($err).';
+        return _humaniseOauthError(err);
       }
-      if (code == null || code.isEmpty || state == null || state.isEmpty) {
-        appLogger.error('AuthService', 'google callback missing code/state: $resultUrl');
+      final shortToken = cb.queryParameters['token'];
+      final directAccess = cb.queryParameters['access_token'];
+      if ((shortToken == null || shortToken.isEmpty) &&
+          (directAccess == null || directAccess.isEmpty)) {
+        appLogger.error('AuthService', 'google deeplink missing token: $resultUrl');
         return 'Неверный ответ от Google.';
       }
-      if (expectedState != null && expectedState.isNotEmpty && state != expectedState) {
-        appLogger.error('AuthService', 'google state mismatch');
-        return 'Несовпадение state — возможна попытка перехвата. Попробуйте снова.';
-      }
 
-      // ── Step 4: exchange code for tokens ───────────────────────────────
-      final callbackResp = await http
-          .post(
-            Uri.parse(
-                '${AppConfig.backendBaseUrl}/cabinet/auth/oauth/google/callback'),
-            headers: const {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-            },
-            body: jsonEncode({'code': code, 'state': state}),
-          )
-          .timeout(const Duration(seconds: 15));
-      if (callbackResp.statusCode != 200) {
-        appLogger.error('AuthService',
-            'google callback failed: HTTP ${callbackResp.statusCode} body=${callbackResp.body}');
-        return 'Сервер отклонил вход (${callbackResp.statusCode}).';
+      // ── Step 4: exchange the short token for a full session ────────────
+      String? accessToken;
+      Map<String, dynamic>? userMap;
+      if (shortToken != null && shortToken.isNotEmpty) {
+        final autoResp = await http
+            .post(
+              Uri.parse(
+                  '${AppConfig.backendBaseUrl}/cabinet/auth/login/auto'),
+              headers: const {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+              body: jsonEncode({'token': shortToken}),
+            )
+            .timeout(const Duration(seconds: 15));
+        if (autoResp.statusCode != 200) {
+          appLogger.error('AuthService',
+              'login/auto failed: HTTP ${autoResp.statusCode} body=${autoResp.body}');
+          return 'Сервер отклонил вход (${autoResp.statusCode}).';
+        }
+        final tokens = jsonDecode(autoResp.body) as Map<String, dynamic>;
+        accessToken = tokens['access_token'] as String?;
+        userMap = tokens['user'] as Map<String, dynamic>?;
+      } else {
+        // Backend gave us the full token directly — no /login/auto round-trip.
+        accessToken = directAccess;
+        userMap = const {};
       }
-      final tokens = jsonDecode(callbackResp.body) as Map<String, dynamic>;
-      final accessToken = tokens['access_token'] as String?;
-      final userMap = tokens['user'] as Map<String, dynamic>?;
-      if (accessToken == null || userMap == null) {
+      if (accessToken == null || accessToken.isEmpty) {
         return 'Неверный ответ сервера.';
       }
+      userMap ??= const {};
 
       // ── Step 5: persist new auth state ─────────────────────────────────
       final subUrl = await _fetchCabinetSubscriptionUrl(accessToken);
@@ -448,6 +468,23 @@ class AuthService {
     } on Exception catch (e) {
       appLogger.error('AuthService', 'google sign-in failed: $e');
       return 'Ошибка соединения: $e';
+    }
+  }
+
+  /// Maps common OAuth error codes returned in the deeplink to a Russian
+  /// message the user can act on.
+  static String _humaniseOauthError(String code) {
+    switch (code) {
+      case 'access_denied':
+        return 'Вы отменили вход.';
+      case 'redirect_uri_mismatch':
+        return 'Не настроен redirect URI на бэке.';
+      case 'invalid_state':
+        return 'Сессия входа устарела. Попробуйте снова.';
+      case 'invalid_token':
+        return 'Сервер не принял токен. Попробуйте снова.';
+      default:
+        return 'Google отказал в доступе ($code).';
     }
   }
 
