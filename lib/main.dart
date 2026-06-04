@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import 'pages/home_page.dart';
 import 'pages/onboarding_page.dart';
@@ -311,10 +312,18 @@ class _GlassNavBar extends StatelessWidget {
     required this.onTabSelected,
   });
 
-  static const _items = [
-    (icon: Icons.home_outlined,    activeIcon: Icons.home_rounded,     label: 'Главная'),
-    (icon: Icons.public_outlined,  activeIcon: Icons.public_rounded,   label: 'Серверы'),
-    (icon: Icons.settings_outlined, activeIcon: Icons.settings_rounded, label: 'Настройки'),
+  // Phosphor: regular weight for inactive, fill for the selected tab — matches
+  // the duotone-ish aesthetic without crossing into the full duotone variant.
+  static final _items = <({IconData icon, IconData activeIcon, String label})>[
+    (icon: PhosphorIconsRegular.house,
+        activeIcon: PhosphorIconsFill.house,
+        label: 'Главная'),
+    (icon: PhosphorIconsRegular.globeHemisphereWest,
+        activeIcon: PhosphorIconsFill.globeHemisphereWest,
+        label: 'Серверы'),
+    (icon: PhosphorIconsRegular.gearSix,
+        activeIcon: PhosphorIconsFill.gearSix,
+        label: 'Настройки'),
   ];
 
   @override

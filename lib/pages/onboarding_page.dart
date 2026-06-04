@@ -1,6 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../main.dart' show DS, MainShell;
@@ -163,6 +167,21 @@ class _OnboardingPageState extends State<OnboardingPage> {
     setState(() { _authStep = _AuthStep.openingTg; _authError = null; });
 
     final token = await AuthService.startLogin(onError: (msg) {
+      if (mounted) setState(() { _authStep = _AuthStep.error; _authError = msg; });
+    });
+
+    if (token == null || !mounted) return;
+    setState(() => _authStep = _AuthStep.waiting);
+    _startPolling(token);
+  }
+
+  Future<void> _onGoogleTap() async {
+    if (_authStep != _AuthStep.idle && _authStep != _AuthStep.error) return;
+    // Reuse the openingTg step label for now — both flows look identical from
+    // the user's perspective: "opening external app, waiting for confirmation".
+    setState(() { _authStep = _AuthStep.openingTg; _authError = null; });
+
+    final token = await AuthService.startGoogleLogin(onError: (msg) {
       if (mounted) setState(() { _authStep = _AuthStep.error; _authError = msg; });
     });
 
@@ -358,6 +377,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
       backgroundColor: DS.surface0,
       body: Stack(
         children: [
+          // Animated background — soft brand-colour blobs that morph and drift.
+          // Sits behind every slide; ignores pointer events.
+          const Positioned.fill(
+            child: IgnorePointer(child: _MorphingBlobs()),
+          ),
           PageView(
             controller: _pageCtrl,
             // Prevent swipe on auth slide to avoid accidental back gesture
@@ -379,6 +403,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 passwordVisible: _passwordVisible,
                 onPasswordToggle: () => setState(() => _passwordVisible = !_passwordVisible),
                 onTelegramTap: _onTelegramTap,
+                onGoogleTap: _onGoogleTap,
                 onEmailButtonTap: _showEmailForm,
                 onEmailModeSwitch: (m) => setState(() { _emailMode = m; _authError = null; }),
                 onEmailSubmit: _onEmailSubmit,
@@ -480,6 +505,7 @@ class _AuthSlide extends StatelessWidget {
     required this.passwordVisible,
     required this.onPasswordToggle,
     required this.onTelegramTap,
+    required this.onGoogleTap,
     required this.onEmailButtonTap,
     required this.onEmailModeSwitch,
     required this.onEmailSubmit,
@@ -500,6 +526,7 @@ class _AuthSlide extends StatelessWidget {
   final bool passwordVisible;
   final VoidCallback onPasswordToggle;
   final VoidCallback onTelegramTap;
+  final VoidCallback onGoogleTap;
   final VoidCallback onEmailButtonTap;
   final ValueChanged<_EmailMode> onEmailModeSwitch;
   final VoidCallback onEmailSubmit;
@@ -599,14 +626,21 @@ class _AuthSlide extends StatelessWidget {
               : 'Ожидаем подтверждения…')
         else ...[
           _AuthButton(
-            icon: Icons.telegram,
+            icon: PhosphorIconsFill.telegramLogo,
             label: 'Войти через Telegram',
             color: DS.telegramBlue,
             onTap: onTelegramTap,
           ),
           const SizedBox(height: 12),
           _AuthButton(
-            icon: Icons.email_rounded,
+            icon: PhosphorIconsFill.googleLogo,
+            label: 'Войти через Google',
+            color: const Color(0xFFEA4335),
+            onTap: onGoogleTap,
+          ),
+          const SizedBox(height: 12),
+          _AuthButton(
+            icon: PhosphorIconsFill.envelope,
             label: 'Войти по Email',
             color: DS.violet,
             onTap: onEmailButtonTap,
@@ -1158,4 +1192,157 @@ class _BottomBar extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _MorphingBlobs — slow, drifting background for the onboarding pager.
+// Renders 4 large blurred radial blobs in brand colours that move along
+// independent Lissajous trajectories and pulse in radius. The result is a
+// "lava-lamp"-style live gradient that never quite repeats.
+//
+// Implementation notes:
+//   * A monotonic Ticker drives `_t` (seconds). Using a non-looping clock
+//     means the per-blob `sin(t*ωx + φx)` terms blend smoothly forever — no
+//     wraparound seams.
+//   * Drawing is done in a CustomPainter with `MaskFilter.blur` on each
+//     paint, which is GPU-cheap (a single offscreen blur per blob) and looks
+//     identical to a Backdrop blur for this use case.
+//   * Pointer events are blocked by the parent IgnorePointer.
+// ─────────────────────────────────────────────────────────────────────────────
+class _MorphingBlobs extends StatefulWidget {
+  const _MorphingBlobs();
+
+  @override
+  State<_MorphingBlobs> createState() => _MorphingBlobsState();
+}
+
+class _MorphingBlobsState extends State<_MorphingBlobs>
+    with SingleTickerProviderStateMixin {
+  Ticker? _ticker;
+  double _t = 0;
+  Duration _last = Duration.zero;
+
+  // Each blob's trajectory is `center + (Ax*sin(ωx*t + φx), Ay*cos(ωy*t + φy))`
+  // and its radius pulses as `r0 + Ar*sin(ωr*t + φr)`. All parameters are
+  // expressed as fractions of the canvas extent so the layout is resolution
+  // independent.
+  static final List<_BlobSpec> _specs = [
+    _BlobSpec(
+      color: DS.violet,
+      cx: 0.25, cy: 0.30,
+      ax: 0.18, ay: 0.15,
+      wx: 0.22, wy: 0.17,
+      px: 0.0, py: 1.1,
+      r0: 0.32, ar: 0.06, wr: 0.13, pr: 0.4,
+    ),
+    _BlobSpec(
+      color: DS.cyan,
+      cx: 0.78, cy: 0.22,
+      ax: 0.16, ay: 0.12,
+      wx: 0.18, wy: 0.24,
+      px: 2.1, py: 0.3,
+      r0: 0.26, ar: 0.05, wr: 0.16, pr: 1.7,
+    ),
+    _BlobSpec(
+      color: DS.emerald,
+      cx: 0.72, cy: 0.78,
+      ax: 0.20, ay: 0.16,
+      wx: 0.14, wy: 0.21,
+      px: 3.5, py: 2.8,
+      r0: 0.30, ar: 0.07, wr: 0.11, pr: 2.9,
+    ),
+    _BlobSpec(
+      color: DS.gold,
+      cx: 0.22, cy: 0.80,
+      ax: 0.14, ay: 0.13,
+      wx: 0.26, wy: 0.19,
+      px: 1.5, py: 4.2,
+      r0: 0.22, ar: 0.05, wr: 0.18, pr: 5.6,
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker(_onTick)..start();
+  }
+
+  void _onTick(Duration elapsed) {
+    final dt = (elapsed - _last).inMicroseconds / 1e6;
+    _last = elapsed;
+    if (dt <= 0) return;
+    setState(() => _t += dt);
+  }
+
+  @override
+  void dispose() {
+    _ticker?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(painter: _BlobsPainter(t: _t, specs: _specs));
+  }
+}
+
+class _BlobSpec {
+  final Color color;
+  final double cx, cy;     // base centre, fraction of width/height
+  final double ax, ay;     // drift amplitude, fraction
+  final double wx, wy;     // drift angular speed (rad/s)
+  final double px, py;     // drift phase offset (rad)
+  final double r0, ar;     // radius (base + pulse), fraction of shortest side
+  final double wr, pr;     // radius pulse speed/phase
+  const _BlobSpec({
+    required this.color,
+    required this.cx, required this.cy,
+    required this.ax, required this.ay,
+    required this.wx, required this.wy,
+    required this.px, required this.py,
+    required this.r0, required this.ar,
+    required this.wr, required this.pr,
+  });
+}
+
+class _BlobsPainter extends CustomPainter {
+  _BlobsPainter({required this.t, required this.specs});
+  final double t;
+  final List<_BlobSpec> specs;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final shortest = math.min(size.width, size.height);
+    // Subtle base wash so the background isn't pure black between blobs.
+    final wash = Paint()
+      ..shader = ui.Gradient.linear(
+        Offset.zero,
+        Offset(0, size.height),
+        const [Color(0xFF0B0716), Color(0xFF06030C)],
+      );
+    canvas.drawRect(Offset.zero & size, wash);
+
+    for (final s in specs) {
+      final cx = size.width * (s.cx + s.ax * math.sin(s.wx * t + s.px));
+      final cy = size.height * (s.cy + s.ay * math.cos(s.wy * t + s.py));
+      final r = shortest * (s.r0 + s.ar * math.sin(s.wr * t + s.pr));
+      // Two-stop radial gradient: solid-ish core fading to transparent — the
+      // MaskFilter on top smears the edge to a soft cloud.
+      final paint = Paint()
+        ..shader = ui.Gradient.radial(
+          Offset(cx, cy),
+          r,
+          [
+            s.color.withValues(alpha: 0.32),
+            s.color.withValues(alpha: 0.0),
+          ],
+          const [0.0, 1.0],
+        )
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 32);
+      canvas.drawCircle(Offset(cx, cy), r, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BlobsPainter old) => old.t != t;
 }

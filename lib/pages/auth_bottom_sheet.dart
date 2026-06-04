@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../services/auth_service.dart';
 import '../main.dart' show DS;
@@ -64,6 +65,19 @@ class _AuthSheetState extends State<_AuthSheet>
     setState(() { _step = _Step.opening; _errorMessage = null; });
 
     final token = await AuthService.startLogin(onError: (msg) {
+      if (mounted) setState(() { _step = _Step.error; _errorMessage = msg; });
+    });
+
+    if (token == null || !mounted) return;
+    setState(() => _step = _Step.waiting);
+    _startPolling(token);
+  }
+
+  Future<void> _onGoogleTap() async {
+    if (_step != _Step.idle && _step != _Step.error) return;
+    setState(() { _step = _Step.opening; _errorMessage = null; });
+
+    final token = await AuthService.startGoogleLogin(onError: (msg) {
       if (mounted) setState(() { _step = _Step.error; _errorMessage = msg; });
     });
 
@@ -247,18 +261,55 @@ class _AuthSheetState extends State<_AuthSheet>
     switch (_step) {
       case _Step.idle:
       case _Step.error:
-        return _TelegramButton(
-          label: _step == _Step.error ? 'Попробовать снова' : 'Войти через Telegram',
-          onTap: _onLoginTap,
-        );
+        return Column(children: [
+          _TelegramButton(
+            label: _step == _Step.error ? 'Попробовать снова' : 'Войти через Telegram',
+            onTap: _onLoginTap,
+          ),
+          const SizedBox(height: 10),
+          _GoogleButton(onTap: _onGoogleTap),
+        ]);
       case _Step.opening:
       case _Step.waiting:
         return _LoadingRow(
-            label: _step == _Step.opening ? 'Открываем Telegram…' : 'Ожидаем подтверждения…');
+            label: _step == _Step.opening ? 'Открываем…' : 'Ожидаем подтверждения…');
       case _Step.success:
         return const SizedBox.shrink();
     }
   }
+}
+
+// Google sign-in CTA — neutral surface with the standard "G" coloured pip so
+// it reads as a secondary login method next to the brand-coloured Telegram CTA.
+class _GoogleButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _GoogleButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: double.infinity,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: DS.surface1,
+              borderRadius: BorderRadius.circular(DS.radius),
+              border: Border.all(color: DS.border),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(PhosphorIconsFill.googleLogo,
+                  color: const Color(0xFFEA4335), size: 20),
+              const SizedBox(width: 10),
+              const Text('Войти через Google',
+                  style: TextStyle(
+                      color: DS.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
+      );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

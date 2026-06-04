@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData, HapticFeedback;
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:share_plus/share_plus.dart';
@@ -916,13 +917,13 @@ class _HomePageState extends State<HomePage>
         ),
         VpnIconBtn(
           loading: false,
-          icon: Icons.support_agent_rounded,
+          icon: PhosphorIconsBold.headset,
           onTap: _openSupportPage,
         ),
         const SizedBox(width: 8),
         VpnIconBtn(
           loading: _isLoadingNodes,
-          icon: Icons.refresh_rounded,
+          icon: PhosphorIconsBold.arrowsClockwise,
           onTap: _isLoadingNodes ? null : _refreshAll,
         ),
       ],
@@ -1329,7 +1330,7 @@ class _HomePageState extends State<HomePage>
                         color: DS.violet.withValues(alpha: 0.40), width: 1),
                   ),
                   child: Row(children: [
-                    Icon(Icons.manage_accounts_rounded,
+                    Icon(PhosphorIconsBold.gearSix,
                         size: 18,
                         color: Color.lerp(DS.violet, Colors.white, 0.28)),
                     const SizedBox(width: 10),
@@ -1509,11 +1510,11 @@ class _ConnectButtonState extends State<_ConnectButton>
                                   ? Column(
                                       key: const ValueKey('off'),
                                       mainAxisSize: MainAxisSize.min,
-                                      children: const [
-                                        Icon(Icons.power_settings_new_rounded,
+                                      children: [
+                                        Icon(PhosphorIconsBold.power,
                                             color: Colors.white, size: 38),
-                                        SizedBox(height: 4),
-                                        Text('Отключено',
+                                        const SizedBox(height: 4),
+                                        const Text('Отключено',
                                             style: TextStyle(
                                               color: Colors.white70,
                                               fontSize: 12,
@@ -1521,9 +1522,9 @@ class _ConnectButtonState extends State<_ConnectButton>
                                             )),
                                       ],
                                     )
-                                  : const Icon(
-                                      key: ValueKey('on'),
-                                      Icons.shield_rounded,
+                                  : Icon(
+                                      key: const ValueKey('on'),
+                                      PhosphorIconsFill.shield,
                                       color: Colors.white,
                                       size: 44,
                                     ),
@@ -1761,7 +1762,7 @@ class _ReferralCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: DS.violet.withValues(alpha: 0.4)),
               ),
-              child: const Icon(Icons.card_giftcard_rounded,
+              child: Icon(PhosphorIconsFill.gift,
                   size: 18, color: DS.violet),
             ),
             const SizedBox(width: 10),
@@ -1851,7 +1852,7 @@ class _ReferralCard extends StatelessWidget {
                 ),
                 child: Row(children: [
                   Icon(
-                    copied ? Icons.check_rounded : Icons.copy_rounded,
+                    copied ? PhosphorIconsBold.check : PhosphorIconsBold.copy,
                     color: Colors.white,
                     size: 16,
                   ),
@@ -1876,7 +1877,7 @@ class _ReferralCard extends StatelessWidget {
             Expanded(
               child: Row(children: [
                 _ReferralStat(
-                  icon: Icons.people_alt_rounded,
+                  icon: PhosphorIconsFill.users,
                   value: '${info.totalReferrals}',
                   label: info.activeReferrals == info.totalReferrals
                       ? 'друзей'
@@ -1884,7 +1885,7 @@ class _ReferralCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 14),
                 _ReferralStat(
-                  icon: Icons.savings_rounded,
+                  icon: PhosphorIconsFill.coins,
                   value: _fmtRubles(info.totalEarningsRubles),
                   label: 'заработано',
                 ),
@@ -1901,7 +1902,7 @@ class _ReferralCard extends StatelessWidget {
                   border: Border.all(
                       color: DS.telegramBlue.withValues(alpha: 0.4)),
                 ),
-                child: const Icon(Icons.send_rounded,
+                child: Icon(PhosphorIconsFill.telegramLogo,
                     color: DS.telegramBlue, size: 18),
               ),
             ),
@@ -1958,7 +1959,9 @@ class _UserStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = isEmailAuth ? DS.violet : DS.telegramBlue;
-    final icon = isEmailAuth ? Icons.email_rounded : Icons.telegram;
+    final icon = isEmailAuth
+        ? PhosphorIconsFill.envelope
+        : PhosphorIconsFill.telegramLogo;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
@@ -1974,7 +1977,7 @@ class _UserStrip extends StatelessWidget {
             overflow: TextOverflow.ellipsis)),
         GestureDetector(
             onTap: onLogout,
-            child: const Icon(Icons.logout_rounded, size: 16, color: DS.textMuted)),
+            child: Icon(PhosphorIconsBold.signOut, size: 16, color: DS.textMuted)),
       ]),
     );
   }
@@ -2048,7 +2051,7 @@ class _SubBadge extends StatelessWidget {
           // Violet = brand colour → reads as "active/ok" in this palette context.
           // Gold works as accent only against a deep-indigo background (hero card);
           // on neutral surface1 it looks like a warning — violet is unambiguous here.
-          color = DS.violet; label = 'Премиум'; icon = Icons.workspace_premium_rounded;
+          color = DS.violet; label = 'Премиум'; icon = PhosphorIconsFill.crown;
         }
       }
     } else if (sub.isExpired) {
@@ -2443,7 +2446,7 @@ class _SpeedCardFlyInState extends State<_SpeedCardFlyIn>
             child: Row(
               children: [
                 Expanded(child: _SpeedTile(
-                  icon: Icons.arrow_downward_rounded,
+                  icon: PhosphorIconsBold.arrowFatLineDown,
                   color: DS.cyan,
                   label: 'Загрузка',
                   speed: widget.downloadSpeed,
@@ -2452,7 +2455,7 @@ class _SpeedCardFlyInState extends State<_SpeedCardFlyIn>
                 )),
                 Container(width: 1, color: DS.border),
                 Expanded(child: _SpeedTile(
-                  icon: Icons.arrow_upward_rounded,
+                  icon: PhosphorIconsBold.arrowFatLineUp,
                   color: DS.violet,
                   label: 'Отдача',
                   speed: widget.uploadSpeed,
@@ -2600,7 +2603,7 @@ class _UnlimitedTrafficSection extends StatelessWidget {
                   ),
                 ],
               ),
-              child: const Icon(Icons.all_inclusive_rounded,
+              child: Icon(PhosphorIconsBold.infinity,
                   size: 22, color: DS.cyan),
             ),
             const SizedBox(width: 12),
