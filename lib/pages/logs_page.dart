@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/app_logger.dart';
 import '../main.dart' show DS;
@@ -75,9 +77,17 @@ class _LogsPageState extends State<LogsPage> {
     return all.where((e) => e.level == _filterLevel).toList();
   }
 
+  String _exportText() {
+    final ts = DateTime.now();
+    final stamp =
+        '${ts.year}-${ts.month.toString().padLeft(2, '0')}-${ts.day.toString().padLeft(2, '0')} '
+        '${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')}:${ts.second.toString().padLeft(2, '0')}';
+    final body = _filtered.map((e) => e.formatted).join('\n');
+    return '# Ulya VPN logs ($stamp)\n# Entries: ${_filtered.length}\n\n$body';
+  }
+
   void _copyLogs() {
-    final text = _filtered.map((e) => e.formatted).join('\n');
-    Clipboard.setData(ClipboardData(text: text));
+    Clipboard.setData(ClipboardData(text: _exportText()));
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: const Text('Логи скопированы'),
       behavior: SnackBarBehavior.floating,
@@ -85,6 +95,12 @@ class _LogsPageState extends State<LogsPage> {
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(DS.radiusXs)),
     ));
+  }
+
+  Future<void> _shareLogs() async {
+    await SharePlus.instance.share(
+      ShareParams(text: _exportText(), subject: 'Ulya VPN logs'),
+    );
   }
 
   void _clearLogs() {
@@ -191,12 +207,17 @@ class _LogsPageState extends State<LogsPage> {
             },
           ),
           IconButton(
-            icon: const Icon(Icons.copy_outlined),
+            icon: Icon(PhosphorIconsBold.shareNetwork),
+            tooltip: 'Поделиться',
+            onPressed: entries.isEmpty ? null : _shareLogs,
+          ),
+          IconButton(
+            icon: Icon(PhosphorIconsBold.copy),
             tooltip: 'Копировать',
             onPressed: entries.isEmpty ? null : _copyLogs,
           ),
           IconButton(
-            icon: const Icon(Icons.delete_sweep_outlined),
+            icon: Icon(PhosphorIconsBold.trash),
             tooltip: 'Очистить',
             onPressed: entries.isEmpty ? null : _clearLogs,
           ),

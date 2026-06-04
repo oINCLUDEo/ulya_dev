@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -64,23 +65,71 @@ class DS {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-  ));
-  await appLogger.loadFromDisk();
-  await notificationService.init();
-  appLogger.info('App', 'Application started');
-  await loadAuthState();
-  await loadFavorites();
-  // Restore cached /me so pages never flash an empty state on first render.
-  await MeService.loadFromCache();
-  // Background refresh — does NOT block startup.
-  MeService.refresh();
-  // Check whether to show onboarding on first launch.
-  final showOnboarding = await shouldShowOnboarding();
-  runApp(UlyaVpnApp(showOnboarding: showOnboarding));
+  // Catch synchronous errors during boot so the crash trail lands in the
+  // log file before the process dies.
+  await runZonedGuarded<Future<void>>(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ));
+    await appLogger.loadFromDisk();
+    appLogger.info('App', '── boot start (build ${DateTime.now()})');
+    await appLogger.flush();
+
+    try {
+      await notificationService.init();
+      appLogger.info('App', 'notifications: ok');
+    } catch (e, st) {
+      appLogger.error('App', 'notifications init failed: $e\n$st');
+    }
+
+    try {
+      await loadAuthState();
+      appLogger.info('App',
+          'auth: loaded — loggedIn=${authStateNotifier.value.isLoggedIn} '
+          'tg=${authStateNotifier.value.telegramId != null} '
+          'jwt=${authStateNotifier.value.cabinetAccessToken != null}');
+    } catch (e, st) {
+      appLogger.error('App', 'loadAuthState failed: $e\n$st');
+    }
+
+    try {
+      await loadFavorites();
+    } catch (e, st) {
+      appLogger.error('App', 'loadFavorites failed: $e\n$st');
+    }
+
+    try {
+      // Restore cached /me so pages never flash an empty state on first render.
+      await MeService.loadFromCache();
+      appLogger.info('App', 'me cache: ok');
+    } catch (e, st) {
+      appLogger.error('App', 'MeService.loadFromCache failed: $e\n$st');
+    }
+
+    // Background refresh — does NOT block startup.
+    MeService.refresh();
+    // Check whether to show onboarding on first launch.
+    final showOnboarding = await shouldShowOnboarding();
+    appLogger.info('App',
+        'boot done — showOnboarding=$showOnboarding, launching UI');
+    await appLogger.flush();
+
+    // Surface Flutter-framework errors into the app log too.
+    FlutterError.onError = (FlutterErrorDetails details) {
+      appLogger.error(
+        'FlutterError',
+        '${details.exceptionAsString()}\n${details.stack ?? ""}',
+      );
+      FlutterError.presentError(details);
+    };
+
+    runApp(UlyaVpnApp(showOnboarding: showOnboarding));
+  }, (error, stack) {
+    appLogger.error('App', 'Uncaught zone error: $error\n$stack');
+    appLogger.flush();
+  });
 }
 
 class UlyaVpnApp extends StatelessWidget {

@@ -126,9 +126,21 @@ class AppLogger {
       current.removeRange(0, current.length - _kMaxEntries);
     }
     logsNotifier.value = current;
-    _persist();
+    // For error/warning we cannot afford the persist to lose the race with a
+    // subsequent crash, so kick a synchronous-ish persist that we can await.
+    // Lower levels stay fire-and-forget to keep them cheap.
+    if (level == AppLogLevel.error || level == AppLogLevel.warning) {
+      flush();
+    } else {
+      _persist();
+    }
     debugPrint('[${level.label}][$source] $message');
   }
+
+  /// Awaitable flush — write the current buffer to disk and resolve when
+  /// done. Useful right before a known dangerous operation, or in main()
+  /// when we want to checkpoint boot progress.
+  Future<void> flush() => _persist();
 
   void debug(String source, String message) =>
       log(AppLogLevel.debug, source, message);
