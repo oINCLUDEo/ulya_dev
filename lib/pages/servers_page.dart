@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +12,7 @@ import '../services/favorites_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
+import '../utils/server_icon.dart';
 import 'auth_bottom_sheet.dart';
 import 'home_page.dart' show VpnIconBtn, VpnInfoBanner;
 import '../main.dart' show DS;
@@ -692,27 +692,9 @@ class _NodeTileState extends State<_NodeTile>
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
             child: Row(children: [
-              // Flag / virtual host icon
-              if (node.protocol == 'auto' || node.countryCode.isEmpty)
-                Container(
-                  width: 36, height: 28,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF1E1B4B), Color(0xFF1A1760)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: DS.indigoLight.withValues(alpha: 0.35)),
-                  ),
-                  child: const Icon(Icons.bolt_rounded,
-                      size: 18, color: DS.indigoLight),
-                )
-              else
-                CountryFlag.fromCountryCode(
-                  node.countryCode,
-                  theme: ImageTheme(width: 36, height: 28, shape: RoundedRectangle(8)),
-                ),
+              // Flag / virtual host icon — falls back to bolt for invalid
+              // country codes (handled by buildServerIcon).
+              buildServerIcon(node, width: 36, height: 28, radius: 6),
               const SizedBox(width: 12),
               // Info
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

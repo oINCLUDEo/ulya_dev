@@ -80,6 +80,13 @@ class _PremiumPageState extends State<PremiumPage>
   bool _pendingOptions  = false;   // set when a reload is requested during an active load
   bool _purchasing      = false;
 
+  // ── Trial (free pilot period) ──────────────────────────────────────────────
+  // Loaded from /mobile/v1/subscription/trial; the CTA is hidden if the user
+  // has already redeemed their trial or the programme is disabled server-side.
+  bool _trialAvailable = false;
+  int  _trialDays      = 7;
+  bool _activatingTrial = false;
+
   // ── Payment polling ────────────────────────────────────────────────────────
   Timer? _pollTimer;
   int    _pollAttempt        = 0;
@@ -305,10 +312,13 @@ class _PremiumPageState extends State<PremiumPage>
       final futures = await Future.wait<dynamic>([
         SubscriptionApiService.getOptions(),
         SubscriptionApiService.getTariffs(),
+        SubscriptionApiService.getTrialInfo(),
       ]);
       final opts    = futures[0] as SubscriptionOptions?;
       final tariffs = futures[1] as List<TariffInfo>?;
+      final trial   = futures[2] as Map<String, dynamic>?;
       if (mounted) _applyOptionsData(opts, tariffs);
+      if (mounted) _applyTrialInfo(trial);
     } catch (e) { debugPrint('PremiumPage._loadOptions: $e'); }
     if (mounted) setState(() => _loadingOptions = false);
     if (_pendingOptions && mounted) {
@@ -316,6 +326,54 @@ class _PremiumPageState extends State<PremiumPage>
       _loadOptions();
     }
     _triggerStaggeredEntrance();
+  }
+
+  /// Reads trial availability from the API. The endpoint may return any of:
+  ///   * {available: true,  days: 7}            — eligible, show CTA
+  ///   * {available: false, ...}                — already used / disabled
+  ///   * {is_available: true, trial_days: 7}    — alternate key naming
+  void _applyTrialInfo(Map<String, dynamic>? trial) {
+    if (trial == null) {
+      setState(() => _trialAvailable = false);
+      return;
+    }
+    final available = (trial['available'] as bool?) ??
+        (trial['is_available'] as bool?) ??
+        (trial['can_activate'] as bool?) ??
+        false;
+    final days = (trial['days'] as num?)?.toInt() ??
+        (trial['trial_days'] as num?)?.toInt() ??
+        (trial['duration_days'] as num?)?.toInt() ??
+        7;
+    setState(() {
+      _trialAvailable = available;
+      _trialDays      = days <= 0 ? 7 : days;
+    });
+  }
+
+  Future<void> _onActivateTrial() async {
+    if (_activatingTrial) return;
+    final token = authStateNotifier.value.cabinetAccessToken;
+    setState(() => _activatingTrial = true);
+    try {
+      final result = token != null && token.isNotEmpty
+          ? await SubscriptionApiService.activateCabinetTrial(token)
+          : await SubscriptionApiService.activateTrial();
+      if (!mounted) return;
+      if (result?.status == 'success') {
+        // Pull /me + options so the screen reflects the new trial sub.
+        await MeService.refresh();
+        await _loadOptions();
+        if (mounted) setState(() => _showSuccessOverlay = true);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(result?.message ?? 'Не удалось активировать пробный период'),
+          backgroundColor: DS.surface2,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _activatingTrial = false);
+    }
   }
 
   void _triggerStaggeredEntrance() {
@@ -1722,6 +1780,18 @@ class _PremiumPageState extends State<PremiumPage>
 
                     // ── New user ───────────────────────────────────────────
                     ] else ...[
+
+                      // Trial CTA — shown above the plan list when the user
+                      // still has their free pilot period available.
+                      if (_trialAvailable && auth.isLoggedIn) ...[
+                        const SizedBox(height: 4),
+                        _TrialCta(
+                          days: _trialDays,
+                          loading: _activatingTrial,
+                          onTap: _onActivateTrial,
+                        ),
+                        const SizedBox(height: 16),
+                      ],
 
                       // Loading
                       if (_loadingOptions && _options == null && !hasTariffs) ...[
@@ -5239,5 +5309,112 @@ class _BreakdownRow extends StatelessWidget {
                 decorationColor: _t2)),
       ],
     );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  _TrialCta — "activate free trial" card shown to logged-in users on the
+//  plans screen, only when /subscription/trial reports the trial is still
+//  available. Mirrors the look of the onboarding trial-offer card so the
+//  user reads it as a continuation, not a new feature.
+// ═══════════════════════════════════════════════════════════════════════════
+class _TrialCta extends StatelessWidget {
+  final int days;
+  final bool loading;
+  final VoidCallback onTap;
+  const _TrialCta({
+    required this.days,
+    required this.loading,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF2A1F0E), Color(0xFF1A130A)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(DS.radius),
+        border: Border.all(color: DS.gold.withValues(alpha: 0.45)),
+        boxShadow: [
+          BoxShadow(
+            color: DS.gold.withValues(alpha: 0.18),
+            blurRadius: 22,
+            spreadRadius: -6,
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.fromLTRB(18, 16, 14, 16),
+      child: Row(children: [
+        Container(
+          width: 48, height: 48,
+          decoration: BoxDecoration(
+            color: DS.gold.withValues(alpha: 0.22),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: DS.gold.withValues(alpha: 0.4)),
+          ),
+          child: Icon(PhosphorIconsFill.gift, color: DS.gold, size: 24),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Пробный период',
+                style: const TextStyle(
+                    color: DS.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '$days ${_daysWord(days)} бесплатно, без оплаты',
+                style: const TextStyle(
+                    color: DS.textSecondary,
+                    fontSize: 12.5,
+                    height: 1.3),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          height: 38,
+          child: FilledButton(
+            onPressed: loading ? null : onTap,
+            style: FilledButton.styleFrom(
+              backgroundColor: DS.gold,
+              foregroundColor: const Color(0xFF1F1607),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(DS.radiusSm)),
+              textStyle: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+            child: loading
+                ? const SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Color(0xFF1F1607)),
+                  )
+                : const Text('Активировать'),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  static String _daysWord(int n) {
+    final mod10 = n % 10;
+    final mod100 = n % 100;
+    if (mod10 == 1 && mod100 != 11) return 'день';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'дня';
+    return 'дней';
   }
 }

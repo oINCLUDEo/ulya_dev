@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData, HapticFeedback;
@@ -24,6 +23,7 @@ import '../services/me_service.dart';
 import '../services/referral_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
+import '../utils/server_icon.dart';
 import '../utils/speed_calculator.dart';
 import 'auth_bottom_sheet.dart';
 import 'referral_page.dart';
@@ -631,28 +631,7 @@ class _HomePageState extends State<HomePage>
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
                 child: Row(children: [
                   // Flag or auto icon
-                  if (isAutoNode || node.countryCode.isEmpty)
-                    Container(
-                      width: 36, height: 28,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF1E1B4B), Color(0xFF1A1760)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                            color: DS.indigoLight.withValues(alpha: 0.40)),
-                      ),
-                      child: const Icon(Icons.bolt_rounded,
-                          size: 18, color: DS.indigoLight),
-                    )
-                  else
-                    CountryFlag.fromCountryCode(
-                      node.countryCode,
-                      theme: ImageTheme(
-                          width: 36, height: 28, shape: RoundedRectangle(8)),
-                    ),
+                  buildServerIcon(node, width: 36, height: 28, radius: 8),
                   const SizedBox(width: 14),
                   // Name + protocol
                   Expanded(child: Column(
@@ -1130,39 +1109,7 @@ class _HomePageState extends State<HomePage>
                 border: Border.all(color: DS.border),
               ),
               child: Row(children: [
-                // Icon: bolt for auto nodes, flag for manual, globe for unknown
-                if (_selectedNode?.protocol == 'auto')
-                  Container(
-                    width: 36, height: 26,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF1E1B4B), Color(0xFF1A1760)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                          color: DS.indigoLight.withValues(alpha: 0.40)),
-                    ),
-                    child: const Icon(Icons.bolt_rounded,
-                        size: 16, color: DS.indigoLight),
-                  )
-                else if (_selectedNode != null &&
-                    _selectedNode!.countryCode.isNotEmpty)
-                  CountryFlag.fromCountryCode(
-                    _selectedNode!.countryCode,
-                    theme: const ImageTheme(
-                        width: 36, height: 26, shape: RoundedRectangle(6)),
-                  )
-                else
-                  Container(
-                    width: 36, height: 26,
-                    decoration: BoxDecoration(
-                      color: DS.violet.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: const Icon(Icons.public_rounded, color: DS.violet, size: 16),
-                  ),
+                buildServerIcon(_selectedNode),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -1898,39 +1845,48 @@ class _ReferralCard extends StatelessWidget {
           ),
           const SizedBox(height: 14),
 
-          // Code chip + copy button
+          // Code chip + copy button. Label sits above the code on its own
+          // line so long codes don't have to share the row with anything but
+          // the copy button — no more right-side overflow.
           Row(children: [
             Expanded(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: DS.surface1,
                   borderRadius: BorderRadius.circular(DS.radiusSm),
                   border: Border.all(color: DS.border),
                 ),
-                child: Row(children: [
-                  const Text('ВАШ КОД',
-                      style: TextStyle(
-                        color: DS.textMuted,
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.2,
-                      )),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      code,
-                      style: const TextStyle(
-                        color: DS.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 1.6,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('ВАШ КОД',
+                        style: TextStyle(
+                          color: DS.textMuted,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                        )),
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        code,
+                        style: const TextStyle(
+                          color: DS.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.4,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                        maxLines: 1,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                ]),
+                  ],
+                ),
               ),
             ),
             const SizedBox(width: 8),
@@ -2005,7 +1961,7 @@ class _ReferralCard extends StatelessWidget {
                   border: Border.all(
                       color: DS.telegramBlue.withValues(alpha: 0.4)),
                 ),
-                child: Icon(PhosphorIconsFill.telegramLogo,
+                child: Icon(PhosphorIconsDuotone.paperPlaneTilt,
                     color: DS.telegramBlue, size: 18),
               ),
             ),
@@ -2147,7 +2103,7 @@ class _NoPlanPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const Text(
-        'У вас нет активной подписки. Кнопка «Получить подписку» наверху.',
+        'У вас нет активной подписки.',
         style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5),
       );
 }
@@ -2167,10 +2123,22 @@ class _SubBadge extends StatelessWidget {
         if (diff != null && diff.inDays < 7 && !diff.isNegative) {
           color = DS.amber; label = '${diff.inDays}д'; icon = Icons.timer_outlined;
         } else {
-          // Violet = brand colour → reads as "active/ok" in this palette context.
-          // Gold works as accent only against a deep-indigo background (hero card);
-          // on neutral surface1 it looks like a warning — violet is unambiguous here.
-          color = DS.violet; label = 'Премиум'; icon = PhosphorIconsFill.crown;
+          // Pick the most informative label available. The backend often
+          // returns a human-readable plan name ("Стандартный", "Семейный",
+          // "Премиум"…) — prefer it. If the name reads as a free/basic tier
+          // we drop the crown so it doesn't look like a paid plan.
+          final pn = sub.planName?.trim();
+          final pnLow = pn?.toLowerCase() ?? '';
+          final isFreeTier = pnLow.contains('беспл') || pnLow.contains('free');
+          if (isFreeTier) {
+            color = DS.textSecondary;
+            label = pn!; // e.g. "Бесплатный"
+            icon = PhosphorIconsFill.gift;
+          } else {
+            color = DS.violet;
+            label = (pn != null && pn.isNotEmpty) ? pn : 'Премиум';
+            icon = PhosphorIconsFill.crown;
+          }
         }
       }
     } else if (sub.isExpired) {
