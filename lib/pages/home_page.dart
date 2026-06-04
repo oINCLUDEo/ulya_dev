@@ -25,7 +25,6 @@ import '../services/referral_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../utils/speed_calculator.dart';
-import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 import 'referral_page.dart';
 import 'subscription_page.dart';
@@ -160,16 +159,22 @@ class _HomePageState extends State<HomePage>
   }
 
   // ── Referral ──────────────────────────────────────────────────────────────
-  /// Pulls the referral snapshot once we have a Cabinet JWT. Idempotent —
-  /// safe to call on every auth-change tick; clears the card on logout.
+  /// Pulls the referral snapshot if we have any auth context (Cabinet JWT
+  /// or telegram id). Idempotent — safe to call on every auth-change tick;
+  /// clears the card on logout.
   Future<void> _loadReferral() async {
-    final token = authStateNotifier.value.cabinetAccessToken;
-    if (token == null || token.isEmpty) {
+    final auth = authStateNotifier.value;
+    final hasAuth = (auth.cabinetAccessToken?.isNotEmpty ?? false) ||
+        auth.telegramId != null;
+    if (!hasAuth) {
+      appLogger.info('HomePage', '_loadReferral: skipped (not authed)');
       if (_referralInfo != null && mounted) {
         setState(() => _referralInfo = null);
       }
       return;
     }
+    appLogger.info('HomePage',
+        '_loadReferral: fetching (jwt=${auth.cabinetAccessToken != null}, tg=${auth.telegramId != null})');
     final info = await ReferralService.getInfo();
     if (!mounted) return;
     if (info != _referralInfo) setState(() => _referralInfo = info);
@@ -1273,8 +1278,8 @@ class _HomePageState extends State<HomePage>
                   style: const TextStyle(
                       color: DS.textSecondary, fontSize: 13, height: 1.4),
                 ),
-                const SizedBox(height: 14),
-                _RenewButton(onTap: widget.onGoToPremium),
+                // Renew CTA itself now lives in the connection card slot,
+                // so we only keep the explanation text here.
               ] else if (sub != null)
                 Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
                   SizedBox(
@@ -1304,8 +1309,8 @@ class _HomePageState extends State<HomePage>
                   style: const TextStyle(
                       color: DS.textSecondary, fontSize: 13, height: 1.4),
                 ),
-                const SizedBox(height: 14),
-                _RenewButton(onTap: widget.onGoToPremium),
+                // Renew CTA itself now lives in the connection card slot,
+                // so we only keep the explanation text here.
               ] else if (info.totalBytes <= 0) ...[
                 // Безлимитный трафик — особый вид
                 _UnlimitedTrafficSection(usedLabel: info.formattedUsed),
@@ -2054,53 +2059,27 @@ class _UserStrip extends StatelessWidget {
 }
 
 class _LoginPrompt extends StatelessWidget {
+  // The login CTA itself now lives in the connection card; here we keep only
+  // the explanation text so the subscription card doesn't echo the same button.
   @override
-  Widget build(BuildContext context) => Column(children: [
-    const Text('Войдите через Telegram, чтобы активировать подписку.',
-        style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
-    const SizedBox(height: 12),
-    TelegramLoginButton(onTap: () => showAuthBottomSheet(context)),
-  ]);
+  Widget build(BuildContext context) => const Text(
+        'Войдите в аккаунт, чтобы активировать подписку.',
+        style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5),
+      );
 }
 
 class _NoPlanPrompt extends StatelessWidget {
+  // onGoToPremium kept for API stability — the CTA itself now lives in the
+  // connection card (see _AccentSlotCta), so the subscription card only
+  // explains the state without duplicating the call to action.
   final VoidCallback? onGoToPremium;
   const _NoPlanPrompt({this.onGoToPremium});
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text('У вас нет активной подписки.',
-          style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
-      const SizedBox(height: 12),
-      SizedBox(
-        width: double.infinity,
-        height: 52,
-        child: GestureDetector(
-          onTap: onGoToPremium,
-          child: Container(
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: DS.violet,
-              borderRadius: BorderRadius.circular(DS.radius),
-              boxShadow: [
-                BoxShadow(
-                  color: DS.violet.withValues(alpha: 0.30),
-                  blurRadius: 16, offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Text('Получить подписку',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ),
-      ),
-    ],
-  );
+  Widget build(BuildContext context) => const Text(
+        'У вас нет активной подписки. Кнопка «Получить подписку» наверху.',
+        style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5),
+      );
 }
 
 class _SubBadge extends StatelessWidget {
@@ -2167,46 +2146,6 @@ class _StatusPill extends StatelessWidget {
       const SizedBox(width: 4),
       Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
     ]),
-  );
-}
-
-class _RenewButton extends StatelessWidget {
-  final VoidCallback? onTap;
-  const _RenewButton({this.onTap});
-
-  @override
-  Widget build(BuildContext context) => SizedBox(
-    width: double.infinity,
-    height: 56,
-    child: GestureDetector(
-      onTap: onTap,
-      child: Container(
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: DS.violet,
-          borderRadius: BorderRadius.circular(DS.radius),
-          boxShadow: [
-            BoxShadow(
-              color: DS.violet.withValues(alpha: 0.30),
-              blurRadius: 16,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.bolt_rounded, size: 18, color: Colors.white),
-            SizedBox(width: 8),
-            Text('Возобновить подписку',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600)),
-          ],
-        ),
-      ),
-    ),
   );
 }
 

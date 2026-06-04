@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/app_config.dart';
+import 'app_logger.dart';
 import 'auth_state.dart';
 
 /// User-facing referral state, sourced from
@@ -281,15 +282,29 @@ class ReferralService {
   /// honours that header on the cabinet endpoint.
   static Future<ReferralInfo?> getInfo() async {
     final headers = _authHeaders();
-    if (headers == null) return null;
+    if (headers == null) {
+      appLogger.info('ReferralService',
+          'getInfo: skipped — no auth header (cabinet JWT and telegram id both null)');
+      return null;
+    }
+    final authMode = headers.containsKey('Authorization') ? 'bearer' : 'telegram';
     try {
       final resp = await http
           .get(Uri.parse('$_base/cabinet/referral'), headers: headers)
           .timeout(const Duration(seconds: 12));
-      if (resp.statusCode != 200) return null;
+      if (resp.statusCode != 200) {
+        appLogger.error('ReferralService',
+            'getInfo: HTTP ${resp.statusCode} via $authMode — body: ${resp.body}');
+        return null;
+      }
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
-      return ReferralInfo.fromJson(json);
-    } on Exception {
+      final info = ReferralInfo.fromJson(json);
+      appLogger.info('ReferralService',
+          'getInfo: ok via $authMode — code="${info.referralCode}" '
+          'invited=${info.totalReferrals} earned=${info.totalEarningsRubles}');
+      return info;
+    } on Exception catch (e) {
+      appLogger.error('ReferralService', 'getInfo: exception via $authMode: $e');
       return null;
     }
   }
