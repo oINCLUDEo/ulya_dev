@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart' show PlatformException;
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -323,50 +325,129 @@ class AuthService {
     }
   }
 
-  // ── Google OAuth ──────────────────────────────────────────────────────────
+  // ── Google OAuth (Cabinet) ────────────────────────────────────────────────
 
-  /// Initiates Google OAuth: calls `/mobile/v1/auth/google/init`, gets a
-  /// token + the Google authorize URL, then opens the URL in the browser.
+  /// Sign in with Google via the Cabinet OAuth flow.
   ///
-  /// Returns the token string on success, or null if something failed.
-  /// After calling this, poll [pollStatus] with the returned token.
-  static Future<String?> startGoogleLogin({
-    required void Function(String message) onError,
-  }) async {
+  /// 1. `GET /cabinet/auth/oauth/google/authorize` → `{authorize_url, state}`
+  /// 2. Open `authorize_url` in an in-app browser through flutter_web_auth_2.
+  /// 3. After the user grants access, Google redirects to the cabinet, which
+  ///    in turn redirects to our custom scheme [AppConfig.oauthCallback]
+  ///    with `code` and `state` in the query string.
+  /// 4. `POST /cabinet/auth/oauth/google/callback {code, state}` →
+  ///    `{access_token, refresh_token, user, …}` — full Cabinet JWT.
+  ///
+  /// On success persists the new auth state (including [cabinetAccessToken])
+  /// and returns `null`. On failure returns a localised error string.
+  ///
+  /// Prerequisite: `ulyavpn://oauth/callback` must be registered as an
+  /// "Authorized redirect URI" for the Google OAuth client in the Cabinet
+  /// admin panel.
+  static Future<String?> signInWithGoogle() async {
     try {
-      final response = await http
-          .post(
-            Uri.parse('$_baseUrl/google/init'),
-            headers: {'Content-Type': 'application/json'},
+      // ── Step 1: ask the cabinet for the Google authorize URL ───────────
+      final authorizeResp = await http
+          .get(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/cabinet/auth/oauth/google/authorize'),
+            headers: const {'Accept': 'application/json'},
           )
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode != 200) {
-        appLogger.error('AuthService', 'google/init failed: HTTP ${response.statusCode}');
-        onError('Ошибка сервера (${response.statusCode}). Попробуйте позже.');
-        return null;
+          .timeout(const Duration(seconds: 12));
+      if (authorizeResp.statusCode != 200) {
+        appLogger.error('AuthService',
+            'google authorize failed: HTTP ${authorizeResp.statusCode} body=${authorizeResp.body}');
+        return 'Не удалось начать вход через Google (${authorizeResp.statusCode}).';
+      }
+      final authorizeJson =
+          jsonDecode(authorizeResp.body) as Map<String, dynamic>;
+      final authorizeUrl = authorizeJson['authorize_url'] as String?;
+      final expectedState = authorizeJson['state'] as String?;
+      if (authorizeUrl == null || authorizeUrl.isEmpty) {
+        return 'Неверный ответ сервера.';
       }
 
-      final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final token = body['token'] as String?;
-      final authorizeUrl = body['authorize_url'] as String?;
-
-      if (token == null || authorizeUrl == null) {
-        onError('Неверный ответ сервера.');
-        return null;
+      // ── Step 2: open the browser and wait for redirect ─────────────────
+      final String resultUrl;
+      try {
+        resultUrl = await FlutterWebAuth2.authenticate(
+          url: authorizeUrl,
+          callbackUrlScheme: AppConfig.oauthScheme,
+        );
+      } on PlatformException catch (e) {
+        // User cancelled the in-app browser, or no compatible browser.
+        appLogger.info('AuthService', 'google auth cancelled or browser unavailable: ${e.message}');
+        return 'Вход отменён.';
       }
 
-      final uri = Uri.parse(authorizeUrl);
-      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-        onError('Не удалось открыть браузер.');
-        return null;
+      // ── Step 3: extract code + state from the callback URL ─────────────
+      final cb = Uri.parse(resultUrl);
+      final code = cb.queryParameters['code'];
+      final state = cb.queryParameters['state'];
+      final err = cb.queryParameters['error'];
+      if (err != null && err.isNotEmpty) {
+        appLogger.error('AuthService', 'google callback error: $err');
+        return 'Google отказал в доступе ($err).';
+      }
+      if (code == null || code.isEmpty || state == null || state.isEmpty) {
+        appLogger.error('AuthService', 'google callback missing code/state: $resultUrl');
+        return 'Неверный ответ от Google.';
+      }
+      if (expectedState != null && expectedState.isNotEmpty && state != expectedState) {
+        appLogger.error('AuthService', 'google state mismatch');
+        return 'Несовпадение state — возможна попытка перехвата. Попробуйте снова.';
       }
 
-      appLogger.info('AuthService', 'google auth init succeeded, token received');
-      return token;
+      // ── Step 4: exchange code for tokens ───────────────────────────────
+      final callbackResp = await http
+          .post(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/cabinet/auth/oauth/google/callback'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode({'code': code, 'state': state}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (callbackResp.statusCode != 200) {
+        appLogger.error('AuthService',
+            'google callback failed: HTTP ${callbackResp.statusCode} body=${callbackResp.body}');
+        return 'Сервер отклонил вход (${callbackResp.statusCode}).';
+      }
+      final tokens = jsonDecode(callbackResp.body) as Map<String, dynamic>;
+      final accessToken = tokens['access_token'] as String?;
+      final userMap = tokens['user'] as Map<String, dynamic>?;
+      if (accessToken == null || userMap == null) {
+        return 'Неверный ответ сервера.';
+      }
+
+      // ── Step 5: persist new auth state ─────────────────────────────────
+      final subUrl = await _fetchCabinetSubscriptionUrl(accessToken);
+      // Note: isEmailAuth is a getter (telegramId == null && email != null).
+      // For pure Google sign-ins the backend usually leaves telegram_id null,
+      // so the user will be treated as "email-auth" in the rest of the app.
+      final newState = AuthState(
+        isLoggedIn: true,
+        telegramId: (userMap['telegram_id'] as num?)?.toInt(),
+        firstName: userMap['username'] as String? ??
+            (userMap['email'] as String?)?.split('@').first,
+        username: userMap['username'] as String?,
+        email: userMap['email'] as String?,
+        cabinetAccessToken: accessToken,
+        subscriptionUrl: subUrl,
+      );
+      await saveAuthState(newState);
+      if (subUrl != null && subUrl.isNotEmpty) {
+        await RemnawaveService.saveSubscriptionUrl(subUrl);
+      }
+      authStateNotifier.value = newState;
+      MeService.refresh();
+
+      appLogger.info('AuthService', 'user authenticated via google: ${newState.displayName}');
+      return null; // success
     } on Exception catch (e) {
-      onError('Ошибка соединения с сервером: $e');
-      return null;
+      appLogger.error('AuthService', 'google sign-in failed: $e');
+      return 'Ошибка соединения: $e';
     }
   }
 

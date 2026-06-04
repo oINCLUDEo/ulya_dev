@@ -85,8 +85,8 @@ const _kTotalPages = 4;
 enum _AuthStep {
   idle,          // show Telegram + Email buttons
   emailForm,     // email/password form
-  openingTg,     // opening Telegram app
-  waiting,       // polling Telegram bot
+  openingTg,     // opening external app/browser (Telegram or Google)
+  waiting,       // polling Telegram bot OR finishing Google OAuth
   emailBusy,     // logging in or registering via email
   emailVerify,   // registered, waiting for email verification
   trialOffer,    // auth succeeded, offer free trial
@@ -94,6 +94,10 @@ enum _AuthStep {
   done,          // all done, navigating
   error,         // auth error
 }
+
+/// Which login provider is currently in flight. Used by the waiting/opening
+/// UI labels so we say "Открываем Telegram…" vs "Открываем Google…".
+enum _AuthProvider { telegram, google }
 
 enum _EmailMode { login, register }
 
@@ -114,6 +118,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   // ── Auth state ──────────────────────────────────────────────────────────────
   _AuthStep _authStep = _AuthStep.idle;
+  _AuthProvider _authProvider = _AuthProvider.telegram;
   String? _authError;
   StreamSubscription<AuthResult>? _pollSub;
 
@@ -164,7 +169,11 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   Future<void> _onTelegramTap() async {
     if (_authStep != _AuthStep.idle && _authStep != _AuthStep.error) return;
-    setState(() { _authStep = _AuthStep.openingTg; _authError = null; });
+    setState(() {
+      _authStep = _AuthStep.openingTg;
+      _authProvider = _AuthProvider.telegram;
+      _authError = null;
+    });
 
     final token = await AuthService.startLogin(onError: (msg) {
       if (mounted) setState(() { _authStep = _AuthStep.error; _authError = msg; });
@@ -175,19 +184,25 @@ class _OnboardingPageState extends State<OnboardingPage> {
     _startPolling(token);
   }
 
+  /// Google: full Cabinet OAuth flow. Synchronous from the UI's point of
+  /// view — the in-app browser blocks until the redirect arrives and the
+  /// call returns. On success the user is already authed; on cancel/error
+  /// we surface the message.
   Future<void> _onGoogleTap() async {
     if (_authStep != _AuthStep.idle && _authStep != _AuthStep.error) return;
-    // Reuse the openingTg step label for now — both flows look identical from
-    // the user's perspective: "opening external app, waiting for confirmation".
-    setState(() { _authStep = _AuthStep.openingTg; _authError = null; });
-
-    final token = await AuthService.startGoogleLogin(onError: (msg) {
-      if (mounted) setState(() { _authStep = _AuthStep.error; _authError = msg; });
+    setState(() {
+      _authStep = _AuthStep.openingTg;
+      _authProvider = _AuthProvider.google;
+      _authError = null;
     });
 
-    if (token == null || !mounted) return;
-    setState(() => _authStep = _AuthStep.waiting);
-    _startPolling(token);
+    final err = await AuthService.signInWithGoogle();
+    if (!mounted) return;
+    if (err != null) {
+      setState(() { _authStep = _AuthStep.error; _authError = err; });
+      return;
+    }
+    _onAuthSuccess();
   }
 
   void _startPolling(String token) {
@@ -393,6 +408,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
               ..._kSlides.map((s) => _FeatureSlide(slide: s)),
               _AuthSlide(
                 step: _authStep,
+                provider: _authProvider,
                 emailMode: _emailMode,
                 errorMessage: _authError,
                 trialMessage: _trialMessage,
@@ -495,6 +511,7 @@ class _FeatureSlide extends StatelessWidget {
 class _AuthSlide extends StatelessWidget {
   const _AuthSlide({
     required this.step,
+    required this.provider,
     required this.emailMode,
     required this.errorMessage,
     required this.trialMessage,
@@ -516,6 +533,7 @@ class _AuthSlide extends StatelessWidget {
   });
 
   final _AuthStep step;
+  final _AuthProvider provider;
   final _EmailMode emailMode;
   final String? errorMessage;
   final String? trialMessage;
@@ -608,8 +626,10 @@ class _AuthSlide extends StatelessWidget {
                 ? (errorMessage ?? 'Произошла ошибка. Попробуйте снова.')
                 : isWaiting
                     ? (step == _AuthStep.openingTg
-                        ? 'Открываем Telegram…'
-                        : 'Ожидаем подтверждения…\nНажмите «Старт» в боте.')
+                        ? 'Открываем ${provider == _AuthProvider.google ? 'Google' : 'Telegram'}…'
+                        : (provider == _AuthProvider.google
+                            ? 'Завершите вход в браузере…'
+                            : 'Ожидаем подтверждения…\nНажмите «Старт» в боте.'))
                     : 'Выберите способ входа для доступа к подписке.',
             style: TextStyle(
               color: isError ? DS.rose.withValues(alpha: 0.9) : DS.textSecondary,
@@ -622,25 +642,25 @@ class _AuthSlide extends StatelessWidget {
         const SizedBox(height: 36),
         if (isWaiting)
           _WaitingIndicator(label: step == _AuthStep.openingTg
-              ? 'Открываем Telegram…'
+              ? 'Открываем ${provider == _AuthProvider.google ? 'Google' : 'Telegram'}…'
               : 'Ожидаем подтверждения…')
         else ...[
           _AuthButton(
-            icon: PhosphorIconsFill.telegramLogo,
+            icon: PhosphorIconsDuotone.paperPlaneTilt,
             label: 'Войти через Telegram',
             color: DS.telegramBlue,
             onTap: onTelegramTap,
           ),
           const SizedBox(height: 12),
           _AuthButton(
-            icon: PhosphorIconsFill.googleLogo,
+            icon: PhosphorIconsDuotone.googleLogo,
             label: 'Войти через Google',
             color: const Color(0xFFEA4335),
             onTap: onGoogleTap,
           ),
           const SizedBox(height: 12),
           _AuthButton(
-            icon: PhosphorIconsFill.envelope,
+            icon: PhosphorIconsDuotone.envelopeSimple,
             label: 'Войти по Email',
             color: DS.violet,
             onTap: onEmailButtonTap,

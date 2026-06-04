@@ -27,6 +27,7 @@ import '../services/selected_server_state.dart';
 import '../utils/speed_calculator.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
+import 'referral_page.dart';
 import 'subscription_page.dart';
 import 'support_page.dart';
 import '../main.dart' show DS;
@@ -191,6 +192,17 @@ class _HomePageState extends State<HomePage>
     if (info == null) return;
     HapticFeedback.selectionClick();
     await SharePlus.instance.share(ShareParams(text: info.shareText));
+  }
+
+  void _openReferralPage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ReferralPage()),
+    ).then((_) {
+      // Refresh in case the user shared/earned something while on the
+      // details page.
+      if (mounted) _loadReferral();
+    });
   }
 
   // ── Sparkline helper ──────────────────────────────────────────────────────
@@ -888,6 +900,7 @@ class _HomePageState extends State<HomePage>
                     copied: _referralCopied,
                     onCopy: _copyReferralCode,
                     onShare: _shareReferral,
+                    onOpenDetails: _openReferralPage,
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -1026,8 +1039,62 @@ class _HomePageState extends State<HomePage>
           ),
           const SizedBox(height: 16),
 
-          // Server selector
-          GestureDetector(
+          // Server selector OR "Get subscription"/"Sign in" CTA. When the user
+          // has no active subscription we replace the selector entirely so they
+          // see the blocker immediately rather than discover it on Connect tap.
+          _buildServerSlot(),
+        ]),
+          ),   // Padding
+        ]),    // Stack
+      ),       // ClipRRect
+    );
+  }
+
+  // ── Server selector slot (or no-subscription CTA) ────────────────────────
+  Widget _buildServerSlot() {
+    final authState = authStateNotifier.value;
+    final sub = meNotifier.value?.subscription;
+    final subExpired = sub?.expireDate?.isBefore(DateTime.now()) ?? false;
+
+    // 1. Not logged in → "Sign in" CTA opening the bottom sheet.
+    if (!authState.isLoggedIn) {
+      return _AccentSlotCta(
+        icon: PhosphorIconsDuotone.signIn,
+        title: 'Войдите в аккаунт',
+        subtitle: 'Чтобы подключиться к VPN',
+        color: DS.telegramBlue,
+        onTap: () => showAuthBottomSheet(context),
+      );
+    }
+
+    // 2. Logged in but no plan / public catalog only → "Get subscription".
+    if (_isPublicCatalog) {
+      return _AccentSlotCta(
+        icon: PhosphorIconsDuotone.crown,
+        title: 'Получить подписку',
+        subtitle: 'Откройте доступ ко всем серверам',
+        color: DS.violet,
+        onTap: widget.onGoToPremium ?? () {},
+      );
+    }
+
+    // 3. Plan expired → "Renew".
+    if (subExpired) {
+      return _AccentSlotCta(
+        icon: PhosphorIconsDuotone.arrowsClockwise,
+        title: 'Возобновить подписку',
+        subtitle: 'Срок действия истёк',
+        color: DS.amber,
+        onTap: widget.onGoToPremium ?? () {},
+      );
+    }
+
+    // 4. Normal: regular server picker row.
+    return _buildServerSelectorRow();
+  }
+
+  Widget _buildServerSelectorRow() {
+    return GestureDetector(
             onTap: _showServerPicker,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
@@ -1114,12 +1181,7 @@ class _HomePageState extends State<HomePage>
                 const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 20),
               ]),
             ),
-          ),
-        ]),
-          ),   // Padding
-        ]),    // Stack
-      ),       // ClipRRect
-    );
+          );
   }
 
   // ── Subscription card ──────────────────────────────────────────────────────
@@ -1719,12 +1781,14 @@ class _ReferralCard extends StatelessWidget {
   final bool copied;
   final VoidCallback onCopy;
   final VoidCallback onShare;
+  final VoidCallback onOpenDetails;
 
   const _ReferralCard({
     required this.info,
     required this.copied,
     required this.onCopy,
     required this.onShare,
+    required this.onOpenDetails,
   });
 
   String _fmtRubles(double v) {
@@ -1753,46 +1817,52 @@ class _ReferralCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header row
-          Row(children: [
-            Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(
-                color: DS.violet.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: DS.violet.withValues(alpha: 0.4)),
+          // Header row — tap to open the full referral page.
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onOpenDetails,
+            child: Row(children: [
+              Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(
+                  color: DS.violet.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: DS.violet.withValues(alpha: 0.4)),
+                ),
+                child: Icon(PhosphorIconsFill.gift,
+                    size: 18, color: DS.violet),
               ),
-              child: Icon(PhosphorIconsFill.gift,
-                  size: 18, color: DS.violet),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Пригласите друзей',
-                      style: TextStyle(
-                        color: DS.textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        height: 1.15,
-                      )),
-                  const SizedBox(height: 2),
-                  Text(
-                    commission > 0
-                        ? 'Получайте $commission% с каждого их платежа'
-                        : 'Делитесь кодом и получайте бонусы',
-                    style: const TextStyle(
-                      color: DS.textSecondary,
-                      fontSize: 11.5,
-                      height: 1.25,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Пригласите друзей',
+                        style: TextStyle(
+                          color: DS.textPrimary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          height: 1.15,
+                        )),
+                    const SizedBox(height: 2),
+                    Text(
+                      commission > 0
+                          ? 'Получайте $commission% с каждого их платежа'
+                          : 'Делитесь кодом и получайте бонусы',
+                      style: const TextStyle(
+                        color: DS.textSecondary,
+                        fontSize: 11.5,
+                        height: 1.25,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ]),
+              Icon(Icons.chevron_right_rounded,
+                  color: DS.violet.withValues(alpha: 0.7), size: 20),
+            ]),
+          ),
           const SizedBox(height: 14),
 
           // Code chip + copy button
@@ -1960,8 +2030,8 @@ class _UserStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = isEmailAuth ? DS.violet : DS.telegramBlue;
     final icon = isEmailAuth
-        ? PhosphorIconsFill.envelope
-        : PhosphorIconsFill.telegramLogo;
+        ? PhosphorIconsDuotone.envelopeSimple
+        : PhosphorIconsDuotone.paperPlaneTilt;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
@@ -2206,6 +2276,87 @@ class _VpnIconBtnState extends State<VpnIconBtn>
       ),
     ),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _AccentSlotCta — replaces the server-selector row when the user has no
+// active subscription / isn't signed in. Bigger CTA so it's immediately
+// obvious that tapping connect won't work yet.
+// ─────────────────────────────────────────────────────────────────────────────
+class _AccentSlotCta extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _AccentSlotCta({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.10),
+      borderRadius: BorderRadius.circular(DS.radiusSm),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(DS.radiusSm),
+        splashColor: color.withValues(alpha: 0.18),
+        highlightColor: color.withValues(alpha: 0.06),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            border: Border.all(color: color.withValues(alpha: 0.45), width: 1),
+          ),
+          child: Row(children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: color, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(title,
+                      style: TextStyle(
+                        color: Color.lerp(color, Colors.white, 0.35),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                        height: 1.2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: const TextStyle(
+                        color: DS.textMuted,
+                        fontSize: 11.5,
+                        height: 1.2,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                color: color.withValues(alpha: 0.75), size: 20),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
 class _Chip extends StatelessWidget {

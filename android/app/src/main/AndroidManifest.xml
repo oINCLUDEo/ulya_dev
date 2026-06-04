@@ -42,6 +42,19 @@
             </intent-filter>
         </activity>
 
+        <!-- flutter_web_auth_2 callback receiver — catches the OAuth redirect
+             back from the browser. Scheme must match AppConfig.oauthScheme. -->
+        <activity
+                android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+                android:exported="true">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="ulyavpn"/>
+            </intent-filter>
+        </activity>
+
         <service
                 android:name="com.example.v2ray_box.bg.VPNService"
                 android:exported="false"

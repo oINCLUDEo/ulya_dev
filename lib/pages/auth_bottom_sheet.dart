@@ -22,6 +22,7 @@ Future<bool> showAuthBottomSheet(BuildContext context) async {
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum _Step { idle, opening, waiting, success, error }
+enum _Provider { telegram, google }
 
 class _AuthSheet extends StatefulWidget {
   const _AuthSheet();
@@ -33,6 +34,7 @@ class _AuthSheet extends StatefulWidget {
 class _AuthSheetState extends State<_AuthSheet>
     with SingleTickerProviderStateMixin {
   _Step _step = _Step.idle;
+  _Provider _provider = _Provider.telegram;
   String? _errorMessage;
   StreamSubscription<AuthResult>? _pollSub;
 
@@ -62,7 +64,11 @@ class _AuthSheetState extends State<_AuthSheet>
   // ── Actions ────────────────────────────────────────────────────────────────
   Future<void> _onLoginTap() async {
     if (_step != _Step.idle && _step != _Step.error) return;
-    setState(() { _step = _Step.opening; _errorMessage = null; });
+    setState(() {
+      _step = _Step.opening;
+      _provider = _Provider.telegram;
+      _errorMessage = null;
+    });
 
     final token = await AuthService.startLogin(onError: (msg) {
       if (mounted) setState(() { _step = _Step.error; _errorMessage = msg; });
@@ -75,15 +81,25 @@ class _AuthSheetState extends State<_AuthSheet>
 
   Future<void> _onGoogleTap() async {
     if (_step != _Step.idle && _step != _Step.error) return;
-    setState(() { _step = _Step.opening; _errorMessage = null; });
-
-    final token = await AuthService.startGoogleLogin(onError: (msg) {
-      if (mounted) setState(() { _step = _Step.error; _errorMessage = msg; });
+    setState(() {
+      _step = _Step.opening;
+      _provider = _Provider.google;
+      _errorMessage = null;
     });
 
-    if (token == null || !mounted) return;
-    setState(() => _step = _Step.waiting);
-    _startPolling(token);
+    // Cabinet OAuth is synchronous from our point of view: the in-app
+    // browser blocks until the redirect arrives, then the call returns.
+    // No long-poll loop needed.
+    final error = await AuthService.signInWithGoogle();
+    if (!mounted) return;
+    if (error != null) {
+      setState(() {
+        _step = _Step.error;
+        _errorMessage = error;
+      });
+      return;
+    }
+    _showSuccess();
   }
 
   void _startPolling(String token) {
@@ -195,7 +211,7 @@ class _AuthSheetState extends State<_AuthSheet>
             duration: const Duration(milliseconds: 300),
             child: Icon(
               key: ValueKey(waiting),
-              waiting ? Icons.telegram : Icons.lock_outline_rounded,
+              waiting ? PhosphorIconsDuotone.paperPlaneTilt : PhosphorIconsDuotone.lock,
               size: 32,
               color: waiting ? DS.telegramBlue : DS.violet,
             ),
@@ -243,15 +259,22 @@ class _AuthSheetState extends State<_AuthSheet>
     );
   }
 
+  String _providerName() =>
+      _provider == _Provider.google ? 'Google' : 'Telegram';
+
   String _bodyText() {
     switch (_step) {
       case _Step.idle:
         return 'Для подключения к VPN-серверам необходима активная подписка. '
-            'Войдите через Telegram одним касанием.';
-      case _Step.opening:  return 'Открываем Telegram…';
+            'Войдите одним касанием.';
+      case _Step.opening:
+        return 'Открываем ${_providerName()}…';
       case _Step.waiting:
-        return 'Telegram открыт. Нажмите «Старт» в боте — '
-            'авторизация завершится автоматически.';
+        return _provider == _Provider.google
+            ? 'Завершите вход в браузере — '
+                'авторизация продолжится автоматически.'
+            : 'Telegram открыт. Нажмите «Старт» в боте — '
+                'авторизация завершится автоматически.';
       case _Step.success:  return '';
       case _Step.error:    return _errorMessage ?? 'Произошла ошибка. Попробуйте снова.';
     }
@@ -272,7 +295,9 @@ class _AuthSheetState extends State<_AuthSheet>
       case _Step.opening:
       case _Step.waiting:
         return _LoadingRow(
-            label: _step == _Step.opening ? 'Открываем…' : 'Ожидаем подтверждения…');
+            label: _step == _Step.opening
+                ? 'Открываем ${_providerName()}…'
+                : 'Ожидаем подтверждения…');
       case _Step.success:
         return const SizedBox.shrink();
     }
@@ -298,7 +323,7 @@ class _GoogleButton extends StatelessWidget {
               border: Border.all(color: DS.border),
             ),
             child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(PhosphorIconsFill.googleLogo,
+              Icon(PhosphorIconsDuotone.googleLogo,
                   color: const Color(0xFFEA4335), size: 20),
               const SizedBox(width: 10),
               const Text('Войти через Google',
@@ -336,7 +361,7 @@ class _TelegramButton extends StatelessWidget {
               blurRadius: 18, offset: const Offset(0, 5))],
         ),
         child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Icon(Icons.telegram, color: Colors.white, size: 20),
+          Icon(PhosphorIconsDuotone.paperPlaneTilt, color: Colors.white, size: 20),
           const SizedBox(width: 10),
           Text(label, style: const TextStyle(
               color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),

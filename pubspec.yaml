@@ -25,6 +25,7 @@ dependencies:
   url_launcher: ^6.3.2
   country_flags: ^4.1.2
   phosphor_flutter: ^2.1.0
+  flutter_web_auth_2: ^4.1.0
 
 dev_dependencies:
   flutter_test:

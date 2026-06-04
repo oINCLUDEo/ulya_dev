@@ -24,6 +24,13 @@ class AppConfig {
   /// Set this to your Bedolaga backend URL before building the release APK/IPA.
   static const String backendBaseUrl = 'http://51.89.110.208:8080';
 
+  /// Custom URL scheme used as OAuth callback target.
+  /// Must match AndroidManifest CallbackActivity + Info.plist + the
+  /// authorized redirect URI registered for the OAuth client in the Cabinet
+  /// admin panel: `ulyavpn://oauth/callback`.
+  static const String oauthScheme   = 'ulyavpn';
+  static const String oauthCallback = 'ulyavpn://oauth/callback';
+
   /// Package names excluded from VPN tunnel by default (on first launch).
   static const List<String> defaultBlockedApps = [
     'com.vk.vkvideo',        // VK Video
