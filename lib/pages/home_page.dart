@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -133,15 +134,15 @@ class _HomePageState extends State<HomePage>
         _pushSpark(_uploadHist, _speedCalc.uploadSpeed);
         // Haptic when VPN just connected
         if (!wasConnected) HapticFeedback.mediumImpact();
-        _startPingTimer();
       } else {
         _speedCalc.reset();
         _downloadHist.clear();
         _uploadHist.clear();
         // Haptic when VPN just disconnected
         if (wasConnected) HapticFeedback.lightImpact();
-        _stopPingTimer();
       }
+      // Re-tune ping cadence to match the new state (10 s vs 30 s).
+      if (connected != wasConnected) _restartPingTimer();
       setState(() => _status = s);
     });
   }
@@ -155,16 +156,19 @@ class _HomePageState extends State<HomePage>
   }
 
   // ── Ping ───────────────────────────────────────────────────────────────────
-  void _startPingTimer() {
-    if (_pingTimer != null) return;
-    _measurePing(); // immediate, so bars appear right after connect
-    _pingTimer = Timer.periodic(const Duration(seconds: 3), (_) => _measurePing());
-  }
-
-  void _stopPingTimer() {
+  // Cadence: 10 s while connected (live signal), 30 s otherwise (signal preview
+  // from server selection). The bars are visible whenever a server is picked.
+  void _restartPingTimer() {
     _pingTimer?.cancel();
-    _pingTimer = null;
-    if (_pingMs != null && mounted) setState(() => _pingMs = null);
+    if (_selectedNode == null) {
+      _pingTimer = null;
+      return;
+    }
+    _measurePing(); // immediate
+    final interval = _isConnected
+        ? const Duration(seconds: 10)
+        : const Duration(seconds: 30);
+    _pingTimer = Timer.periodic(interval, (_) => _measurePing());
   }
 
   Future<void> _measurePing() async {
@@ -211,7 +215,10 @@ class _HomePageState extends State<HomePage>
         _selectedNode = node;
         _pingMs = null; // stale until next measurement against new host
       });
-      if (_isConnected) _measurePing();
+      // Measure immediately on selection, regardless of connection state, so
+      // the user sees signal bars right after picking a server. The periodic
+      // timer below is re-started so the cadence matches the new state.
+      _restartPingTimer();
     }
   }
 
@@ -302,6 +309,9 @@ class _HomePageState extends State<HomePage>
         selectedServerNotifier.value = _selectedNode;
       }
     });
+    // Kick off ping right after we've resolved the default selected node, so
+    // the signal bars are filled in before the user even touches the picker.
+    if (_selectedNode != null && _pingTimer == null) _restartPingTimer();
     // If a load was requested while we were busy, run it now once.
     if (_pendingLoad && mounted) {
       _pendingLoad = false;
@@ -1038,7 +1048,7 @@ class _HomePageState extends State<HomePage>
                     ],
                   ),
                 ),
-                if (connected) ...[
+                if (_selectedNode != null) ...[
                   _SignalBars(pingMs: _pingMs),
                   const SizedBox(width: 8),
                 ],
@@ -1326,9 +1336,6 @@ class _ConnectButton extends StatefulWidget {
 
 class _ConnectButtonState extends State<_ConnectButton>
     with TickerProviderStateMixin {
-  // Pulsing glow ring when connected
-  late final AnimationController _glowCtrl;
-  late final Animation<double> _glowAnim;
   // Icon rotation when loading
   late final AnimationController _spinCtrl;
   // Concentric pulse rings (2.4s, staggered 0/0.8/1.6s) — runs when active.
@@ -1339,13 +1346,6 @@ class _ConnectButtonState extends State<_ConnectButton>
   @override
   void initState() {
     super.initState();
-    _glowCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    );
-    _glowAnim = Tween<double>(begin: 0.06, end: 0.24).animate(
-      CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
-    );
     _spinCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 900),
@@ -1354,7 +1354,6 @@ class _ConnectButtonState extends State<_ConnectButton>
       vsync: this,
       duration: const Duration(milliseconds: 2400),
     );
-    if (widget.isConnected) _glowCtrl.repeat(reverse: true);
     if (widget.isLoading) _spinCtrl.repeat();
     if (_ringsActive) _pulseCtrl.repeat();
   }
@@ -1362,13 +1361,6 @@ class _ConnectButtonState extends State<_ConnectButton>
   @override
   void didUpdateWidget(covariant _ConnectButton old) {
     super.didUpdateWidget(old);
-    if (widget.isConnected && !old.isConnected) {
-      _glowCtrl.repeat(reverse: true);
-    } else if (!widget.isConnected && old.isConnected) {
-      _glowCtrl
-        ..stop()
-        ..reset();
-    }
     if (widget.isLoading && !old.isLoading) {
       _spinCtrl.repeat();
     } else if (!widget.isLoading && old.isLoading) {
@@ -1388,7 +1380,6 @@ class _ConnectButtonState extends State<_ConnectButton>
 
   @override
   void dispose() {
-    _glowCtrl.dispose();
     _spinCtrl.dispose();
     _pulseCtrl.dispose();
     super.dispose();
@@ -1426,9 +1417,8 @@ class _ConnectButtonState extends State<_ConnectButton>
                   ),
                 ),
               AnimatedBuilder(
-                animation: Listenable.merge([_glowAnim, _spinCtrl]),
+                animation: _spinCtrl,
                 builder: (_, child) {
-                  final glowAlpha = widget.isConnected ? _glowAnim.value : 0.0;
                   return GestureDetector(
                     onTap: widget.isLoading ? null : widget.onTap,
                     child: AnimatedContainer(
@@ -1438,18 +1428,15 @@ class _ConnectButtonState extends State<_ConnectButton>
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: _color,
+                        // Single soft glow only — pulse rings carry the rest of
+                        // the "alive" feel. The previous hard-spread ring shadow
+                        // clashed with the rings, so it's gone.
                         boxShadow: [
                           BoxShadow(
-                            color: _color.withValues(alpha: 0.45),
-                            blurRadius: 40,
+                            color: _color.withValues(alpha: 0.32),
+                            blurRadius: 28,
                             spreadRadius: 0,
                           ),
-                          if (widget.isConnected)
-                            BoxShadow(
-                              color: DS.emerald.withValues(alpha: glowAlpha),
-                              blurRadius: 0,
-                              spreadRadius: 18,
-                            ),
                         ],
                       ),
                       child: widget.isLoading
@@ -1587,16 +1574,21 @@ class _Bubble {
 
 class _RisingBubblesState extends State<_RisingBubbles>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
+  // Continuously-accumulated time in "rise cycles" (8 s = 1 cycle). Using a
+  // raw Ticker (not an AnimationController that loops 0..1) avoids the visible
+  // jerk that happens when a controller wraps around: each bubble's
+  // `(t * speed + phase) % 1` would jump because `t` itself snaps back to 0.
+  // Here `_t` is monotonically increasing, so % 1 produces a smooth sawtooth.
+  Ticker? _ticker;
+  double _t = 0;
+  Duration _lastTick = Duration.zero;
+  static const double _cycleSeconds = 8.0;
+
   late final List<_Bubble> _bubbles;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 8),
-    )..repeat();
     // Deterministic-ish but visually scattered.
     final rnd = math.Random(42);
     _bubbles = List.generate(16, (i) {
@@ -1610,21 +1602,26 @@ class _RisingBubblesState extends State<_RisingBubbles>
         0.35 + rnd.nextDouble() * 0.45,         // maxAlpha 0.35..0.8
       );
     });
+    _ticker = createTicker(_onTick)..start();
+  }
+
+  void _onTick(Duration elapsed) {
+    final dt = (elapsed - _lastTick).inMicroseconds / 1e6;
+    _lastTick = elapsed;
+    if (dt <= 0) return;
+    setState(() => _t += dt / _cycleSeconds);
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _ticker?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _ctrl,
-      builder: (_, child) => CustomPaint(
-        painter: _BubblesPainter(t: _ctrl.value, bubbles: _bubbles),
-      ),
+    return CustomPaint(
+      painter: _BubblesPainter(t: _t, bubbles: _bubbles),
     );
   }
 }
@@ -2147,27 +2144,28 @@ class _SpeedCardFlyInState extends State<_SpeedCardFlyIn>
             borderRadius: BorderRadius.circular(DS.radiusSm),
             border: Border.all(color: DS.border),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: _SpeedTile(
-                icon: Icons.arrow_downward_rounded,
-                color: DS.cyan,
-                label: 'Загрузка',
-                speed: widget.downloadSpeed,
-                total: widget.downloadTotal,
-                hist: widget.downloadHist,
-              )),
-              Container(width: 1, color: DS.border),
-              Expanded(child: _SpeedTile(
-                icon: Icons.arrow_upward_rounded,
-                color: DS.violet,
-                label: 'Отдача',
-                speed: widget.uploadSpeed,
-                total: widget.uploadTotal,
-                hist: widget.uploadHist,
-              )),
-            ],
+          child: IntrinsicHeight(
+            child: Row(
+              children: [
+                Expanded(child: _SpeedTile(
+                  icon: Icons.arrow_downward_rounded,
+                  color: DS.cyan,
+                  label: 'Загрузка',
+                  speed: widget.downloadSpeed,
+                  total: widget.downloadTotal,
+                  hist: widget.downloadHist,
+                )),
+                Container(width: 1, color: DS.border),
+                Expanded(child: _SpeedTile(
+                  icon: Icons.arrow_upward_rounded,
+                  color: DS.violet,
+                  label: 'Отдача',
+                  speed: widget.uploadSpeed,
+                  total: widget.uploadTotal,
+                  hist: widget.uploadHist,
+                )),
+              ],
+            ),
           ),
         ),
       ),
