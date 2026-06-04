@@ -70,6 +70,11 @@ class _HomePageState extends State<HomePage>
   bool _isPublicCatalog = false;
   SubscriptionInfo? _subscriptionInfo;
   String _lastKnownSubUrl = '';
+  // True once _loadNodes finished at least once (success or failure). Used to
+  // distinguish 'still loading' from 'finished but no data', so we can show a
+  // retry CTA instead of an endless spinner when the backend returns empty.
+  bool _loadAttempted = false;
+  String? _loadError;
 
   // ── State ──────────────────────────────────────────────────────────────────
   late final SpeedCalculator _speedCalc;
@@ -335,16 +340,30 @@ class _HomePageState extends State<HomePage>
     // Guard: if already loading, mark as pending so we run once more after.
     if (_isLoadingNodes) { _pendingLoad = true; return; }
     _pendingLoad = false;
-    setState(() => _isLoadingNodes = true);
-    final subUrl = await RemnawaveService.getSubscriptionUrl();
-    final List<ServerNode> nodes;
-    final bool isPublic;
-    if (subUrl.isEmpty) {
-      nodes = await RemnawaveService.fetchPublicServers();
-      isPublic = true;
-    } else {
-      nodes = await RemnawaveService.fetchNodes();
-      isPublic = false;
+    setState(() {
+      _isLoadingNodes = true;
+      _loadError = null;
+    });
+    appLogger.info('HomePage', '_loadNodes: start');
+    List<ServerNode> nodes = const [];
+    bool isPublic = false;
+    String? error;
+    try {
+      final subUrl = await RemnawaveService.getSubscriptionUrl();
+      appLogger.info('HomePage', '_loadNodes: subUrl=${subUrl.isEmpty ? "(empty)" : "set"}');
+      if (subUrl.isEmpty) {
+        nodes = await RemnawaveService.fetchPublicServers();
+        isPublic = true;
+      } else {
+        nodes = await RemnawaveService.fetchNodes();
+        isPublic = false;
+      }
+      appLogger.info('HomePage',
+          '_loadNodes: ok — ${nodes.length} nodes, isPublic=$isPublic, '
+          'subscriptionInfo=${RemnawaveService.lastSubscriptionInfo != null}');
+    } on Exception catch (e, st) {
+      appLogger.error('HomePage', '_loadNodes failed: $e\n$st');
+      error = e.toString();
     }
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
@@ -354,6 +373,8 @@ class _HomePageState extends State<HomePage>
       _isPublicCatalog = isPublic;
       _subscriptionInfo = isPublic ? null : RemnawaveService.lastSubscriptionInfo;
       _isLoadingNodes = false;
+      _loadError = error;
+      _loadAttempted = true;
       if (_selectedNode != null) {
         _selectedNode = nodes.cast<ServerNode?>()
             .firstWhere((n) => n?.uuid == _selectedNode!.uuid, orElse: () => null);
@@ -1281,20 +1302,27 @@ class _HomePageState extends State<HomePage>
                 // Renew CTA itself now lives in the connection card slot,
                 // so we only keep the explanation text here.
               ] else if (sub != null)
-                Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
-                  SizedBox(
-                    width: 14, height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: DS.textMuted),
-                  ),
-                  SizedBox(width: 8),
-                  Text('Загрузка трафика…',
-                      style: TextStyle(color: DS.textSecondary, fontSize: 13)),
-                ])
+                _loadAttempted && _loadError != null
+                    ? _SubLoadError(error: _loadError!, onRetry: _refreshAll)
+                    : Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+                        SizedBox(
+                          width: 14, height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: DS.textMuted),
+                        ),
+                        SizedBox(width: 8),
+                        Text('Загрузка трафика…',
+                            style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+                      ])
               else
-                const Center(
-                  child: Text('Загрузка данных…',
-                      style: TextStyle(color: DS.textSecondary, fontSize: 13)),
-                ),
+                _loadAttempted
+                    ? _SubLoadError(
+                        error: _loadError ?? 'Данные подписки не получены.',
+                        onRetry: _refreshAll,
+                      )
+                    : const Center(
+                        child: Text('Загрузка данных…',
+                            style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+                      ),
             ] else if (_isPublicCatalog && !authState.isLoggedIn)
               _LoginPrompt()
             else if (_isPublicCatalog && authState.isLoggedIn)
@@ -2066,6 +2094,48 @@ class _LoginPrompt extends StatelessWidget {
         'Войдите в аккаунт, чтобы активировать подписку.',
         style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5),
       );
+}
+
+/// Fallback for the subscription card when /loadNodes finished but no data
+/// landed (network down, JWT rejected, empty response). Shows a short
+/// human-readable error and a Retry button so the user isn't stuck staring
+/// at a spinner that will never resolve.
+class _SubLoadError extends StatelessWidget {
+  final String error;
+  final Future<void> Function() onRetry;
+  const _SubLoadError({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    // Keep the visible message short — full exception text goes to the logs
+    // (see _loadNodes), not to the UI.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Icon(PhosphorIconsBold.warningCircle,
+            size: 18, color: DS.amber),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Text(
+            'Не удалось загрузить данные подписки. Проверьте соединение.',
+            style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.4),
+          ),
+        ),
+        const SizedBox(width: 8),
+        TextButton(
+          style: TextButton.styleFrom(
+            foregroundColor: DS.violet,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            minimumSize: const Size(0, 32),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          onPressed: onRetry,
+          child: const Text('Обновить',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
 }
 
 class _NoPlanPrompt extends StatelessWidget {
