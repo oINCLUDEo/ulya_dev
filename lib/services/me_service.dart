@@ -43,14 +43,29 @@ class MeService {
     return http.Client();
   }
 
-  /// Fetch the /me endpoint and update [meNotifier].
+  /// Fetch user/subscription data and update [meNotifier].
+  ///
+  /// - Telegram users  → GET /mobile/v1/me  (X-Telegram-Id header)
+  /// - Email-only users → GET /cabinet/subscription  (Bearer JWT)
   ///
   /// Does nothing when the user is not logged in.
   /// Returns the response on success, or null on failure.
   static Future<MeResponse?> refresh() async {
     final auth = authStateNotifier.value;
-    if (!auth.isLoggedIn || auth.telegramId == null) return null;
+    if (!auth.isLoggedIn) return null;
 
+    // Email-only users: use Cabinet API
+    if (auth.isEmailAuth && auth.cabinetAccessToken != null) {
+      return _refreshFromCabinet(auth);
+    }
+
+    if (auth.telegramId == null) return null;
+    return _refreshFromMobile(auth);
+  }
+
+  // ── Telegram (mobile API) ──────────────────────────────────────────────────
+
+  static Future<MeResponse?> _refreshFromMobile(AuthState auth) async {
     try {
       final client = _makeClient();
       final response = await client
@@ -64,11 +79,6 @@ class MeService {
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         final me = MeResponse.fromJson(body);
-        // Persist the subscription URL so that RemnawaveService readers
-        // (ServersPage, HomePage) immediately see the updated URL when they
-        // next call getSubscriptionUrl().  This must happen before the
-        // meNotifier fires so that listeners picking up the change already
-        // find the URL in SharedPreferences.
         final subUrl = me.subscription?.subscriptionUrl;
         if (subUrl != null && subUrl.isNotEmpty) {
           await RemnawaveService.saveSubscriptionUrl(subUrl);
@@ -76,21 +86,104 @@ class MeService {
         meNotifier.value = me;
         await _saveToCache(me);
         appLogger.info('MeService', '/me refreshed — subscription: ${me.hasSubscription}');
-        // Post subscription expiry warning if needed
         _checkAndPostExpiryWarning(me);
-        // Fetch and post backend-driven in-app notifications
         unawaited(_fetchAndPostNotifications(auth.telegramId!));
         return me;
       }
 
       appLogger.warning('MeService', '/me returned ${response.statusCode}');
-      debugPrint('MeService: /me returned ${response.statusCode}');
       return null;
     } on Exception catch (e) {
       appLogger.error('MeService', '/me error: $e');
-      debugPrint('MeService: error fetching /me: $e');
       return null;
     }
+  }
+
+  // ── Email (Cabinet API) ────────────────────────────────────────────────────
+
+  static Future<MeResponse?> _refreshFromCabinet(AuthState auth) async {
+    try {
+      final token = auth.cabinetAccessToken!;
+      final headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      };
+
+      final client = _makeClient();
+      final response = await client
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/cabinet/subscription'),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 15));
+      client.close();
+
+      if (response.statusCode != 200) {
+        appLogger.warning('MeService', 'cabinet /subscription returned ${response.statusCode}');
+        return null;
+      }
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final hasSub = body['has_subscription'] as bool? ?? false;
+      final subData = body['subscription'] as Map<String, dynamic>?;
+
+      MeSubscription? sub;
+      if (hasSub && subData != null) {
+        sub = _parseCabinetSubscription(subData);
+        final subUrl = sub.subscriptionUrl;
+        if (subUrl != null && subUrl.isNotEmpty) {
+          await RemnawaveService.saveSubscriptionUrl(subUrl);
+        }
+      }
+
+      final me = MeResponse(
+        telegramId: auth.telegramId,
+        firstName: auth.firstName,
+        lastName: auth.lastName,
+        username: auth.username,
+        hasSubscription: hasSub,
+        subscription: sub,
+      );
+
+      meNotifier.value = me;
+      await _saveToCache(me);
+      appLogger.info('MeService', 'cabinet /subscription refreshed — hasSub: $hasSub');
+      _checkAndPostExpiryWarning(me);
+      return me;
+    } on Exception catch (e) {
+      appLogger.error('MeService', 'cabinet refresh error: $e');
+      return null;
+    }
+  }
+
+  /// Map a Cabinet `SubscriptionData` JSON object to [MeSubscription].
+  static MeSubscription _parseCabinetSubscription(Map<String, dynamic> s) {
+    // Cabinet uses end_date (ISO-8601); mobile uses expire_at (Unix seconds).
+    int? expireAt;
+    final endDateRaw = s['end_date'] as String?;
+    if (endDateRaw != null) {
+      try {
+        expireAt = DateTime.parse(endDateRaw).millisecondsSinceEpoch ~/ 1000;
+      } catch (_) {}
+    }
+
+    // plan_name may come as tariff_name or plan_name depending on endpoint version
+    final planName =
+        (s['tariff_name'] as String?) ??
+        (s['plan_name']   as String?) ??
+        (s['name']        as String?);
+
+    return MeSubscription(
+      status:          s['status']            as String?  ?? 'unknown',
+      isTrial:         s['is_trial']          as bool?    ?? false,
+      expireAt:        expireAt,
+      trafficLimitGb:  (s['traffic_limit_gb'] as num?)?.toInt() ?? 0,
+      trafficUsedGb:   (s['traffic_used_gb']  as num?)?.toDouble() ?? 0.0,
+      subscriptionUrl: s['subscription_url']  as String?,
+      deviceLimit:     (s['device_limit']     as num?)?.toInt() ?? 1,
+      autopayEnabled:  s['autopay_enabled']   as bool?    ?? false,
+      planName:        (planName?.isNotEmpty == true) ? planName : null,
+    );
   }
 
   /// Full refresh: fetch /me AND the Remnawave subscription info (nodes).

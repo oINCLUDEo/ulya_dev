@@ -1016,10 +1016,11 @@ class _HomePageState extends State<HomePage>
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Telegram user strip
+            // User strip
             if (authState.isLoggedIn) ...[
-              _TelegramStrip(
+              _UserStrip(
                 name: authState.displayName,
+                isEmailAuth: authState.isEmailAuth,
                 onLogout: () async {
                   final ok = await showDialog<bool>(
                     context: context,
@@ -1391,30 +1392,39 @@ class _ConnectButtonState extends State<_ConnectButton>
   }
 }
 
-class _TelegramStrip extends StatelessWidget {
+class _UserStrip extends StatelessWidget {
   final String name;
+  final bool isEmailAuth;
   final VoidCallback onLogout;
-  const _TelegramStrip({required this.name, required this.onLogout});
+  const _UserStrip({
+    required this.name,
+    required this.isEmailAuth,
+    required this.onLogout,
+  });
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-    decoration: BoxDecoration(
-      color: DS.telegramBlue.withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(DS.radiusSm),
-      border: Border.all(color: DS.telegramBlue.withValues(alpha: 0.20)),
-    ),
-    child: Row(children: [
-      const Icon(Icons.telegram, color: DS.telegramBlue, size: 15),
-      const SizedBox(width: 8),
-      Expanded(child: Text(name, style: const TextStyle(
-          color: DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
-          overflow: TextOverflow.ellipsis)),
-      GestureDetector(
-          onTap: onLogout,
-          child: const Icon(Icons.logout_rounded, size: 16, color: DS.textMuted)),
-    ]),
-  );
+  Widget build(BuildContext context) {
+    final color = isEmailAuth ? DS.violet : DS.telegramBlue;
+    final icon = isEmailAuth ? Icons.email_rounded : Icons.telegram;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(DS.radiusSm),
+        border: Border.all(color: color.withValues(alpha: 0.20)),
+      ),
+      child: Row(children: [
+        Icon(icon, color: color, size: 15),
+        const SizedBox(width: 8),
+        Expanded(child: Text(name, style: const TextStyle(
+            color: DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
+            overflow: TextOverflow.ellipsis)),
+        GestureDetector(
+            onTap: onLogout,
+            child: const Icon(Icons.logout_rounded, size: 16, color: DS.textMuted)),
+      ]),
+    );
+  }
 }
 
 class _LoginPrompt extends StatelessWidget {

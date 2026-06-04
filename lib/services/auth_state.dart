@@ -1,7 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Immutable snapshot of the current Telegram authentication state.
+/// Immutable snapshot of the current authentication state.
+/// Supports both Telegram bot auth and email/password (cabinet) auth.
 class AuthState {
   const AuthState({
     this.isLoggedIn = false,
@@ -10,12 +11,14 @@ class AuthState {
     this.lastName,
     this.username,
     this.subscriptionUrl,
+    this.email,
+    this.cabinetAccessToken,
   });
 
-  /// Whether the user has successfully authenticated via Telegram.
+  /// Whether the user has successfully authenticated.
   final bool isLoggedIn;
 
-  /// Telegram user ID (null if not logged in).
+  /// Telegram user ID (null for email-only users).
   final int? telegramId;
 
   final String? firstName;
@@ -28,10 +31,21 @@ class AuthState {
   /// entered a subscription URL in Settings.
   final String? subscriptionUrl;
 
+  /// Email address (set when authenticated via email/password).
+  final String? email;
+
+  /// Cabinet JWT access token (set when authenticated via email/password).
+  /// Used to call Cabinet API endpoints that require Bearer auth.
+  final String? cabinetAccessToken;
+
+  /// Whether this is an email-only account (no Telegram link yet).
+  bool get isEmailAuth => telegramId == null && email != null;
+
   /// Display name used in the UI.
   String get displayName {
     if (firstName != null && firstName!.isNotEmpty) return firstName!;
     if (username != null && username!.isNotEmpty) return '@$username';
+    if (email != null && email!.isNotEmpty) return email!;
     return 'Пользователь';
   }
 
@@ -44,6 +58,8 @@ class AuthState {
     String? lastName,
     String? username,
     String? subscriptionUrl,
+    String? email,
+    String? cabinetAccessToken,
   }) =>
       AuthState(
         isLoggedIn: isLoggedIn ?? this.isLoggedIn,
@@ -52,12 +68,14 @@ class AuthState {
         lastName: lastName ?? this.lastName,
         username: username ?? this.username,
         subscriptionUrl: subscriptionUrl ?? this.subscriptionUrl,
+        email: email ?? this.email,
+        cabinetAccessToken: cabinetAccessToken ?? this.cabinetAccessToken,
       );
 
   @override
   String toString() =>
       'AuthState(isLoggedIn: $isLoggedIn, telegramId: $telegramId, '
-      'username: $username, hasSubscription: $hasSubscription)';
+      'email: $email, hasSubscription: $hasSubscription)';
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -67,6 +85,8 @@ const _keyTelegramId = 'auth_telegram_id';
 const _keyFirstName = 'auth_first_name';
 const _keyLastName = 'auth_last_name';
 const _keyUsername = 'auth_username';
+const _keyEmail = 'auth_email';
+const _keyCabinetToken = 'auth_cabinet_token';
 
 /// Global notifier for authentication state.
 ///
@@ -91,25 +111,32 @@ final ValueNotifier<bool> vpnConnectedNotifier = ValueNotifier<bool>(false);
 Future<void> saveAuthState(AuthState state) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(_keyIsLoggedIn, state.isLoggedIn);
-  if (state.telegramId != null) {
-    await prefs.setInt(_keyTelegramId, state.telegramId!);
-  } else {
-    await prefs.remove(_keyTelegramId);
+  _setOrRemove(prefs, _keyTelegramId, state.telegramId, setInt: true);
+  _setOrRemoveString(prefs, _keyFirstName, state.firstName);
+  _setOrRemoveString(prefs, _keyLastName, state.lastName);
+  _setOrRemoveString(prefs, _keyUsername, state.username);
+  _setOrRemoveString(prefs, _keyEmail, state.email);
+  _setOrRemoveString(prefs, _keyCabinetToken, state.cabinetAccessToken);
+}
+
+void _setOrRemove(
+  SharedPreferences prefs,
+  String key,
+  Object? value, {
+  bool setInt = false,
+}) {
+  if (value == null) {
+    prefs.remove(key);
+  } else if (setInt) {
+    prefs.setInt(key, value as int);
   }
-  if (state.firstName != null) {
-    await prefs.setString(_keyFirstName, state.firstName!);
+}
+
+void _setOrRemoveString(SharedPreferences prefs, String key, String? value) {
+  if (value != null) {
+    prefs.setString(key, value);
   } else {
-    await prefs.remove(_keyFirstName);
-  }
-  if (state.lastName != null) {
-    await prefs.setString(_keyLastName, state.lastName!);
-  } else {
-    await prefs.remove(_keyLastName);
-  }
-  if (state.username != null) {
-    await prefs.setString(_keyUsername, state.username!);
-  } else {
-    await prefs.remove(_keyUsername);
+    prefs.remove(key);
   }
 }
 
@@ -125,6 +152,8 @@ Future<void> loadAuthState() async {
     firstName: prefs.getString(_keyFirstName),
     lastName: prefs.getString(_keyLastName),
     username: prefs.getString(_keyUsername),
+    email: prefs.getString(_keyEmail),
+    cabinetAccessToken: prefs.getString(_keyCabinetToken),
   );
 }
 
@@ -136,5 +165,7 @@ Future<void> clearAuthState() async {
   await prefs.remove(_keyFirstName);
   await prefs.remove(_keyLastName);
   await prefs.remove(_keyUsername);
+  await prefs.remove(_keyEmail);
+  await prefs.remove(_keyCabinetToken);
   authStateNotifier.value = const AuthState();
 }

@@ -18,6 +18,7 @@ import '../utils/core_info_parser.dart';
 import '../services/remnawave_service.dart';
 import '../main.dart' show DS;
 import 'logs_page.dart';
+import 'onboarding_page.dart' show resetOnboarding;
 import 'premium_page.dart';
 import 'subscription_page.dart';
 import 'support_page.dart';
@@ -456,6 +457,19 @@ class _SettingsPageState extends State<SettingsPage> {
             _gap,
           ],
 
+          // ── Разработчику ─────────────────────────────────────────────────────
+          _pad(_Section(
+            title: 'Разработчику',
+            icon: Icons.code_rounded,
+            child: _SettingsTile(
+              icon: Icons.replay_rounded,
+              label: 'Сбросить онбординг',
+              value: 'Показать приветственный экран снова',
+              onTap: _onResetOnboarding,
+            ),
+          )),
+          _gap,
+
           const SliverPadding(padding: EdgeInsets.only(bottom: 110)),
         ],
       ),
@@ -527,6 +541,17 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirm == true) await AuthService.logout();
+  }
+
+  Future<void> _onResetOnboarding() async {
+    await resetOnboarding();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Онбординг сброшен. Перезапустите приложение.'),
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
 
   // ── Dialogs ─────────────────────────────────────────────────────────────────

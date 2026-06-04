@@ -22,7 +22,7 @@ class AppConfig {
   /// Example: `'https://bot.example.com'`
   ///
   /// Set this to your Bedolaga backend URL before building the release APK/IPA.
-  static const String backendBaseUrl = 'http://192.168.1.166:8081';
+  static const String backendBaseUrl = 'http://51.89.110.208:8080';
 
   /// Package names excluded from VPN tunnel by default (on first launch).
   static const List<String> defaultBlockedApps = [

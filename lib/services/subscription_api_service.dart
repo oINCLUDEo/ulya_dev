@@ -546,6 +546,30 @@ class SubscriptionApiService {
     };
   }
 
+  /// Headers for Cabinet API calls (Bearer JWT auth).
+  static Map<String, String>? _cabinetHeaders() {
+    final token = authStateNotifier.value.cabinetAccessToken;
+    if (token == null) return null;
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+    };
+  }
+
+  /// GET helper that uses Cabinet Bearer auth.
+  static Future<http.Response?> _cabinetGet(String path) async {
+    final headers = _cabinetHeaders();
+    if (headers == null) return null;
+    try {
+      return await http.get(
+        Uri.parse('$_base$path'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 15));
+    } on Exception {
+      return null;
+    }
+  }
+
   /// Returns an HTTP client that routes through the local xray HTTP proxy
   /// (port 10808) when the VPN is active, so subscription API calls reach
   /// the backend even when the app package is excluded from the VPN tunnel.
@@ -604,7 +628,11 @@ class SubscriptionApiService {
   }
 
   /// GET /mobile/v1/subscription/options
+  /// Falls back to Cabinet API for email-only users.
   static Future<SubscriptionOptions?> getOptions() async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _getOptionsCabinet();
+    }
     try {
       final resp = await _get(
         Uri.parse('$_base/mobile/v1/subscription/options'),
@@ -620,6 +648,42 @@ class SubscriptionApiService {
       return null;
     } on Exception catch (e) {
       debugPrint('SubscriptionApiService.getOptions error: $e');
+      return null;
+    }
+  }
+
+  /// Cabinet fallback for [getOptions] — parses /cabinet/subscription/purchase-options.
+  static Future<SubscriptionOptions?> _getOptionsCabinet() async {
+    try {
+      final resp = await _cabinetGet('/cabinet/subscription/purchase-options');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+
+      // Build a synthetic SubscriptionOptions from the Cabinet response.
+      // The Cabinet endpoint returns either tariff mode or classic mode data.
+      final balanceKopeks = (json['balance_kopeks'] as num?)?.toInt() ?? 0;
+      final hasSub = json['has_subscription'] as bool? ?? false;
+
+      // In classic mode the response has a 'periods' array directly.
+      // In tariff mode periods come from within each tariff object.
+      // Extract top-level periods if present (classic mode).
+      final rawPeriods = json['periods'] as List<dynamic>? ?? [];
+      final periods = rawPeriods
+          .whereType<Map<String, dynamic>>()
+          .map(PeriodOption.fromJson)
+          .toList();
+
+      final opts = SubscriptionOptions(
+        hasSubscription: hasSub,
+        periods: periods,
+        balanceKopeks: balanceKopeks,
+        balanceRub: balanceKopeks / 100,
+        currency: json['currency'] as String? ?? 'RUB',
+      );
+      optionsNotifier.value = opts;
+      return opts;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService._getOptionsCabinet error: $e');
       return null;
     }
   }
@@ -811,7 +875,11 @@ class SubscriptionApiService {
   }
 
   /// GET /mobile/v1/tariffs
+  /// Falls back to Cabinet API for email-only users.
   static Future<List<TariffInfo>?> getTariffs() async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _getTariffsCabinet();
+    }
     try {
       final resp = await _get(Uri.parse('$_base/mobile/v1/tariffs'));
       debugPrint('SubscriptionApiService.getTariffs: status=${resp.statusCode}');
@@ -830,6 +898,28 @@ class SubscriptionApiService {
       return null;
     } on Exception catch (e) {
       debugPrint('SubscriptionApiService.getTariffs error: $e');
+      return null;
+    }
+  }
+
+  /// Cabinet fallback for [getTariffs].
+  static Future<List<TariffInfo>?> _getTariffsCabinet() async {
+    try {
+      final resp = await _cabinetGet('/cabinet/subscription/purchase-options');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      // Cabinet purchase-options in tariff mode returns {"tariffs": [...], ...}
+      // The tariff objects share the same schema as the mobile API tariffs.
+      final raw = json['tariffs'] as List<dynamic>? ?? [];
+      final result = raw
+          .whereType<Map<String, dynamic>>()
+          .map(TariffInfo.fromJson)
+          .toList();
+      debugPrint('SubscriptionApiService._getTariffsCabinet: parsed ${result.length} tariffs');
+      tarifsNotifier.value = result;
+      return result;
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService._getTariffsCabinet error: $e');
       return null;
     }
   }
@@ -883,11 +973,97 @@ class SubscriptionApiService {
     }
   }
 
+  /// Cabinet fallback for [buyTariff] and [changeTariff].
+  ///
+  /// [isSwitch] = false → POST /cabinet/subscription/purchase-tariff
+  /// [isSwitch] = true  → POST /cabinet/subscription/tariff/switch
+  static Future<BuyResult?> _purchaseTariffCabinet({
+    required int tariffId,
+    required int periodDays,
+    required bool isSwitch,
+  }) async {
+    final headers = _cabinetHeaders();
+    if (headers == null) return const BuyResult(status: 'error', message: 'Не авторизован');
+    final path = isSwitch
+        ? '/cabinet/subscription/tariff/switch'
+        : '/cabinet/subscription/purchase-tariff';
+    try {
+      final resp = await http.post(
+        Uri.parse('$_base$path'),
+        headers: headers,
+        body: jsonEncode({'tariff_id': tariffId, 'period_days': periodDays}),
+      ).timeout(const Duration(seconds: 30));
+
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        // Cabinet returns {success, message, subscription, ...}
+        final success = json['success'] as bool? ?? false;
+        return BuyResult(
+          status: success ? 'success' : 'error',
+          message: json['message'] as String?,
+          subscription: json['subscription'] as Map<String, dynamic>?,
+        );
+      }
+
+      debugPrint('SubscriptionApiService._purchaseTariffCabinet: ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+      } catch (_) {}
+      return BuyResult(status: 'error', message: 'Ошибка сервера (${resp.statusCode})');
+    } on Exception catch (e) {
+      return BuyResult(status: 'error', message: 'Ошибка соединения: $e');
+    }
+  }
+
+  /// POST /cabinet/subscription/trial — activate trial via Cabinet JWT (email users).
+  ///
+  /// The Cabinet endpoint returns a full SubscriptionData object on success,
+  /// including `subscription_url` so the app can update its state immediately.
+  static Future<BuyResult?> activateCabinetTrial(String accessToken) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$_base/cabinet/subscription/trial'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $accessToken',
+        },
+      ).timeout(const Duration(seconds: 15));
+
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        // Cabinet returns SubscriptionData directly (subscription_url is at root)
+        return BuyResult(
+          status: 'success',
+          message: 'Пробная подписка активирована!',
+          subscription: json, // contains subscription_url, plan_name, etc.
+        );
+      }
+
+      debugPrint('SubscriptionApiService.activateCabinetTrial: ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+      } catch (_) {}
+      return const BuyResult(status: 'error', message: 'Ошибка активации пробного периода');
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService.activateCabinetTrial error: $e');
+      return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
   /// POST /mobile/v1/subscription/buy-tariff
+  /// Falls back to Cabinet /purchase-tariff for email-only users.
   static Future<BuyResult?> buyTariff({
     required int tariffId,
     required int periodDays,
   }) async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _purchaseTariffCabinet(
+          tariffId: tariffId, periodDays: periodDays, isSwitch: false);
+    }
     try {
       final body = {'tariff_id': tariffId, 'period_days': periodDays};
       final resp = await _post(
@@ -949,12 +1125,15 @@ class SubscriptionApiService {
 
   /// POST /mobile/v1/subscription/change-tariff
   /// Switches the active subscription to a different tariff with server-side
-  /// proration. For downgrades the server typically returns status='success'
-  /// with amount_kopeks=0.
+  /// proration. Falls back to Cabinet /tariff/switch for email-only users.
   static Future<BuyResult?> changeTariff({
     required int tariffId,
     required int periodDays,
   }) async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _purchaseTariffCabinet(
+          tariffId: tariffId, periodDays: periodDays, isSwitch: true);
+    }
     try {
       final body = {'tariff_id': tariffId, 'period_days': periodDays};
       final resp = await _post(
@@ -1085,7 +1264,11 @@ class SubscriptionApiService {
   // ─────────────────────────────────────────────────────────────────────────
 
   /// GET /mobile/v1/devices
+  /// Falls back to Cabinet API for email-only users.
   static Future<DevicesResult?> listDevices() async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _listDevicesCabinet();
+    }
     try {
       final resp = await _get(Uri.parse('$_base/mobile/v1/devices'));
       if (resp.statusCode == 200) {
@@ -1097,6 +1280,23 @@ class SubscriptionApiService {
       return null;
     } on Exception catch (e) {
       debugPrint('SubscriptionApiService.listDevices error: $e');
+      return null;
+    }
+  }
+
+  /// Cabinet fallback for [listDevices].
+  /// Cabinet returns {devices, total, device_limit} — mobile expects {devices, count, device_limit}.
+  static Future<DevicesResult?> _listDevicesCabinet() async {
+    try {
+      final resp = await _cabinetGet('/cabinet/subscription/devices');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      // Cabinet uses "total" instead of "count"
+      final normalized = Map<String, dynamic>.from(json);
+      normalized['count'] = json['total'] ?? json['count'] ?? 0;
+      return DevicesResult.fromJson(normalized);
+    } on Exception catch (e) {
+      debugPrint('SubscriptionApiService._listDevicesCabinet error: $e');
       return null;
     }
   }
