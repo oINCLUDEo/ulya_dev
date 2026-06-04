@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
@@ -70,6 +71,19 @@ class _HomePageState extends State<HomePage>
   bool _initialized = false;
   bool _isConnecting = false;
 
+  // ── Signal / ping ─────────────────────────────────────────────────────────
+  // Latest measured TCP round-trip time in ms to the selected node, or null
+  // when we couldn't reach it on the last try. Refreshed every ~3 s while
+  // connected. Drives the Wi-Fi bars indicator in the server selector row.
+  int? _pingMs;
+  Timer? _pingTimer;
+  bool _pingInFlight = false;
+
+  // ── Speed history (sparkline ring buffers) ────────────────────────────────
+  static const int _sparkLen = 18;
+  final List<double> _downloadHist = [];
+  final List<double> _uploadHist = [];
+
   // ── Computed ───────────────────────────────────────────────────────────────
   bool get _isConnected => _status.state.toUpperCase() == 'CONNECTED';
   bool get _isTransitioning =>
@@ -115,15 +129,66 @@ class _HomePageState extends State<HomePage>
       vpnConnectedNotifier.value = connected;
       if (connected) {
         _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
+        _pushSpark(_downloadHist, _speedCalc.downloadSpeed);
+        _pushSpark(_uploadHist, _speedCalc.uploadSpeed);
         // Haptic when VPN just connected
         if (!wasConnected) HapticFeedback.mediumImpact();
+        _startPingTimer();
       } else {
         _speedCalc.reset();
+        _downloadHist.clear();
+        _uploadHist.clear();
         // Haptic when VPN just disconnected
         if (wasConnected) HapticFeedback.lightImpact();
+        _stopPingTimer();
       }
       setState(() => _status = s);
     });
+  }
+
+  // ── Sparkline helper ──────────────────────────────────────────────────────
+  void _pushSpark(List<double> buf, double v) {
+    buf.add(v < 0 ? 0 : v);
+    while (buf.length > _sparkLen) {
+      buf.removeAt(0);
+    }
+  }
+
+  // ── Ping ───────────────────────────────────────────────────────────────────
+  void _startPingTimer() {
+    if (_pingTimer != null) return;
+    _measurePing(); // immediate, so bars appear right after connect
+    _pingTimer = Timer.periodic(const Duration(seconds: 3), (_) => _measurePing());
+  }
+
+  void _stopPingTimer() {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    if (_pingMs != null && mounted) setState(() => _pingMs = null);
+  }
+
+  Future<void> _measurePing() async {
+    if (_pingInFlight) return;
+    final node = _selectedNode;
+    if (node == null || node.address.trim().isEmpty) return;
+    _pingInFlight = true;
+    final host = node.address.trim();
+    final port = node.serverPort > 0 ? node.serverPort : _defaultServerPort;
+    final sw = Stopwatch()..start();
+    int? newPing;
+    try {
+      final socket = await Socket.connect(host, port,
+          timeout: const Duration(seconds: 1));
+      sw.stop();
+      socket.destroy();
+      newPing = sw.elapsedMilliseconds;
+    } catch (_) {
+      newPing = null;
+    } finally {
+      _pingInFlight = false;
+    }
+    if (!mounted) return;
+    if (newPing != _pingMs) setState(() => _pingMs = newPing);
   }
 
   @override
@@ -134,13 +199,20 @@ class _HomePageState extends State<HomePage>
     meNotifier.removeListener(_onMeChanged);
     globalRefreshNotifier.removeListener(_onGlobalRefresh);
     _statusSub?.cancel();
+    _pingTimer?.cancel();
     super.dispose();
   }
 
   void _onSelectedServerChanged() {
     if (!mounted) return;
     final node = selectedServerNotifier.value;
-    if (node?.uuid != _selectedNode?.uuid) setState(() => _selectedNode = node);
+    if (node?.uuid != _selectedNode?.uuid) {
+      setState(() {
+        _selectedNode = node;
+        _pingMs = null; // stale until next measurement against new host
+      });
+      if (_isConnected) _measurePing();
+    }
   }
 
   void _onAuthChanged() => _loadNodes();
@@ -744,6 +816,8 @@ class _HomePageState extends State<HomePage>
                             downloadSpeed: _speedCalc.downloadSpeed,
                             uploadTotal: _fmtBytes(_status.upload),
                             downloadTotal: _fmtBytes(_status.download),
+                            uploadHist: List<double>.unmodifiable(_uploadHist),
+                            downloadHist: List<double>.unmodifiable(_downloadHist),
                           ),
                         )
                       : const SizedBox.shrink(),
@@ -828,6 +902,11 @@ class _HomePageState extends State<HomePage>
       child: ClipRRect(
         borderRadius: BorderRadius.circular(DS.radius - 1),
         child: Stack(children: [
+          // Decorative rising bubbles — only render while connected.
+          if (connected)
+            const Positioned.fill(
+              child: IgnorePointer(child: _RisingBubbles()),
+            ),
           // Card content
           Padding(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
@@ -959,6 +1038,10 @@ class _HomePageState extends State<HomePage>
                     ],
                   ),
                 ),
+                if (connected) ...[
+                  _SignalBars(pingMs: _pingMs),
+                  const SizedBox(width: 8),
+                ],
                 const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 20),
               ]),
             ),
@@ -1248,6 +1331,10 @@ class _ConnectButtonState extends State<_ConnectButton>
   late final Animation<double> _glowAnim;
   // Icon rotation when loading
   late final AnimationController _spinCtrl;
+  // Concentric pulse rings (2.4s, staggered 0/0.8/1.6s) — runs when active.
+  late final AnimationController _pulseCtrl;
+
+  bool get _ringsActive => widget.isConnected || widget.isLoading;
 
   @override
   void initState() {
@@ -1263,8 +1350,13 @@ class _ConnectButtonState extends State<_ConnectButton>
       vsync: this,
       duration: const Duration(milliseconds: 900),
     );
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    );
     if (widget.isConnected) _glowCtrl.repeat(reverse: true);
     if (widget.isLoading) _spinCtrl.repeat();
+    if (_ringsActive) _pulseCtrl.repeat();
   }
 
   @override
@@ -1284,12 +1376,21 @@ class _ConnectButtonState extends State<_ConnectButton>
         ..stop()
         ..reset();
     }
+    final wasActive = old.isConnected || old.isLoading;
+    if (_ringsActive && !wasActive) {
+      _pulseCtrl.repeat();
+    } else if (!_ringsActive && wasActive) {
+      _pulseCtrl
+        ..stop()
+        ..reset();
+    }
   }
 
   @override
   void dispose() {
     _glowCtrl.dispose();
     _spinCtrl.dispose();
+    _pulseCtrl.dispose();
     super.dispose();
   }
 
@@ -1311,70 +1412,86 @@ class _ConnectButtonState extends State<_ConnectButton>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        AnimatedBuilder(
-          animation: Listenable.merge([_glowAnim, _spinCtrl]),
-          builder: (_, child) {
-            final glowAlpha = widget.isConnected ? _glowAnim.value : 0.0;
-            return GestureDetector(
-              onTap: widget.isLoading ? null : widget.onTap,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 350),
-                width: 128,
-                height: 128,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _color,
-                  boxShadow: [
-                    BoxShadow(
-                      color: _color.withValues(alpha: 0.45),
-                      blurRadius: 40,
-                      spreadRadius: 0,
-                    ),
-                    if (widget.isConnected)
-                      BoxShadow(
-                        color: DS.emerald.withValues(alpha: glowAlpha),
-                        blurRadius: 0,
-                        spreadRadius: 18,
-                      ),
-                  ],
+        SizedBox(
+          width: 214,
+          height: 214,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Pulsing rings — only while connecting/connected.
+              if (_ringsActive)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: _PulseRings(controller: _pulseCtrl, color: _color),
+                  ),
                 ),
-                child: widget.isLoading
-                    ? RotationTransition(
-                        turns: _spinCtrl,
-                        child: const Icon(Icons.refresh_rounded,
-                            color: Colors.white, size: 44),
-                      )
-                    : AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 250),
-                        child: !widget.isConnected
-                            ? Column(
-                                key: const ValueKey('off'),
-                                mainAxisSize: MainAxisSize.min,
-                                children: const [
-                                  Icon(Icons.power_settings_new_rounded,
-                                      color: Colors.white, size: 38),
-                                  SizedBox(height: 4),
-                                  Text('Отключено',
-                                      style: TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      )),
-                                ],
-                              )
-                            : const Icon(
-                                key: ValueKey('on'),
-                                Icons.shield_rounded,
-                                color: Colors.white,
-                                size: 44,
-                              ),
+              AnimatedBuilder(
+                animation: Listenable.merge([_glowAnim, _spinCtrl]),
+                builder: (_, child) {
+                  final glowAlpha = widget.isConnected ? _glowAnim.value : 0.0;
+                  return GestureDetector(
+                    onTap: widget.isLoading ? null : widget.onTap,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 350),
+                      width: 128,
+                      height: 128,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _color,
+                        boxShadow: [
+                          BoxShadow(
+                            color: _color.withValues(alpha: 0.45),
+                            blurRadius: 40,
+                            spreadRadius: 0,
+                          ),
+                          if (widget.isConnected)
+                            BoxShadow(
+                              color: DS.emerald.withValues(alpha: glowAlpha),
+                              blurRadius: 0,
+                              spreadRadius: 18,
+                            ),
+                        ],
                       ),
+                      child: widget.isLoading
+                          ? RotationTransition(
+                              turns: _spinCtrl,
+                              child: const Icon(Icons.refresh_rounded,
+                                  color: Colors.white, size: 44),
+                            )
+                          : AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 250),
+                              child: !widget.isConnected
+                                  ? Column(
+                                      key: const ValueKey('off'),
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: const [
+                                        Icon(Icons.power_settings_new_rounded,
+                                            color: Colors.white, size: 38),
+                                        SizedBox(height: 4),
+                                        Text('Отключено',
+                                            style: TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                            )),
+                                      ],
+                                    )
+                                  : const Icon(
+                                      key: ValueKey('on'),
+                                      Icons.shield_rounded,
+                                      color: Colors.white,
+                                      size: 44,
+                                    ),
+                            ),
+                    ),
+                  );
+                },
               ),
-            );
-          },
+            ],
+          ),
         ),
-        // Достаточный отступ, чтобы свечение не наезжало на подпись
-        const SizedBox(height: 28),
+        // Hero box already carries spacing below the button — small gap is enough.
+        const SizedBox(height: 4),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 200),
           child: Text(
@@ -1390,6 +1507,150 @@ class _ConnectButtonState extends State<_ConnectButton>
       ],
     );
   }
+}
+
+// ── Pulsing concentric rings behind the connect button ──────────────────────
+// Driven by a single 2.4s repeating controller; each of the three rings is
+// phase-offset by 1/3 of the period so they emit in sequence.
+class _PulseRings extends StatelessWidget {
+  final AnimationController controller;
+  final Color color;
+  const _PulseRings({required this.controller, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (_, child) {
+        return CustomPaint(
+          painter: _PulseRingsPainter(
+            t: controller.value,
+            color: color,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PulseRingsPainter extends CustomPainter {
+  _PulseRingsPainter({required this.t, required this.color});
+  final double t; // 0..1
+  final Color color;
+
+  static const _startRadius = 64.0;   // button radius (128/2)
+  static const _endRadius   = 104.0;  // outer edge — fits inside 214px box
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    for (int i = 0; i < 3; i++) {
+      // Phase each ring 1/3 apart so emission is sequential.
+      double p = (t + i / 3) % 1.0;
+      // ease-out: faster at start, slower at end
+      final ep = 1 - (1 - p) * (1 - p);
+      final radius = _startRadius + (_endRadius - _startRadius) * ep;
+      final alpha = (1 - p) * 0.55;
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8
+        ..color = color.withValues(alpha: alpha);
+      canvas.drawCircle(center, radius, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PulseRingsPainter old) =>
+      old.t != t || old.color != color;
+}
+
+// ── Rising bubbles — atmospheric layer behind the connect button ────────────
+// 16 dots drifting upward with varied size, colour and cycle duration.
+// Mounted/unmounted by the parent based on connection state; the controller
+// runs continuously while mounted.
+class _RisingBubbles extends StatefulWidget {
+  const _RisingBubbles();
+
+  @override
+  State<_RisingBubbles> createState() => _RisingBubblesState();
+}
+
+class _Bubble {
+  final double xPercent;   // 0..1 horizontal position
+  final double size;       // diameter in px
+  final Color color;
+  final double speed;      // cycles per controller period (e.g. 0.7..1.4)
+  final double phase;      // 0..1 starting offset
+  final double maxAlpha;   // peak opacity
+  const _Bubble(this.xPercent, this.size, this.color, this.speed, this.phase, this.maxAlpha);
+}
+
+class _RisingBubblesState extends State<_RisingBubbles>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final List<_Bubble> _bubbles;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 8),
+    )..repeat();
+    // Deterministic-ish but visually scattered.
+    final rnd = math.Random(42);
+    _bubbles = List.generate(16, (i) {
+      final isCyan = rnd.nextBool();
+      return _Bubble(
+        rnd.nextDouble(),                       // x
+        3 + rnd.nextDouble() * 5,               // size 3..8
+        isCyan ? DS.cyan : DS.violet,
+        0.7 + rnd.nextDouble() * 0.8,           // speed 0.7..1.5
+        rnd.nextDouble(),                       // phase
+        0.35 + rnd.nextDouble() * 0.45,         // maxAlpha 0.35..0.8
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (_, child) => CustomPaint(
+        painter: _BubblesPainter(t: _ctrl.value, bubbles: _bubbles),
+      ),
+    );
+  }
+}
+
+class _BubblesPainter extends CustomPainter {
+  _BubblesPainter({required this.t, required this.bubbles});
+  final double t;
+  final List<_Bubble> bubbles;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final b in bubbles) {
+      final p = (t * b.speed + b.phase) % 1.0;
+      // bottom (1) → top (0), so y = size.height * (1 - p)
+      final y = size.height * (1 - p) + b.size; // a little overshoot below baseline
+      final x = size.width * b.xPercent;
+      // Fade-in/out via sin curve: 0 at edges, 1 at middle.
+      final alpha = math.sin(p * math.pi) * b.maxAlpha;
+      if (alpha <= 0.01) continue;
+      final paint = Paint()..color = b.color.withValues(alpha: alpha);
+      canvas.drawCircle(Offset(x, y), b.size / 2, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_BubblesPainter old) => old.t != t;
 }
 
 class _UserStrip extends StatelessWidget {
@@ -1495,7 +1756,7 @@ class _SubBadge extends StatelessWidget {
           // Violet = brand colour → reads as "active/ok" in this palette context.
           // Gold works as accent only against a deep-indigo background (hero card);
           // on neutral surface1 it looks like a warning — violet is unambiguous here.
-          color = DS.violet; label = 'Активна'; icon = Icons.verified_rounded;
+          color = DS.violet; label = 'Премиум'; icon = Icons.workspace_premium_rounded;
         }
       }
     } else if (sub.isExpired) {
@@ -1754,6 +2015,63 @@ class _RollingTimer extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// _SignalBars — 4-bar Wi-Fi style signal indicator driven by TCP RTT.
+// Bar count vs RTT:  ≤50 → 4 · ≤100 → 3 · ≤200 → 2 · >200 → 1 · null → 0 (all dim).
+// ─────────────────────────────────────────────────────────────────────────────
+class _SignalBars extends StatelessWidget {
+  final int? pingMs;
+  const _SignalBars({required this.pingMs});
+
+  int get _activeBars {
+    final ms = pingMs;
+    if (ms == null) return 0;
+    if (ms <= 50) return 4;
+    if (ms <= 100) return 3;
+    if (ms <= 200) return 2;
+    return 1;
+  }
+
+  Color get _color {
+    switch (_activeBars) {
+      case 4: case 3: return DS.emerald;
+      case 2: return DS.amber;
+      case 1: return DS.rose;
+      default: return DS.textMuted;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = _activeBars;
+    final color = _color;
+    const heights = [6.0, 9.0, 12.0, 15.0];
+    return SizedBox(
+      height: 16,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (int i = 0; i < 4; i++) ...[
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 280),
+              width: 3,
+              height: heights[i],
+              decoration: BoxDecoration(
+                color: i < active
+                    ? color
+                    : DS.textMuted.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(1.5),
+              ),
+            ),
+            if (i < 3) const SizedBox(width: 2),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _EmptyNodes extends StatelessWidget {
   const _EmptyNodes();
 
@@ -1774,12 +2092,16 @@ class _SpeedCardFlyIn extends StatefulWidget {
   final double downloadSpeed;
   final String uploadTotal;
   final String downloadTotal;
+  final List<double> uploadHist;
+  final List<double> downloadHist;
 
   const _SpeedCardFlyIn({
     required this.uploadSpeed,
     required this.downloadSpeed,
     required this.uploadTotal,
     required this.downloadTotal,
+    required this.uploadHist,
+    required this.downloadHist,
   });
 
   @override
@@ -1825,23 +2147,28 @@ class _SpeedCardFlyInState extends State<_SpeedCardFlyIn>
             borderRadius: BorderRadius.circular(DS.radiusSm),
             border: Border.all(color: DS.border),
           ),
-          child: Row(children: [
-            Expanded(child: _SpeedTile(
-              icon: Icons.arrow_downward_rounded,
-              color: DS.violet,
-              label: 'Загрузка',
-              speed: widget.downloadSpeed,
-              total: widget.downloadTotal,
-            )),
-            Container(width: 1, height: 36, color: DS.border),
-            Expanded(child: _SpeedTile(
-              icon: Icons.arrow_upward_rounded,
-              color: DS.emerald,
-              label: 'Отдача',
-              speed: widget.uploadSpeed,
-              total: widget.uploadTotal,
-            )),
-          ]),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: _SpeedTile(
+                icon: Icons.arrow_downward_rounded,
+                color: DS.cyan,
+                label: 'Загрузка',
+                speed: widget.downloadSpeed,
+                total: widget.downloadTotal,
+                hist: widget.downloadHist,
+              )),
+              Container(width: 1, color: DS.border),
+              Expanded(child: _SpeedTile(
+                icon: Icons.arrow_upward_rounded,
+                color: DS.violet,
+                label: 'Отдача',
+                speed: widget.uploadSpeed,
+                total: widget.uploadTotal,
+                hist: widget.uploadHist,
+              )),
+            ],
+          ),
         ),
       ),
     );
@@ -1854,10 +2181,12 @@ class _SpeedTile extends StatelessWidget {
   final double speed;
   final String total;
   final Color color;
+  final List<double> hist;
 
   const _SpeedTile({
     required this.icon, required this.label,
     required this.speed, required this.total, required this.color,
+    required this.hist,
   });
 
   String _fmt(double bps) {
@@ -1882,9 +2211,70 @@ class _SpeedTile extends StatelessWidget {
           color: color, fontSize: 18,
           fontWeight: FontWeight.w700, letterSpacing: 0.2)),
     ),
-    const SizedBox(height: 3),
+    const SizedBox(height: 6),
+    Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: _Sparkline(values: hist, color: color),
+    ),
+    const SizedBox(height: 5),
     Text(total, style: const TextStyle(color: DS.textMuted, fontSize: 11)),
   ]);
+}
+
+// ── _Sparkline — 18-bar histogram of the most recent speed samples ──────────
+// Length-aligned to the right: empty slots stay zero-height until the buffer
+// fills up. Bars use the tile's accent colour with a subtle gradient.
+class _Sparkline extends StatelessWidget {
+  final List<double> values;
+  final Color color;
+  const _Sparkline({required this.values, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    const len = _HomePageState._sparkLen;
+    // Pad on the left so newest bar is right-aligned.
+    final padded = List<double>.filled(len, 0.0);
+    final start = len - values.length;
+    for (int i = 0; i < values.length; i++) {
+      if (start + i >= 0) padded[start + i] = values[i];
+    }
+    final maxV = padded.fold<double>(1.0, (m, v) => v > m ? v : m);
+    return SizedBox(
+      height: 22,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          for (int i = 0; i < len; i++) ...[
+            Expanded(
+              child: TweenAnimationBuilder<double>(
+                tween: Tween<double>(
+                  begin: 0,
+                  end: (padded[i] / maxV).clamp(0.05, 1.0),
+                ),
+                duration: const Duration(milliseconds: 280),
+                curve: Curves.easeOutCubic,
+                builder: (_, frac, child) => FractionallySizedBox(
+                  heightFactor: frac,
+                  alignment: Alignment.bottomCenter,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [color, color.withValues(alpha: 0.4)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                      borderRadius: BorderRadius.circular(1.5),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            if (i < len - 1) const SizedBox(width: 2),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
