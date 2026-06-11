@@ -564,7 +564,7 @@ class _HomePageState extends State<HomePage>
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
-        // Detect which manual categories exist (for filter chips)
+        // ── Category detection (Обход / Безлимит) ───────────────────────────
         bool hasBypass = false, hasUnlimited = false;
         for (final n in _nodes) {
           final d = (n.description ?? '').toLowerCase();
@@ -584,137 +584,263 @@ class _HomePageState extends State<HomePage>
         } else {
           filteredManual = manual.where((n) {
             final d = (n.description ?? '').toLowerCase();
-            if (selectedCat == 'bypass')   return d.contains('белые');
+            if (selectedCat == 'bypass')    return d.contains('белые');
             if (selectedCat == 'unlimited') return d.contains('безлимит');
             return !d.contains('белые') && !d.contains('безлимит');
           }).toList();
         }
 
         final showAuto = selectedCat == null && auto.isNotEmpty && !_isPublicCatalog;
-        final int autoCount     = showAuto ? auto.length : 0;
-        final int dividerCount  = (showAuto && filteredManual.isNotEmpty) ? 1 : 0;
-        final int total         = autoCount + dividerCount + filteredManual.length;
+        // Group manual nodes by country code, preserving the upstream sort
+        // order (already alphabetical by CC) so the group sections come out
+        // in a stable order.
+        final List<({String cc, List<ServerNode> nodes})> manualGroups = [];
+        for (final n in filteredManual) {
+          final cc = n.countryCode.isEmpty ? '??' : n.countryCode.toUpperCase();
+          final existing = manualGroups.where((g) => g.cc == cc).toList();
+          if (existing.isEmpty) {
+            manualGroups.add((cc: cc, nodes: [n]));
+          } else {
+            existing.first.nodes.add(n);
+          }
+        }
+        final totalNodes = (showAuto ? auto.length : 0) + filteredManual.length;
 
-        // ── Tile builder ──────────────────────────────────────────────────────
+        // ── Card-style server tile ──────────────────────────────────────────
         Widget buildTile(ServerNode node, {required bool isAutoNode}) {
-          final isSel    = _selectedNode?.uuid == node.uuid;
-          final locked   = _isPublicCatalog || node.isDisabled || node.link == null;
-          final nameColor = isSel ? DS.violet : DS.textPrimary;
+          final isSel  = _selectedNode?.uuid == node.uuid;
+          final locked = _isPublicCatalog || node.isDisabled || node.link == null;
+          final accent = isAutoNode ? DS.indigoLight : DS.violet;
 
-          return Material(
-            color: isSel
-                ? (isAutoNode
-                    ? DS.indigoLight.withValues(alpha: 0.09)
-                    : DS.violet.withValues(alpha: 0.08))
-                : Colors.transparent,
-            child: InkWell(
-              onTap: () async {
-                if (locked) {
-                  Navigator.pop(ctx);
-                  if (context.mounted) {
-                    authStateNotifier.value.isLoggedIn
-                        ? widget.onGoToPremium?.call()
-                        : await showAuthBottomSheet(context);
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(DS.radiusSm),
+                onTap: () async {
+                  if (locked) {
+                    Navigator.pop(ctx);
+                    if (context.mounted) {
+                      authStateNotifier.value.isLoggedIn
+                          ? widget.onGoToPremium?.call()
+                          : await showAuthBottomSheet(context);
+                    }
+                    return;
                   }
-                  return;
-                }
-                HapticFeedback.selectionClick();
-                setState(() => _selectedNode = node);
-                selectedServerNotifier.value = node;
-                final p = await SharedPreferences.getInstance();
-                await p.setString('selected_node_uuid', node.uuid);
-                if (ctx.mounted) Navigator.pop(ctx);
-              },
-              splashColor: (isAutoNode ? DS.indigoLight : DS.violet)
-                  .withValues(alpha: 0.08),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-                child: Row(children: [
-                  // Flag or auto icon
-                  buildServerIcon(node, width: 36, height: 28, radius: 8),
-                  const SizedBox(width: 14),
-                  // Name + protocol
-                  Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(node.name,
+                  HapticFeedback.selectionClick();
+                  setState(() => _selectedNode = node);
+                  selectedServerNotifier.value = node;
+                  final p = await SharedPreferences.getInstance();
+                  await p.setString('selected_node_uuid', node.uuid);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                splashColor: accent.withValues(alpha: 0.10),
+                highlightColor: accent.withValues(alpha: 0.05),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isSel
+                        ? accent.withValues(alpha: 0.10)
+                        : DS.surface2,
+                    borderRadius: BorderRadius.circular(DS.radiusSm),
+                    border: Border.all(
+                      color: isSel
+                          ? accent.withValues(alpha: 0.55)
+                          : DS.border,
+                      width: isSel ? 1.5 : 1.0,
+                    ),
+                  ),
+                  child: Row(children: [
+                    buildServerIcon(node, width: 36, height: 28, radius: 8),
+                    const SizedBox(width: 14),
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          node.name,
                           style: TextStyle(
                               fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              color: nameColor),
-                          overflow: TextOverflow.ellipsis),
-                      if ((node.protocol ?? '').isNotEmpty)
-                        Text(
-                          isAutoNode ? 'Авто-выбор' : node.protocol!.toUpperCase(),
-                          style: TextStyle(
-                              color: isAutoNode
-                                  ? DS.indigoLight.withValues(alpha: 0.80)
-                                  : DS.textSecondary,
-                              fontSize: 12),
+                              fontSize: 14.5,
+                              color: isSel ? accent : DS.textPrimary),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                    ],
-                  )),
-                  // Trailing
-                  if (isSel)
-                    Icon(Icons.check_circle_rounded,
-                        color: isAutoNode ? DS.indigoLight : DS.violet,
-                        size: 20)
-                  else if (locked)
-                    const Icon(Icons.lock_outline_rounded,
-                        size: 16, color: DS.textMuted),
-                ]),
+                        const SizedBox(height: 2),
+                        Row(children: [
+                          if ((node.protocol ?? '').isNotEmpty)
+                            Text(
+                              isAutoNode
+                                  ? 'Авто-выбор'
+                                  : node.protocol!.toUpperCase(),
+                              style: TextStyle(
+                                  color: isAutoNode
+                                      ? DS.indigoLight.withValues(alpha: 0.8)
+                                      : DS.textMuted,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.4),
+                            ),
+                          if (locked) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: DS.amber.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(PhosphorIconsBold.lock,
+                                      size: 10, color: DS.amber),
+                                  const SizedBox(width: 3),
+                                  const Text('Подписка',
+                                      style: TextStyle(
+                                        color: DS.amber,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      )),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ]),
+                      ],
+                    )),
+                    const SizedBox(width: 8),
+                    // Trailing — selected → check pill; locked → lock; else empty.
+                    if (isSel)
+                      Container(
+                        width: 26, height: 26,
+                        decoration: BoxDecoration(
+                          color: accent,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(PhosphorIconsBold.check,
+                            color: Colors.white, size: 14),
+                      )
+                    else if (locked)
+                      Icon(PhosphorIconsBold.lock,
+                          size: 16, color: DS.textMuted),
+                  ]),
+                ),
               ),
             ),
           );
         }
 
-        // ── Section divider row ───────────────────────────────────────────────
-        Widget buildManualDivider() => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-          child: Row(children: [
-            Expanded(child: Container(height: 1, color: DS.border)),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                'СЕРВЕРЫ',
-                style: TextStyle(
-                  color: DS.textMuted.withValues(alpha: 0.70),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.4,
+        // ── Country group header — for manual node sections ─────────────────
+        Widget groupHeader(String cc, int count) => Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+              child: Row(children: [
+                buildCountryFlagIcon(cc, width: 22, height: 16, radius: 3),
+                const SizedBox(width: 10),
+                Text(
+                  countryNameForCode(cc),
+                  style: const TextStyle(
+                    color: DS.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6,
+                  ),
                 ),
-              ),
-            ),
-            Expanded(child: Container(height: 1, color: DS.border)),
-          ]),
-        );
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: DS.surface2,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: DS.border),
+                  ),
+                  child: Text('$count',
+                      style: const TextStyle(
+                          color: DS.textMuted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ]),
+            );
+
+        // Auto section header (only when shown)
+        Widget autoHeader() => Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 6),
+              child: Row(children: [
+                Icon(PhosphorIconsFill.lightning,
+                    size: 14, color: DS.indigoLight),
+                const SizedBox(width: 6),
+                const Text('АВТОВЫБОР',
+                    style: TextStyle(
+                      color: DS.indigoLight,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.3,
+                    )),
+              ]),
+            );
+
+        // Build a flat list of section widgets (header + tiles…).
+        final List<Widget> items = [];
+        if (showAuto) {
+          items.add(autoHeader());
+          for (final n in auto) {
+            items.add(buildTile(n, isAutoNode: true));
+          }
+        }
+        for (final g in manualGroups) {
+          items.add(groupHeader(g.cc, g.nodes.length));
+          for (final n in g.nodes) {
+            items.add(buildTile(n, isAutoNode: false));
+          }
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         return DraggableScrollableSheet(
           expand: false,
-          initialChildSize: 0.6,
-          maxChildSize: 0.92,
-          minChildSize: 0.3,
+          initialChildSize: 0.65,
+          maxChildSize: 0.94,
+          minChildSize: 0.4,
           builder: (_, scrollCtrl) => Column(children: [
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Container(
-              width: 40, height: 4,
+              width: 38, height: 4,
               decoration: BoxDecoration(
                   color: DS.border, borderRadius: BorderRadius.circular(2)),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
 
-            // Sheet header
+            // Header: title + count badge + refresh
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(children: [
-                const Expanded(child: Text('Выбрать сервер', style: TextStyle(
-                    color: DS.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700))),
+                const Text('Выбрать сервер',
+                    style: TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(width: 10),
+                if (totalNodes > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: DS.violet.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text('$totalNodes',
+                        style: const TextStyle(
+                            color: DS.violet,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                const Spacer(),
                 VpnIconBtn(
                   loading: _isLoadingNodes,
-                  icon: Icons.refresh_rounded,
+                  icon: PhosphorIconsBold.arrowsClockwise,
                   onTap: () async {
                     setSheet(() {});
                     await _loadNodes();
@@ -727,23 +853,23 @@ class _HomePageState extends State<HomePage>
             // Public catalog banner
             if (_isPublicCatalog)
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                 child: VpnInfoBanner(
                   color: DS.amber,
                   text: 'Публичный каталог. Для подключения нужна подписка.',
                 ),
               ),
 
-            // Category filter chips (manual categories only)
+            // Category filter chips
             if (showCats)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(children: [
                     for (final e in <(String?, String)>[
                       (null, 'Все'),
-                      if (hasBypass)   ('bypass', 'Обход'),
+                      if (hasBypass)    ('bypass', 'Обход'),
                       if (hasUnlimited) ('unlimited', 'Безлимит'),
                       ('other', 'Прочее'),
                     ])
@@ -759,48 +885,25 @@ class _HomePageState extends State<HomePage>
                 ),
               ),
 
-            const SizedBox(height: 10),
-            Divider(height: 1, color: DS.border),
+            const SizedBox(height: 8),
 
-            // Server list
+            // Server list — sectioned, card-style tiles.
             Expanded(
               child: _nodes.isEmpty
                   ? Center(
                       child: _isLoadingNodes
                           ? const CircularProgressIndicator(color: DS.violet)
                           : const _EmptyNodes())
-                  : total == 0
+                  : items.isEmpty
                       ? const Center(
                           child: Text('Нет серверов в этой категории',
-                              style: TextStyle(color: DS.textSecondary)))
-                      : ListView.separated(
+                              style:
+                                  TextStyle(color: DS.textSecondary)))
+                      : ListView.builder(
                           controller: scrollCtrl,
-                          padding: const EdgeInsets.only(bottom: 16),
-                          itemCount: total,
-                          separatorBuilder: (_, i) {
-                            // No hairline separator adjacent to the section
-                            // divider row — it provides its own spacing.
-                            if (dividerCount > 0 &&
-                                (i == autoCount - 1 || i == autoCount)) {
-                              return const SizedBox.shrink();
-                            }
-                            return Divider(
-                                height: 1,
-                                indent: 16,
-                                endIndent: 16,
-                                color: DS.border);
-                          },
-                          itemBuilder: (_, i) {
-                            if (showAuto && i < autoCount) {
-                              return buildTile(auto[i], isAutoNode: true);
-                            }
-                            if (dividerCount > 0 && i == autoCount) {
-                              return buildManualDivider();
-                            }
-                            final mi = i - autoCount - dividerCount;
-                            return buildTile(filteredManual[mi],
-                                isAutoNode: false);
-                          },
+                          padding: const EdgeInsets.only(top: 4, bottom: 20),
+                          itemCount: items.length,
+                          itemBuilder: (_, i) => items[i],
                         ),
             ),
           ]),

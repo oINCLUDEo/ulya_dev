@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
@@ -740,24 +741,25 @@ class _NodeTileState extends State<_NodeTile>
                   ]),
                 )
               else
-                GestureDetector(
-                  onTap: (ping == -2 || node.link == null) ? null : () {
+                _QualityBadge(
+                  ping: ping,
+                  isAvailable: node.isAvailable,
+                  noLink: node.link == null,
+                  onTap: () {
+                    if (ping == -2 || node.link == null) return;
                     HapticFeedback.selectionClick();
                     widget.onPing?.call();
                   },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: _pingColor(ping).withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(DS.radiusXs),
-                      border: Border.all(color: _pingColor(ping).withValues(alpha: 0.25)),
-                    ),
-                    child: ping == -2
-                        ? SizedBox(width: 14, height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: _pingColor(ping)))
-                        : Text(_pingLabel(ping), style: TextStyle(
-                        color: _pingColor(ping), fontSize: 11, fontWeight: FontWeight.w700)),
-                  ),
+                  onLongPress: () {
+                    if (ping == null || ping < 0) return;
+                    HapticFeedback.selectionClick();
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text('Пинг: $ping мс'),
+                      duration: const Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                      backgroundColor: DS.surface2,
+                    ));
+                  },
                 ),
             ]),
           ),
@@ -815,16 +817,131 @@ class _NodeTileState extends State<_NodeTile>
     );
   }
 
-  Color _pingColor(int? p) {
-    if (p == null) return DS.textMuted;
-    if (p == -2) return DS.amber;
-    if (p < 0) return DS.textMuted;
-    if (p < 100) return DS.emerald;
-    if (p < 300) return DS.amber;
-    return DS.rose;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _QualityBadge — replaces the raw "120ms" pill with a human-readable quality
+// label (Отлично / Хорошо / Слабо / Недоступен).
+//   * Tap   — runs (or re-runs) the TCP ping for this server.
+//   * Hold  — shows the actual ping in ms via a transient snackbar; this is
+//             the "by request" disclosure of the underlying number.
+//   * No link / disabled → fixed "Недоступен" rose state, no ping triggered.
+// ─────────────────────────────────────────────────────────────────────────────
+class _QualityBadge extends StatelessWidget {
+  final int? ping;
+  final bool isAvailable;
+  final bool noLink;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _QualityBadge({
+    required this.ping,
+    required this.isAvailable,
+    required this.noLink,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  ({String label, Color color, IconData? icon, bool loading}) _state() {
+    // Server we know is dead → fixed unavailable state, no retry hint.
+    if (noLink || !isAvailable) {
+      return (
+        label: 'Недоступен',
+        color: DS.rose,
+        icon: PhosphorIconsBold.warningCircle,
+        loading: false,
+      );
+    }
+    // ping == -2 — measurement in flight.
+    if (ping == -2) {
+      return (label: '…', color: DS.amber, icon: null, loading: true);
+    }
+    // ping == -1 — measurement failed (timeout / unreachable).
+    if (ping != null && ping! < 0) {
+      return (
+        label: 'Нет связи',
+        color: DS.rose,
+        icon: PhosphorIconsBold.wifiSlash,
+        loading: false,
+      );
+    }
+    // ping == null — never measured. Encourage the tap.
+    if (ping == null) {
+      return (
+        label: 'Проверить',
+        color: DS.violet,
+        icon: PhosphorIconsBold.wifiHigh,
+        loading: false,
+      );
+    }
+    // Real ping value → bucket into quality tiers.
+    final p = ping!;
+    if (p < 80) {
+      return (
+        label: 'Отлично',
+        color: DS.emerald,
+        icon: PhosphorIconsFill.wifiHigh,
+        loading: false,
+      );
+    }
+    if (p < 180) {
+      return (
+        label: 'Хорошо',
+        color: DS.emerald,
+        icon: PhosphorIconsBold.wifiHigh,
+        loading: false,
+      );
+    }
+    if (p < 320) {
+      return (
+        label: 'Слабо',
+        color: DS.amber,
+        icon: PhosphorIconsBold.wifiMedium,
+        loading: false,
+      );
+    }
+    return (
+      label: 'Очень слабо',
+      color: DS.rose,
+      icon: PhosphorIconsBold.wifiLow,
+      loading: false,
+    );
   }
 
-  String _pingLabel(int? p) => (p == null || p < 0) ? '—' : '${p}ms';
+  @override
+  Widget build(BuildContext context) {
+    final s = _state();
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          color: s.color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(DS.radiusXs),
+          border: Border.all(color: s.color.withValues(alpha: 0.30)),
+        ),
+        child: s.loading
+            ? SizedBox(
+                width: 14, height: 14,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: s.color),
+              )
+            : Row(mainAxisSize: MainAxisSize.min, children: [
+                if (s.icon != null) ...[
+                  Icon(s.icon, size: 11, color: s.color),
+                  const SizedBox(width: 4),
+                ],
+                Text(s.label,
+                    style: TextStyle(
+                        color: s.color,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700)),
+              ]),
+      ),
+    );
+  }
 }
 
 class _ProtoBadge extends StatelessWidget {

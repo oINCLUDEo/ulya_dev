@@ -1216,18 +1216,19 @@ class _BottomBar extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // _MorphingBlobs — slow, drifting background for the onboarding pager.
-// Renders 4 large blurred radial blobs in brand colours that move along
-// independent Lissajous trajectories and pulse in radius. The result is a
-// "lava-lamp"-style live gradient that never quite repeats.
+// Two large soft blobs in the brand violet + cyan, drifting along independent
+// Lissajous paths and morphing their outline so they actually *change shape*
+// (instead of just pulsing a perfect circle's radius).
 //
 // Implementation notes:
-//   * A monotonic Ticker drives `_t` (seconds). Using a non-looping clock
-//     means the per-blob `sin(t*ωx + φx)` terms blend smoothly forever — no
-//     wraparound seams.
-//   * Drawing is done in a CustomPainter with `MaskFilter.blur` on each
-//     paint, which is GPU-cheap (a single offscreen blur per blob) and looks
-//     identical to a Backdrop blur for this use case.
-//   * Pointer events are blocked by the parent IgnorePointer.
+//   * Monotonic Ticker → continuous time `_t` (seconds). Speeds tuned for a
+//     ~90-second cycle so the motion reads as "slow drift", not animation.
+//   * The blob outline is a 64-vertex path whose polar radius is modulated
+//     by two low-frequency sine harmonics — that's what gives the soft
+//     "perekat" / liquid morph feel rather than a breathing circle.
+//   * Each blob is filled with a radial gradient and a 40px MaskFilter blur
+//     so the deformed edges blend into the dark wash beneath.
+//   * Parent IgnorePointer ensures the layer never eats user touches.
 // ─────────────────────────────────────────────────────────────────────────────
 class _MorphingBlobs extends StatefulWidget {
   const _MorphingBlobs();
@@ -1242,42 +1243,33 @@ class _MorphingBlobsState extends State<_MorphingBlobs>
   double _t = 0;
   Duration _last = Duration.zero;
 
-  // Each blob's trajectory is `center + (Ax*sin(ωx*t + φx), Ay*cos(ωy*t + φy))`
-  // and its radius pulses as `r0 + Ar*sin(ωr*t + φr)`. All parameters are
-  // expressed as fractions of the canvas extent so the layout is resolution
-  // independent.
+  // Two blobs — that's it. One violet (warm-toned brand), one cyan (cool
+  // accent). All angular speeds expressed in rad/s; values below correspond
+  // to roughly 60–120 s for a full cycle of any individual term.
   static final List<_BlobSpec> _specs = [
     _BlobSpec(
       color: DS.violet,
-      cx: 0.25, cy: 0.30,
+      cx: 0.28, cy: 0.30,
       ax: 0.18, ay: 0.15,
-      wx: 0.22, wy: 0.17,
+      wx: 0.08, wy: 0.06,
       px: 0.0, py: 1.1,
-      r0: 0.32, ar: 0.06, wr: 0.13, pr: 0.4,
+      r0: 0.42, ar: 0.06, wr: 0.05, pr: 0.4,
+      morphAmp1: 0.10, morphAmp2: 0.06,
+      morphK1: 3, morphK2: 5,
+      morphW1: 0.04, morphW2: 0.07,
+      morphP1: 0.0, morphP2: 1.7,
     ),
     _BlobSpec(
       color: DS.cyan,
-      cx: 0.78, cy: 0.22,
-      ax: 0.16, ay: 0.12,
-      wx: 0.18, wy: 0.24,
+      cx: 0.74, cy: 0.72,
+      ax: 0.16, ay: 0.14,
+      wx: 0.07, wy: 0.09,
       px: 2.1, py: 0.3,
-      r0: 0.26, ar: 0.05, wr: 0.16, pr: 1.7,
-    ),
-    _BlobSpec(
-      color: DS.emerald,
-      cx: 0.72, cy: 0.78,
-      ax: 0.20, ay: 0.16,
-      wx: 0.14, wy: 0.21,
-      px: 3.5, py: 2.8,
-      r0: 0.30, ar: 0.07, wr: 0.11, pr: 2.9,
-    ),
-    _BlobSpec(
-      color: DS.gold,
-      cx: 0.22, cy: 0.80,
-      ax: 0.14, ay: 0.13,
-      wx: 0.26, wy: 0.19,
-      px: 1.5, py: 4.2,
-      r0: 0.22, ar: 0.05, wr: 0.18, pr: 5.6,
+      r0: 0.38, ar: 0.05, wr: 0.06, pr: 2.4,
+      morphAmp1: 0.09, morphAmp2: 0.07,
+      morphK1: 4, morphK2: 6,
+      morphW1: 0.05, morphW2: 0.08,
+      morphP1: 1.2, morphP2: 3.4,
     ),
   ];
 
@@ -1308,12 +1300,18 @@ class _MorphingBlobsState extends State<_MorphingBlobs>
 
 class _BlobSpec {
   final Color color;
-  final double cx, cy;     // base centre, fraction of width/height
+  final double cx, cy;     // base centre, fraction of canvas size
   final double ax, ay;     // drift amplitude, fraction
   final double wx, wy;     // drift angular speed (rad/s)
   final double px, py;     // drift phase offset (rad)
-  final double r0, ar;     // radius (base + pulse), fraction of shortest side
-  final double wr, pr;     // radius pulse speed/phase
+  final double r0, ar;     // mean radius + breathe amplitude, frac of shortest
+  final double wr, pr;     // breathe speed/phase
+  // ── Outline morph (the "lava-lamp" deformation) ─────────────────────────
+  // r(θ,t) = r * (1 + amp1*sin(k1·θ + p1 + w1·t) + amp2*sin(k2·θ + p2 + w2·t))
+  final double morphAmp1, morphAmp2;   // peak relative deformation
+  final int    morphK1, morphK2;       // angular harmonic — how many "lobes"
+  final double morphW1, morphW2;       // temporal speed of each harmonic
+  final double morphP1, morphP2;       // temporal phase offset
   const _BlobSpec({
     required this.color,
     required this.cx, required this.cy,
@@ -1322,6 +1320,10 @@ class _BlobSpec {
     required this.px, required this.py,
     required this.r0, required this.ar,
     required this.wr, required this.pr,
+    required this.morphAmp1, required this.morphAmp2,
+    required this.morphK1, required this.morphK2,
+    required this.morphW1, required this.morphW2,
+    required this.morphP1, required this.morphP2,
   });
 }
 
@@ -1329,6 +1331,7 @@ class _BlobsPainter extends CustomPainter {
   _BlobsPainter({required this.t, required this.specs});
   final double t;
   final List<_BlobSpec> specs;
+  static const int _samples = 64; // vertices per blob outline
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1343,23 +1346,45 @@ class _BlobsPainter extends CustomPainter {
     canvas.drawRect(Offset.zero & size, wash);
 
     for (final s in specs) {
-      final cx = size.width * (s.cx + s.ax * math.sin(s.wx * t + s.px));
+      final cx = size.width  * (s.cx + s.ax * math.sin(s.wx * t + s.px));
       final cy = size.height * (s.cy + s.ay * math.cos(s.wy * t + s.py));
-      final r = shortest * (s.r0 + s.ar * math.sin(s.wr * t + s.pr));
-      // Two-stop radial gradient: solid-ish core fading to transparent — the
-      // MaskFilter on top smears the edge to a soft cloud.
+      final baseR = shortest * (s.r0 + s.ar * math.sin(s.wr * t + s.pr));
+      final center = Offset(cx, cy);
+
+      // Build the deformed outline. We multiply the mean radius by a sum of
+      // two slow sines parameterised in (angle, time) — the result is a soft
+      // amoeboid shape that visibly *changes form* over time.
+      final path = Path();
+      for (int i = 0; i <= _samples; i++) {
+        final theta = 2 * math.pi * i / _samples;
+        final r = baseR *
+            (1 +
+                s.morphAmp1 * math.sin(s.morphK1 * theta + s.morphP1 + s.morphW1 * t) +
+                s.morphAmp2 * math.sin(s.morphK2 * theta + s.morphP2 + s.morphW2 * t));
+        final x = center.dx + r * math.cos(theta);
+        final y = center.dy + r * math.sin(theta);
+        if (i == 0) {
+          path.moveTo(x, y);
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+      path.close();
+
+      // Radial fill — solid core fading to transparent at ~1.1× baseR so the
+      // morph deformation lands inside the gradient stops and looks natural.
       final paint = Paint()
         ..shader = ui.Gradient.radial(
-          Offset(cx, cy),
-          r,
+          center,
+          baseR * 1.15,
           [
-            s.color.withValues(alpha: 0.32),
+            s.color.withValues(alpha: 0.36),
             s.color.withValues(alpha: 0.0),
           ],
           const [0.0, 1.0],
         )
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 32);
-      canvas.drawCircle(Offset(cx, cy), r, paint);
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 40);
+      canvas.drawPath(path, paint);
     }
   }
 
