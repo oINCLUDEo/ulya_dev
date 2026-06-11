@@ -1,4 +1,4 @@
-package com.example.dev_vpn
+package space.ulya.vpn
 
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
