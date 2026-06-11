@@ -4,7 +4,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
@@ -87,6 +86,9 @@ class _ServersPageState extends State<ServersPage> {
         _loading = false; _isPublicCatalog = true; _nodes = nodes;
         _pings.removeWhere((k, _) => !uuids.contains(k));
       });
+      // Pre-warm the signal indicator: kick off a background sweep so the
+      // bars are populated by the time the user has finished scrolling.
+      if (nodes.isNotEmpty) _tcpPingAll();
       return;
     }
     final nodes = await RemnawaveService.fetchNodes();
@@ -96,6 +98,7 @@ class _ServersPageState extends State<ServersPage> {
       _nodes = nodes; _loading = false;
       _pings.removeWhere((k, _) => !uuids.contains(k));
     });
+    if (nodes.isNotEmpty) _tcpPingAll();
   }
 
   // ── Grouping ───────────────────────────────────────────────────────────────
@@ -726,22 +729,12 @@ class _NodeTileState extends State<_NodeTile>
                         border: Border.all(color: DS.border)),
                     child: const Icon(Icons.lock_outline_rounded, size: 14, color: DS.textMuted))
               else if (node.protocol == 'auto')
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: DS.indigoLight.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(DS.radiusXs),
-                    border: Border.all(color: DS.indigoLight.withValues(alpha: 0.25)),
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.device_hub_rounded, size: 10, color: DS.indigoLight),
-                    const SizedBox(width: 4),
-                    const Text('Авто', style: TextStyle(
-                        color: DS.indigoLight, fontSize: 11, fontWeight: FontWeight.w700)),
-                  ]),
-                )
+                // Auto-routed host: no single address to probe, so just paint
+                // a healthy indigo bars badge — visually consistent with
+                // every other server, plus a tooltip clarifying it's "Авто".
+                const _AutoQualityBars()
               else
-                _QualityBadge(
+                _QualityBars(
                   ping: ping,
                   isAvailable: node.isAvailable,
                   noLink: node.link == null,
@@ -819,22 +812,76 @@ class _NodeTileState extends State<_NodeTile>
 
 }
 
+// ─── Auto-routed node indicator ──────────────────────────────────────────────
+// Pinged-bar lookalike showing four full indigo bars — same dimensions as
+// _QualityBars so auto and manual rows line up perfectly in the trailing slot.
+// No interaction (auto hosts have no single address to probe), just a tooltip
+// hinting it's a balanced/auto host.
+class _AutoQualityBars extends StatelessWidget {
+  const _AutoQualityBars();
+
+  @override
+  Widget build(BuildContext context) {
+    const heights = [5.0, 7.5, 10.0, 12.5];
+    return Tooltip(
+      message: 'Авто-балансировка',
+      preferBelow: false,
+      child: Container(
+        width: 34, height: 24,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: DS.indigoLight.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(DS.radiusXs),
+          border: Border.all(color: DS.indigoLight.withValues(alpha: 0.28)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (int i = 0; i < 4; i++) ...[
+              Container(
+                width: 2.5,
+                height: heights[i],
+                decoration: BoxDecoration(
+                  color: DS.indigoLight,
+                  borderRadius: BorderRadius.circular(1.5),
+                ),
+              ),
+              if (i < 3) const SizedBox(width: 2),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// _QualityBadge — replaces the raw "120ms" pill with a human-readable quality
-// label (Отлично / Хорошо / Слабо / Недоступен).
-//   * Tap   — runs (or re-runs) the TCP ping for this server.
-//   * Hold  — shows the actual ping in ms via a transient snackbar; this is
-//             the "by request" disclosure of the underlying number.
-//   * No link / disabled → fixed "Недоступен" rose state, no ping triggered.
+// _QualityBars — 4-bar Wi-Fi style indicator for the servers list.
+//
+// Quality buckets:
+//   noLink / !isAvailable → 0 bars, rose (server unreachable)
+//   ping == -2            → animated amber scan (measuring)
+//   ping ∈ (-∞, 0)        → 1 rose bar (probe failed)
+//   ping == null          → all bars dim violet (never measured; tap to probe)
+//   ping <  80            → 4 emerald
+//   ping < 180            → 3 emerald
+//   ping < 320            → 2 amber
+//   ping ≥ 320            → 1 rose
+//
+// Interaction:
+//   tap        → run / re-run probe.
+//   long-press → snackbar with the raw "Пинг: N мс" (parent supplies handler).
+//   tooltip    → same number on hover/long-touch.
 // ─────────────────────────────────────────────────────────────────────────────
-class _QualityBadge extends StatelessWidget {
+class _QualityBars extends StatefulWidget {
   final int? ping;
   final bool isAvailable;
   final bool noLink;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
-  const _QualityBadge({
+  const _QualityBars({
     required this.ping,
     required this.isAvailable,
     required this.noLink,
@@ -842,72 +889,115 @@ class _QualityBadge extends StatelessWidget {
     required this.onLongPress,
   });
 
-  // Returns the glyph + accent colour for the current state. Label intentionally
-  // dropped — quality reads off icon + colour alone. The raw ping number is
-  // accessed by long-pressing the badge (see onLongPress).
-  ({Color color, IconData icon, bool loading, String tooltip}) _state() {
-    if (noLink || !isAvailable) {
-      return (
-        color: DS.rose,
-        icon: PhosphorIconsBold.warningCircle,
-        loading: false,
-        tooltip: 'Сервер недоступен',
-      );
+  @override
+  State<_QualityBars> createState() => _QualityBarsState();
+}
+
+class _QualityBarsState extends State<_QualityBars>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _scanCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _scanCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    if (widget.ping == -2) _scanCtrl.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _QualityBars old) {
+    super.didUpdateWidget(old);
+    final wasScanning = old.ping == -2;
+    final isScanning = widget.ping == -2;
+    if (isScanning && !wasScanning) {
+      _scanCtrl.repeat();
+    } else if (!isScanning && wasScanning) {
+      _scanCtrl..stop()..reset();
     }
-    if (ping == -2) {
-      return (
-        color: DS.amber,
-        icon: PhosphorIconsBold.wifiHigh,
-        loading: true,
-        tooltip: 'Проверяем…',
-      );
+  }
+
+  @override
+  void dispose() {
+    _scanCtrl.dispose();
+    super.dispose();
+  }
+
+  ({int active, Color color, String tooltip, bool loading}) _state() {
+    final p = widget.ping;
+    if (widget.noLink || !widget.isAvailable) {
+      return (active: 0, color: DS.rose, tooltip: 'Сервер недоступен', loading: false);
     }
-    if (ping != null && ping! < 0) {
-      return (
-        color: DS.rose,
-        icon: PhosphorIconsBold.wifiSlash,
-        loading: false,
-        tooltip: 'Нет связи. Нажмите, чтобы повторить.',
-      );
+    if (p == -2) {
+      return (active: 0, color: DS.amber, tooltip: 'Проверяем…', loading: true);
     }
-    if (ping == null) {
-      return (
-        color: DS.violet,
-        icon: PhosphorIconsBold.wifiHigh,
-        loading: false,
-        tooltip: 'Нажмите, чтобы проверить. Удерживайте для пинга.',
-      );
+    if (p != null && p < 0) {
+      return (active: 1, color: DS.rose, tooltip: 'Нет связи. Нажмите, чтобы повторить.', loading: false);
     }
-    final p = ping!;
-    if (p < 80) {
-      return (
-        color: DS.emerald,
-        icon: PhosphorIconsFill.wifiHigh,
-        loading: false,
-        tooltip: '$p мс',
-      );
+    if (p == null) {
+      return (active: 0, color: DS.violet, tooltip: 'Нажмите, чтобы проверить', loading: false);
     }
-    if (p < 180) {
-      return (
-        color: DS.emerald,
-        icon: PhosphorIconsBold.wifiHigh,
-        loading: false,
-        tooltip: '$p мс',
-      );
-    }
-    if (p < 320) {
-      return (
-        color: DS.amber,
-        icon: PhosphorIconsBold.wifiMedium,
-        loading: false,
-        tooltip: '$p мс',
-      );
-    }
-    return (
-      color: DS.rose,
-      icon: PhosphorIconsBold.wifiLow,
-      loading: false,
-      tooltip: '$p мс',
+    if (p < 80)   return (active: 4, color: DS.emerald, tooltip: '$p мс', loading: false);
+    if (p < 180)  return (active: 3, color: DS.emerald, tooltip: '$p мс', loading: false);
+    if (p < 320)  return (active: 2, color: DS.amber,   tooltip: '$p мс', loading: false);
+    return         (active: 1, color: DS.rose,    tooltip: '$p мс', loading: false);
+  }
+
+  static const _heights = [5.0, 7.5, 10.0, 12.5];
+
+  Widget _scanBars() {
+    return AnimatedBuilder(
+      animation: _scanCtrl,
+      builder: (_, child) {
+        final t = _scanCtrl.value * 4;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (int i = 0; i < 4; i++) ...[
+              Container(
+                width: 2.5,
+                height: _heights[i],
+                decoration: BoxDecoration(
+                  color: DS.amber.withValues(alpha: _scanAlpha(i, t)),
+                  borderRadius: BorderRadius.circular(1.5),
+                ),
+              ),
+              if (i < 3) const SizedBox(width: 2),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  double _scanAlpha(int i, double t) {
+    final d = (i - t).abs();
+    final wrapped = math.min(d, 4 - d);
+    final n = (1 - wrapped / 2).clamp(0.0, 1.0);
+    return 0.18 + 0.67 * n;
+  }
+
+  Widget _staticBars(int active, Color color) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < 4; i++) ...[
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 240),
+            width: 2.5,
+            height: _heights[i],
+            decoration: BoxDecoration(
+              color: i < active ? color : DS.textMuted.withValues(alpha: 0.25),
+              borderRadius: BorderRadius.circular(1.5),
+            ),
+          ),
+          if (i < 3) const SizedBox(width: 2),
+        ],
+      ],
     );
   }
 
@@ -918,24 +1008,18 @@ class _QualityBadge extends StatelessWidget {
       message: s.tooltip,
       preferBelow: false,
       child: GestureDetector(
-        onTap: onTap,
-        onLongPress: onLongPress,
+        onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          width: 32, height: 28,
+          width: 34, height: 24,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: s.color.withValues(alpha: 0.12),
+            color: s.color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(DS.radiusXs),
-            border: Border.all(color: s.color.withValues(alpha: 0.32)),
+            border: Border.all(color: s.color.withValues(alpha: 0.28)),
           ),
-          child: s.loading
-              ? SizedBox(
-                  width: 14, height: 14,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: s.color),
-                )
-              : Icon(s.icon, size: 15, color: s.color),
+          child: s.loading ? _scanBars() : _staticBars(s.active, s.color),
         ),
       ),
     );

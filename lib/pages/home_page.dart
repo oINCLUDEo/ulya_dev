@@ -419,7 +419,10 @@ class _HomePageState extends State<HomePage>
     });
     // Kick off ping right after we've resolved the default selected node, so
     // the signal bars are filled in before the user even touches the picker.
-    if (_selectedNode != null && _pingTimer == null) _restartPingTimer();
+    // Restart unconditionally — if the previous load left a stale timer (e.g.
+    // for a node that no longer exists or had no pingable address), the new
+    // one will measure against the current selection.
+    if (_selectedNode != null) _restartPingTimer();
     // If a load was requested while we were busy, run it now once.
     if (_pendingLoad && mounted) {
       _pendingLoad = false;
@@ -1271,7 +1274,11 @@ class _HomePageState extends State<HomePage>
                   ),
                 ),
                 if (_selectedNode != null) ...[
-                  _SignalBars(pingMs: _pingMs, measuring: _pingMeasuring),
+                  _SignalBars(
+                    pingMs: _pingMs,
+                    measuring: _pingMeasuring,
+                    isAuto: _selectedNode?.protocol == 'auto',
+                  ),
                   const SizedBox(width: 8),
                 ],
                 const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 20),
@@ -2571,7 +2578,15 @@ class _RollingTimer extends StatelessWidget {
 class _SignalBars extends StatefulWidget {
   final int? pingMs;
   final bool measuring;
-  const _SignalBars({required this.pingMs, this.measuring = false});
+  /// `true` when the selected node is an auto / balanced host — those don't
+  /// have a single address to probe, so we display a "fully healthy" indigo
+  /// indicator instead of leaving the bars dim.
+  final bool isAuto;
+  const _SignalBars({
+    required this.pingMs,
+    this.measuring = false,
+    this.isAuto = false,
+  });
 
   @override
   State<_SignalBars> createState() => _SignalBarsState();
@@ -2630,6 +2645,32 @@ class _SignalBarsState extends State<_SignalBars>
   @override
   Widget build(BuildContext context) {
     const heights = [6.0, 9.0, 12.0, 15.0];
+
+    // Auto / balanced host — no single address to probe. Show 4 indigo bars
+    // immediately so the indicator never reads as "no signal" for an auto
+    // selection (which would be misleading).
+    if (widget.isAuto) {
+      return SizedBox(
+        height: 16,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (int i = 0; i < 4; i++) ...[
+              Container(
+                width: 3,
+                height: heights[i],
+                decoration: BoxDecoration(
+                  color: DS.indigoLight,
+                  borderRadius: BorderRadius.circular(1.5),
+                ),
+              ),
+              if (i < 3) const SizedBox(width: 2),
+            ],
+          ],
+        ),
+      );
+    }
 
     // Measuring state — animated amber scan across the four bars.
     if (widget.measuring && _activeBars == 0) {
