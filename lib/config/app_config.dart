@@ -22,7 +22,7 @@ class AppConfig {
   /// Example: `'https://bot.example.com'`
   ///
   /// Set this to your Bedolaga backend URL before building the release APK/IPA.
-  static const String backendBaseUrl = 'http://51.89.110.208:8080';
+  static const String backendBaseUrl = 'https://api.ulya.space';
 
   /// Custom URL scheme used as OAuth callback target.
   /// Must match AndroidManifest CallbackActivity + Info.plist + the

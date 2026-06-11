@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Immutable snapshot of the current authentication state.
@@ -88,6 +89,12 @@ const _keyUsername = 'auth_username';
 const _keyEmail = 'auth_email';
 const _keyCabinetToken = 'auth_cabinet_token';
 
+/// Encrypted storage (Android Keystore / iOS Keychain) for the Cabinet JWT.
+/// Profile fields stay in SharedPreferences — only the token is a secret.
+const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
+  aOptions: AndroidOptions(encryptedSharedPreferences: true),
+);
+
 /// Global notifier for authentication state.
 ///
 /// All pages subscribe to this notifier so the UI updates automatically
@@ -116,7 +123,15 @@ Future<void> saveAuthState(AuthState state) async {
   _setOrRemoveString(prefs, _keyLastName, state.lastName);
   _setOrRemoveString(prefs, _keyUsername, state.username);
   _setOrRemoveString(prefs, _keyEmail, state.email);
-  _setOrRemoveString(prefs, _keyCabinetToken, state.cabinetAccessToken);
+
+  if (state.cabinetAccessToken != null) {
+    await _secureStorage.write(
+        key: _keyCabinetToken, value: state.cabinetAccessToken);
+  } else {
+    await _secureStorage.delete(key: _keyCabinetToken);
+  }
+  // Make sure no plaintext copy from older app versions survives.
+  await prefs.remove(_keyCabinetToken);
 }
 
 void _setOrRemove(
@@ -146,6 +161,23 @@ Future<void> loadAuthState() async {
   final isLoggedIn = prefs.getBool(_keyIsLoggedIn) ?? false;
   if (!isLoggedIn) return;
 
+  // Migration: older app versions kept the JWT in plain SharedPreferences.
+  // Move it to secure storage once and wipe the plaintext copy.
+  final legacyToken = prefs.getString(_keyCabinetToken);
+  if (legacyToken != null && legacyToken.isNotEmpty) {
+    await _secureStorage.write(key: _keyCabinetToken, value: legacyToken);
+    await prefs.remove(_keyCabinetToken);
+  }
+
+  String? token;
+  try {
+    token = await _secureStorage.read(key: _keyCabinetToken);
+  } catch (e) {
+    // Keystore can fail after backup-restore onto another device; treat the
+    // token as lost — the user will simply have to log in again.
+    debugPrint('loadAuthState: secure storage read failed: $e');
+  }
+
   authStateNotifier.value = AuthState(
     isLoggedIn: true,
     telegramId: prefs.getInt(_keyTelegramId),
@@ -153,7 +185,7 @@ Future<void> loadAuthState() async {
     lastName: prefs.getString(_keyLastName),
     username: prefs.getString(_keyUsername),
     email: prefs.getString(_keyEmail),
-    cabinetAccessToken: prefs.getString(_keyCabinetToken),
+    cabinetAccessToken: token,
   );
 }
 
@@ -167,5 +199,10 @@ Future<void> clearAuthState() async {
   await prefs.remove(_keyUsername);
   await prefs.remove(_keyEmail);
   await prefs.remove(_keyCabinetToken);
+  try {
+    await _secureStorage.delete(key: _keyCabinetToken);
+  } catch (e) {
+    debugPrint('clearAuthState: secure storage delete failed: $e');
+  }
   authStateNotifier.value = const AuthState();
 }
