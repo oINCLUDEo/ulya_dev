@@ -20,6 +20,7 @@ import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
+import '../services/ping_state.dart';
 import '../services/referral_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
@@ -82,17 +83,18 @@ class _HomePageState extends State<HomePage>
   bool _isConnecting = false;
 
   // ── Signal / ping ─────────────────────────────────────────────────────────
-  // Latest measured TCP round-trip time in ms to the selected node, or null
-  // when we couldn't reach it on the last try. Refreshed every ~3 s while
-  // connected. Drives the Wi-Fi bars indicator in the server selector row.
-  int? _pingMs;
+  // Probe state lives in the shared PingState service so the home connection
+  // card and the servers list stay in sync — whoever measured last wins.
+  // `_pingInFlight` and `_pingMeasuring` remain local because they describe
+  // *this* widget's probe lifecycle, not the global cache.
   Timer? _pingTimer;
   bool _pingInFlight = false;
-  // Per-uuid cache of the most recent measurement (including failures →
-  // `null`). Switching servers shows the cached value instantly instead of
-  // a flicker of empty bars while the next TCP probe completes.
-  final Map<String, int?> _pingCache = {};
   bool _pingMeasuring = false;
+
+  int? get _pingMs {
+    final uuid = _selectedNode?.uuid;
+    return uuid == null ? null : PingState.get(uuid);
+  }
 
   // ── Speed history (sparkline ring buffers) ────────────────────────────────
   static const int _sparkLen = 18;
@@ -122,9 +124,17 @@ class _HomePageState extends State<HomePage>
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
     globalRefreshNotifier.addListener(_onGlobalRefresh);
+    // Rebuild on shared ping cache updates — picks up measurements made by
+    // the ServersPage sweep without us having to re-probe locally.
+    PingState.notifier.addListener(_onPingStateChanged);
     _speedCalc = SpeedCalculator(smoothing: 0.25);
     _v2ray = FlutterV2ray();
     _init();
+  }
+
+  void _onPingStateChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
@@ -251,32 +261,45 @@ class _HomePageState extends State<HomePage>
     _pingInFlight = true;
     // Surface the measuring state to the UI only when we have nothing to show
     // yet — otherwise the bars would flicker through "measuring" on every
-    // background poll, which is noisy. With a cached value, we silently
-    // refresh in the background instead.
+    // background poll, which is noisy.
     if (_pingMs == null && mounted) {
       setState(() => _pingMeasuring = true);
     }
     final host = node.address.trim();
     final port = node.serverPort > 0 ? node.serverPort : _defaultServerPort;
-    final sw = Stopwatch()..start();
-    int? newPing;
-    try {
-      final socket = await Socket.connect(host, port,
-          timeout: const Duration(seconds: 1));
-      sw.stop();
-      socket.destroy();
-      newPing = sw.elapsedMilliseconds;
-    } catch (_) {
-      newPing = null;
-    } finally {
-      _pingInFlight = false;
-    }
-    _pingCache[node.uuid] = newPing;
+    final newPing = await _accurateTcpRtt(host, port);
+    _pingInFlight = false;
+    PingState.set(node.uuid, newPing);
     if (!mounted) return;
-    setState(() {
-      _pingMs = newPing;
-      _pingMeasuring = false;
-    });
+    setState(() => _pingMeasuring = false);
+  }
+
+  /// Measures TCP RTT with a throwaway warm-up connect first. The very first
+  /// connect to a host pays for DNS, ARP, route discovery and a TCP slow-start
+  /// — that inflates the reading by hundreds of ms on cold paths. We discard
+  /// it and time only the second connect, which runs against a warmed kernel
+  /// cache and is much closer to the real round-trip.
+  ///
+  /// Returns null if either connect fails (host unreachable / timeout).
+  static Future<int?> _accurateTcpRtt(String host, int port,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    // ── Warm-up — discarded. ────────────────────────────────────────────
+    try {
+      final s = await Socket.connect(host, port, timeout: timeout);
+      s.destroy();
+    } catch (_) {
+      return null; // unreachable from this network
+    }
+    // ── Real measurement — hot path. ───────────────────────────────────
+    final sw = Stopwatch()..start();
+    try {
+      final s = await Socket.connect(host, port, timeout: timeout);
+      sw.stop();
+      s.destroy();
+      return sw.elapsedMilliseconds;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -286,6 +309,7 @@ class _HomePageState extends State<HomePage>
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
     globalRefreshNotifier.removeListener(_onGlobalRefresh);
+    PingState.notifier.removeListener(_onPingStateChanged);
     _statusSub?.cancel();
     _pingTimer?.cancel();
     super.dispose();
@@ -295,17 +319,9 @@ class _HomePageState extends State<HomePage>
     if (!mounted) return;
     final node = selectedServerNotifier.value;
     if (node?.uuid != _selectedNode?.uuid) {
-      // Prefer a cached ping value if we already measured this server — keeps
-      // the signal-bars indicator responsive instead of flicking to blank for
-      // the ~200-1000 ms it takes the next TCP probe to finish.
-      final cached =
-          node != null && _pingCache.containsKey(node.uuid)
-              ? _pingCache[node.uuid]
-              : null;
-      setState(() {
-        _selectedNode = node;
-        _pingMs = cached;
-      });
+      // _pingMs is computed from PingState now — the value for this uuid
+      // (if any) is already visible without a manual sync.
+      setState(() => _selectedNode = node);
       _restartPingTimer();
     }
   }

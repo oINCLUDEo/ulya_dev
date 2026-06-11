@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -10,6 +11,7 @@ import '../models/server_node.dart';
 import '../services/auth_state.dart';
 import '../services/favorites_state.dart';
 import '../services/me_service.dart';
+import '../services/ping_state.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../utils/server_icon.dart';
@@ -43,7 +45,8 @@ class _ServersPageState extends State<ServersPage> {
   bool _unlimitedExpanded = true;
   bool _otherExpanded    = true;
 
-  final Map<String, int> _pings = {};
+  // Pings live in the shared PingState service — see PingState.notifier /
+  // PingState.get(uuid). No local cache.
   bool _pingAllInProgress = false;
   String _lastKnownSubUrl = '';
 
@@ -54,6 +57,7 @@ class _ServersPageState extends State<ServersPage> {
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
     favoritesNotifier.addListener(_onFavoritesChanged);
+    PingState.notifier.addListener(_onPingStateChanged);
     _loadNodes();
   }
 
@@ -63,11 +67,13 @@ class _ServersPageState extends State<ServersPage> {
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
     favoritesNotifier.removeListener(_onFavoritesChanged);
+    PingState.notifier.removeListener(_onPingStateChanged);
     super.dispose();
   }
 
   void _onSelectionChanged() { if (mounted) setState(() {}); }
   void _onFavoritesChanged() { if (mounted) setState(() {}); }
+  void _onPingStateChanged() { if (mounted) setState(() {}); }
   void _onAuthChanged() => _loadNodes();
   void _onMeChanged() {
     final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
@@ -81,10 +87,9 @@ class _ServersPageState extends State<ServersPage> {
     if (subUrl.isEmpty) {
       final nodes = await RemnawaveService.fetchPublicServers();
       if (!mounted) return;
-      final uuids = nodes.map((e) => e.uuid).toSet();
+      PingState.retain(nodes.map((e) => e.uuid).toSet());
       setState(() {
         _loading = false; _isPublicCatalog = true; _nodes = nodes;
-        _pings.removeWhere((k, _) => !uuids.contains(k));
       });
       // Pre-warm the signal indicator: kick off a background sweep so the
       // bars are populated by the time the user has finished scrolling.
@@ -93,10 +98,9 @@ class _ServersPageState extends State<ServersPage> {
     }
     final nodes = await RemnawaveService.fetchNodes();
     if (!mounted) return;
-    final uuids = nodes.map((e) => e.uuid).toSet();
+    PingState.retain(nodes.map((e) => e.uuid).toSet());
     setState(() {
       _nodes = nodes; _loading = false;
-      _pings.removeWhere((k, _) => !uuids.contains(k));
     });
     if (nodes.isNotEmpty) _tcpPingAll();
   }
@@ -133,7 +137,7 @@ class _ServersPageState extends State<ServersPage> {
         if (aOk != bOk) return aOk.compareTo(bOk);
 
         // 2) Known-ping nodes float above not-yet-pinged; lower ping = better.
-        final pa = _pings[a.uuid], pb = _pings[b.uuid];
+        final pa = PingState.get(a.uuid), pb = PingState.get(b.uuid);
         final aHasPing = pa != null && pa >= 0;
         final bHasPing = pb != null && pb >= 0;
         if (aHasPing && bHasPing) return pa.compareTo(pb);
@@ -162,12 +166,28 @@ class _ServersPageState extends State<ServersPage> {
       hay.contains('unlimited');
 
   // ── Ping ───────────────────────────────────────────────────────────────────
+  /// One-shot TCP RTT (no warm-up). Used internally only.
   Future<int?> _tcpPingRaw(String host, int port) async {
     final sw = Stopwatch()..start();
     try {
       final s = await Socket.connect(host, port, timeout: const Duration(seconds: 2));
       sw.stop(); s.destroy(); return sw.elapsedMilliseconds;
     } catch (_) { return null; }
+  }
+
+  /// Throwaway connect + actual measurement. First connect to a host pays for
+  /// DNS / ARP / route setup and inflates the result by hundreds of ms; the
+  /// second connect lands on a warm kernel cache and reads true round-trip.
+  Future<int?> _tcpPingAccurate(String host, int port) async {
+    // Warm-up — discard. If this throws the host is just unreachable.
+    try {
+      final s = await Socket.connect(host, port, timeout: const Duration(seconds: 2));
+      s.destroy();
+    } catch (_) {
+      return null;
+    }
+    // Real measurement on the warmed path.
+    return _tcpPingRaw(host, port);
   }
 
   Future<void> _tcpPingNode(ServerNode node) async {
@@ -177,19 +197,17 @@ class _ServersPageState extends State<ServersPage> {
     final host = node.address;
     if (host.isEmpty) return;
     final port = node.serverPort > 0 ? node.serverPort : 443;
-    setState(() => _pings[node.uuid] = -2);
-    final ms = await _tcpPingRaw(host, port);
-    if (mounted) setState(() => _pings[node.uuid] = ms ?? -1);
+    PingState.markInFlight(node.uuid);
+    final ms = await _tcpPingAccurate(host, port);
+    if (mounted) PingState.set(node.uuid, ms ?? -1);
   }
 
   Future<void> _tcpPingAll() async {
     if (_nodes.isEmpty || _pingAllInProgress) return;
-    setState(() {
-      _pingAllInProgress = true;
-      for (final n in _nodes) {
-        if (n.link != null) _pings[n.uuid] = -2;
-      }
-    });
+    setState(() => _pingAllInProgress = true);
+    for (final n in _nodes) {
+      if (n.link != null) PingState.markInFlight(n.uuid);
+    }
     final queue = _nodes.where((n) => n.link != null).toList();
     Future<void> worker() async {
       while (queue.isNotEmpty) {
@@ -237,7 +255,8 @@ class _ServersPageState extends State<ServersPage> {
       slivers.add(SliverPadding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
         sliver: SliverToBoxAdapter(child: _ServerGroup(
-          expanded: expanded, nodes: nodes, pings: _pings,
+          expanded: expanded, nodes: nodes,
+          pings: PingState.notifier.value,
           onPing: _tcpPingNode, color: color,
           selectedUuid: selectedUuid, onSelect: onSelect,
           isPublicCatalog: _isPublicCatalog,
@@ -261,7 +280,8 @@ class _ServersPageState extends State<ServersPage> {
       slivers.add(SliverPadding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
         sliver: SliverToBoxAdapter(child: _ServerGroup(
-          expanded: true, nodes: favoriteNodes, pings: _pings,
+          expanded: true, nodes: favoriteNodes,
+          pings: PingState.notifier.value,
           onPing: _tcpPingNode, color: DS.amber,
           selectedUuid: selectedUuid, onSelect: onSelect,
           isPublicCatalog: false,
@@ -738,20 +758,14 @@ class _NodeTileState extends State<_NodeTile>
                   ping: ping,
                   isAvailable: node.isAvailable,
                   noLink: node.link == null,
-                  onTap: () {
-                    if (ping == -2 || node.link == null) return;
+                  // Probe is triggered by the widget itself — single-tap
+                  // re-pings when there's no value yet (no number to peek
+                  // at); long-press always re-pings. Tapping a known value
+                  // toggles the badge into "ms text" mode for a few seconds.
+                  onProbe: () {
+                    if (node.link == null) return;
                     HapticFeedback.selectionClick();
                     widget.onPing?.call();
-                  },
-                  onLongPress: () {
-                    if (ping == null || ping < 0) return;
-                    HapticFeedback.selectionClick();
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text('Пинг: $ping мс'),
-                      duration: const Duration(seconds: 2),
-                      behavior: SnackBarBehavior.floating,
-                      backgroundColor: DS.surface2,
-                    ));
                   },
                 ),
             ]),
@@ -878,15 +892,15 @@ class _QualityBars extends StatefulWidget {
   final int? ping;
   final bool isAvailable;
   final bool noLink;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
+  /// Run a fresh TCP probe for this server. Triggered by long-press, and by
+  /// tap when the badge has no value to peek at yet.
+  final VoidCallback onProbe;
 
   const _QualityBars({
     required this.ping,
     required this.isAvailable,
     required this.noLink,
-    required this.onTap,
-    required this.onLongPress,
+    required this.onProbe,
   });
 
   @override
@@ -896,6 +910,11 @@ class _QualityBars extends StatefulWidget {
 class _QualityBarsState extends State<_QualityBars>
     with SingleTickerProviderStateMixin {
   late final AnimationController _scanCtrl;
+  // Tap-to-peek: while true, the badge renders the raw "120 мс" text instead
+  // of the bars. Auto-reverts after [_peekDuration].
+  bool _showMs = false;
+  Timer? _peekTimer;
+  static const Duration _peekDuration = Duration(seconds: 3);
 
   @override
   void initState() {
@@ -914,6 +933,12 @@ class _QualityBarsState extends State<_QualityBars>
     final isScanning = widget.ping == -2;
     if (isScanning && !wasScanning) {
       _scanCtrl.repeat();
+      // A new probe is in flight — bail out of "show ms" mode so the user
+      // can see the scan animation, otherwise it'd stay on the stale value.
+      if (_showMs) {
+        _peekTimer?.cancel();
+        _showMs = false;
+      }
     } else if (!isScanning && wasScanning) {
       _scanCtrl..stop()..reset();
     }
@@ -922,7 +947,27 @@ class _QualityBarsState extends State<_QualityBars>
   @override
   void dispose() {
     _scanCtrl.dispose();
+    _peekTimer?.cancel();
     super.dispose();
+  }
+
+  /// Single-tap handler. If there's a real ping number to show → flip the
+  /// badge into "ms text" mode for [_peekDuration]. Otherwise — re-probe.
+  void _onTap() {
+    final p = widget.ping;
+    final hasValue = p != null && p >= 0;
+    if (!hasValue) {
+      widget.onProbe();
+      return;
+    }
+    HapticFeedback.selectionClick();
+    _peekTimer?.cancel();
+    setState(() => _showMs = !_showMs);
+    if (_showMs) {
+      _peekTimer = Timer(_peekDuration, () {
+        if (mounted) setState(() => _showMs = false);
+      });
+    }
   }
 
   ({int active, Color color, String tooltip, bool loading}) _state() {
@@ -1004,22 +1049,46 @@ class _QualityBarsState extends State<_QualityBars>
   @override
   Widget build(BuildContext context) {
     final s = _state();
+    final p = widget.ping;
+    final showMsText = _showMs && p != null && p >= 0 && !s.loading;
     return Tooltip(
-      message: s.tooltip,
+      message: showMsText ? 'Удерживайте, чтобы обновить' : s.tooltip,
       preferBelow: false,
       child: GestureDetector(
-        onTap: widget.onTap,
-        onLongPress: widget.onLongPress,
+        onTap: _onTap,
+        onLongPress: widget.onProbe,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
-          width: 34, height: 24,
+          // Slightly wider when the number is on screen so "120 мс" doesn't
+          // get cut. Bar mode keeps its compact 34px footprint.
+          width: showMsText ? 48 : 34,
+          height: 24,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: s.color.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(DS.radiusXs),
             border: Border.all(color: s.color.withValues(alpha: 0.28)),
           ),
-          child: s.loading ? _scanBars() : _staticBars(s.active, s.color),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, anim) => FadeTransition(
+              opacity: anim,
+              child: ScaleTransition(scale: anim, child: child),
+            ),
+            child: showMsText
+                ? Text('$p мс',
+                    key: const ValueKey('ms'),
+                    style: TextStyle(
+                      color: s.color,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ))
+                : KeyedSubtree(
+                    key: const ValueKey('bars'),
+                    child: s.loading ? _scanBars() : _staticBars(s.active, s.color),
+                  ),
+          ),
         ),
       ),
     );
