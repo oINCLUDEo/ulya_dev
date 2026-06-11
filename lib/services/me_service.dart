@@ -11,6 +11,7 @@ import '../config/app_config.dart';
 import '../models/me_response.dart';
 import 'app_logger.dart';
 import 'auth_state.dart';
+import 'cabinet_http.dart';
 import 'notification_service.dart';
 import 'remnawave_service.dart';
 
@@ -103,20 +104,11 @@ class MeService {
 
   static Future<MeResponse?> _refreshFromCabinet(AuthState auth) async {
     try {
-      final token = auth.cabinetAccessToken!;
-      final headers = {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $token',
-      };
-
-      final client = _makeClient();
-      final response = await client
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/cabinet/subscription'),
-            headers: headers,
-          )
-          .timeout(const Duration(seconds: 15));
-      client.close();
+      final response = await CabinetHttp.get('/cabinet/subscription');
+      if (response == null) {
+        appLogger.warning('MeService', 'cabinet /subscription unreachable');
+        return null;
+      }
 
       if (response.statusCode != 200) {
         appLogger.warning('MeService', 'cabinet /subscription returned ${response.statusCode}');

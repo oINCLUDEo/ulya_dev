@@ -357,7 +357,7 @@ class _PremiumPageState extends State<PremiumPage>
     setState(() => _activatingTrial = true);
     try {
       final result = token != null && token.isNotEmpty
-          ? await SubscriptionApiService.activateCabinetTrial(token)
+          ? await SubscriptionApiService.activateCabinetTrial()
           : await SubscriptionApiService.activateTrial();
       if (!mounted) return;
       if (result?.status == 'success') {

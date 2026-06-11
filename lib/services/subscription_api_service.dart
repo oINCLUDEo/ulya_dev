@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
 import '../config/app_config.dart';
+import 'cabinet_http.dart';
 import 'auth_state.dart';
 
 /// Models for the subscription API responses.
@@ -546,29 +547,9 @@ class SubscriptionApiService {
     };
   }
 
-  /// Headers for Cabinet API calls (Bearer JWT auth).
-  static Map<String, String>? _cabinetHeaders() {
-    final token = authStateNotifier.value.cabinetAccessToken;
-    if (token == null) return null;
-    return {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer $token',
-    };
-  }
-
-  /// GET helper that uses Cabinet Bearer auth.
-  static Future<http.Response?> _cabinetGet(String path) async {
-    final headers = _cabinetHeaders();
-    if (headers == null) return null;
-    try {
-      return await http.get(
-        Uri.parse('$_base$path'),
-        headers: headers,
-      ).timeout(const Duration(seconds: 15));
-    } on Exception {
-      return null;
-    }
-  }
+  /// GET helper that uses Cabinet Bearer auth (401 → refresh → retry).
+  static Future<http.Response?> _cabinetGet(String path) =>
+      CabinetHttp.get(path);
 
   /// Returns an HTTP client that routes through the local xray HTTP proxy
   /// (port 10808) when the VPN is active, so subscription API calls reach
@@ -982,17 +963,17 @@ class SubscriptionApiService {
     required int periodDays,
     required bool isSwitch,
   }) async {
-    final headers = _cabinetHeaders();
-    if (headers == null) return const BuyResult(status: 'error', message: 'Не авторизован');
     final path = isSwitch
         ? '/cabinet/subscription/tariff/switch'
         : '/cabinet/subscription/purchase-tariff';
     try {
-      final resp = await http.post(
-        Uri.parse('$_base$path'),
-        headers: headers,
-        body: jsonEncode({'tariff_id': tariffId, 'period_days': periodDays}),
-      ).timeout(const Duration(seconds: 30));
+      final resp = await CabinetHttp.post(
+        path,
+        body: {'tariff_id': tariffId, 'period_days': periodDays},
+      );
+      if (resp == null) {
+        return const BuyResult(status: 'error', message: 'Не авторизован');
+      }
 
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -1021,15 +1002,15 @@ class SubscriptionApiService {
   ///
   /// The Cabinet endpoint returns a full SubscriptionData object on success,
   /// including `subscription_url` so the app can update its state immediately.
-  static Future<BuyResult?> activateCabinetTrial(String accessToken) async {
+  static Future<BuyResult?> activateCabinetTrial() async {
     try {
-      final resp = await http.post(
-        Uri.parse('$_base/cabinet/subscription/trial'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $accessToken',
-        },
-      ).timeout(const Duration(seconds: 15));
+      final resp = await CabinetHttp.post(
+        '/cabinet/subscription/trial',
+        timeout: const Duration(seconds: 15),
+      );
+      if (resp == null) {
+        return const BuyResult(status: 'error', message: 'Не авторизован');
+      }
 
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;

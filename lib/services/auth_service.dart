@@ -272,6 +272,7 @@ class AuthService {
 
       final json = jsonDecode(response.body) as Map<String, dynamic>;
       final accessToken = json['access_token'] as String?;
+      final refreshToken = json['refresh_token'] as String?;
       final userMap = json['user'] as Map<String, dynamic>?;
       if (accessToken == null || userMap == null) return 'Неверный ответ сервера.';
 
@@ -286,6 +287,7 @@ class AuthService {
         username: userMap['username'] as String?,
         email: userMap['email'] as String?,
         cabinetAccessToken: accessToken,
+        cabinetRefreshToken: refreshToken,
         subscriptionUrl: subUrl,
       );
 
@@ -408,6 +410,7 @@ class AuthService {
 
       // ── Step 4: exchange the short token for a full session ────────────
       String? accessToken;
+      String? refreshToken;
       Map<String, dynamic>? userMap;
       if (shortToken != null && shortToken.isNotEmpty) {
         final autoResp = await http
@@ -428,6 +431,7 @@ class AuthService {
         }
         final tokens = jsonDecode(autoResp.body) as Map<String, dynamic>;
         accessToken = tokens['access_token'] as String?;
+        refreshToken = tokens['refresh_token'] as String?;
         userMap = tokens['user'] as Map<String, dynamic>?;
       } else {
         // Backend gave us the full token directly — no /login/auto round-trip.
@@ -452,6 +456,7 @@ class AuthService {
         username: userMap['username'] as String?,
         email: userMap['email'] as String?,
         cabinetAccessToken: accessToken,
+        cabinetRefreshToken: refreshToken,
         subscriptionUrl: subUrl,
       );
       await saveAuthState(newState);

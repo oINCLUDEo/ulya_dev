@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/app_config.dart';
 import 'app_logger.dart';
 import 'auth_state.dart';
+import 'cabinet_http.dart';
 
 /// User-facing referral state, sourced from
 /// `GET /cabinet/referral` (Bearer JWT, Cabinet API).
@@ -249,28 +250,28 @@ class ReferralService {
 
   static String get _base => AppConfig.backendBaseUrl;
 
-  /// Returns the strongest auth-header set available. Order of preference:
-  ///   1. Cabinet Bearer JWT (email or Google OAuth users).
+  /// GET with the strongest auth available. Order of preference:
+  ///   1. Cabinet Bearer JWT via [CabinetHttp] (handles 401 → refresh → retry).
   ///   2. X-Telegram-Id (Telegram bot users — backend may still accept this
   ///      on the Cabinet endpoint as a soft fallback).
   ///   3. null — caller should hide the referral surface.
-  static Map<String, String>? _authHeaders() {
+  static Future<http.Response?> _get(String pathAndQuery) async {
     final auth = authStateNotifier.value;
-    final token = auth.cabinetAccessToken;
-    if (token != null && token.isNotEmpty) {
-      return {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer $token',
-      };
+    if (auth.cabinetAccessToken?.isNotEmpty ?? false) {
+      return CabinetHttp.get(pathAndQuery,
+          timeout: const Duration(seconds: 12));
     }
     final tgId = auth.telegramId;
-    if (tgId != null) {
-      return {
-        'Accept': 'application/json',
-        'X-Telegram-Id': '$tgId',
-      };
+    if (tgId == null) return null;
+    try {
+      return await http.get(
+        Uri.parse('$_base$pathAndQuery'),
+        headers: {'Accept': 'application/json', 'X-Telegram-Id': '$tgId'},
+      ).timeout(const Duration(seconds: 12));
+    } on Exception catch (e) {
+      appLogger.error('ReferralService', 'GET $pathAndQuery failed: $e');
+      return null;
     }
-    return null;
   }
 
   /// GET /cabinet/referral — current user's referral statistics.
@@ -281,46 +282,36 @@ class ReferralService {
   /// users (who don't have a JWT yet) can still see the card if the backend
   /// honours that header on the cabinet endpoint.
   static Future<ReferralInfo?> getInfo() async {
-    final headers = _authHeaders();
-    if (headers == null) {
-      appLogger.info('ReferralService',
-          'getInfo: skipped — no auth header (cabinet JWT and telegram id both null)');
-      return null;
-    }
-    final authMode = headers.containsKey('Authorization') ? 'bearer' : 'telegram';
     try {
-      final resp = await http
-          .get(Uri.parse('$_base/cabinet/referral'), headers: headers)
-          .timeout(const Duration(seconds: 12));
+      final resp = await _get('/cabinet/referral');
+      if (resp == null) {
+        appLogger.info('ReferralService',
+            'getInfo: skipped — no auth (cabinet JWT and telegram id both null) or network error');
+        return null;
+      }
       if (resp.statusCode != 200) {
         appLogger.error('ReferralService',
-            'getInfo: HTTP ${resp.statusCode} via $authMode — body: ${resp.body}');
+            'getInfo: HTTP ${resp.statusCode} — body: ${resp.body}');
         return null;
       }
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
       final info = ReferralInfo.fromJson(json);
       appLogger.info('ReferralService',
-          'getInfo: ok via $authMode — code="${info.referralCode}" '
+          'getInfo: ok — code="${info.referralCode}" '
           'invited=${info.totalReferrals} earned=${info.totalEarningsRubles}');
       return info;
     } on Exception catch (e) {
-      appLogger.error('ReferralService', 'getInfo: exception via $authMode: $e');
+      appLogger.error('ReferralService', 'getInfo: exception: $e');
       return null;
     }
   }
 
   /// Paged list of friends invited by the current user.
   static Future<ReferralListPage?> getList({int page = 1, int perPage = 20}) async {
-    final headers = _authHeaders();
-    if (headers == null) return null;
     try {
-      final resp = await http
-          .get(
-            Uri.parse('$_base/cabinet/referral/list?page=$page&per_page=$perPage'),
-            headers: headers,
-          )
-          .timeout(const Duration(seconds: 12));
-      if (resp.statusCode != 200) return null;
+      final resp =
+          await _get('/cabinet/referral/list?page=$page&per_page=$perPage');
+      if (resp == null || resp.statusCode != 200) return null;
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
       return ReferralListPage.fromJson(json);
     } on Exception {
@@ -331,16 +322,10 @@ class ReferralService {
   /// Paged history of bonus credits earned from referrals.
   static Future<ReferralEarningsPage?> getEarnings(
       {int page = 1, int perPage = 20}) async {
-    final headers = _authHeaders();
-    if (headers == null) return null;
     try {
-      final resp = await http
-          .get(
-            Uri.parse('$_base/cabinet/referral/earnings?page=$page&per_page=$perPage'),
-            headers: headers,
-          )
-          .timeout(const Duration(seconds: 12));
-      if (resp.statusCode != 200) return null;
+      final resp =
+          await _get('/cabinet/referral/earnings?page=$page&per_page=$perPage');
+      if (resp == null || resp.statusCode != 200) return null;
       final json = jsonDecode(resp.body) as Map<String, dynamic>;
       return ReferralEarningsPage.fromJson(json);
     } on Exception {

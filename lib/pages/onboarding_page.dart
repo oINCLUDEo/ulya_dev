@@ -340,9 +340,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
     if (state.isEmailAuth && state.cabinetAccessToken != null) {
       // Email user → use Cabinet API (Bearer JWT)
-      result = await SubscriptionApiService.activateCabinetTrial(
-        state.cabinetAccessToken!,
-      );
+      result = await SubscriptionApiService.activateCabinetTrial();
       // If trial succeeded, persist the new subscription URL from response
       if (result != null && result.isSuccess) {
         final subUrl = result.subscription?['subscription_url'] as String?;

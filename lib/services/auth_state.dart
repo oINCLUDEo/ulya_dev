@@ -14,6 +14,7 @@ class AuthState {
     this.subscriptionUrl,
     this.email,
     this.cabinetAccessToken,
+    this.cabinetRefreshToken,
   });
 
   /// Whether the user has successfully authenticated.
@@ -39,6 +40,10 @@ class AuthState {
   /// Used to call Cabinet API endpoints that require Bearer auth.
   final String? cabinetAccessToken;
 
+  /// Cabinet refresh token — exchanged for a new access/refresh pair via
+  /// `POST /cabinet/auth/refresh` when the access token expires.
+  final String? cabinetRefreshToken;
+
   /// Whether this is an email-only account (no Telegram link yet).
   bool get isEmailAuth => telegramId == null && email != null;
 
@@ -61,6 +66,7 @@ class AuthState {
     String? subscriptionUrl,
     String? email,
     String? cabinetAccessToken,
+    String? cabinetRefreshToken,
   }) =>
       AuthState(
         isLoggedIn: isLoggedIn ?? this.isLoggedIn,
@@ -71,6 +77,7 @@ class AuthState {
         subscriptionUrl: subscriptionUrl ?? this.subscriptionUrl,
         email: email ?? this.email,
         cabinetAccessToken: cabinetAccessToken ?? this.cabinetAccessToken,
+        cabinetRefreshToken: cabinetRefreshToken ?? this.cabinetRefreshToken,
       );
 
   @override
@@ -88,6 +95,7 @@ const _keyLastName = 'auth_last_name';
 const _keyUsername = 'auth_username';
 const _keyEmail = 'auth_email';
 const _keyCabinetToken = 'auth_cabinet_token';
+const _keyCabinetRefreshToken = 'auth_cabinet_refresh_token';
 
 /// Encrypted storage (Android Keystore / iOS Keychain) for the Cabinet JWT.
 /// Profile fields stay in SharedPreferences — only the token is a secret.
@@ -130,6 +138,12 @@ Future<void> saveAuthState(AuthState state) async {
   } else {
     await _secureStorage.delete(key: _keyCabinetToken);
   }
+  if (state.cabinetRefreshToken != null) {
+    await _secureStorage.write(
+        key: _keyCabinetRefreshToken, value: state.cabinetRefreshToken);
+  } else {
+    await _secureStorage.delete(key: _keyCabinetRefreshToken);
+  }
   // Make sure no plaintext copy from older app versions survives.
   await prefs.remove(_keyCabinetToken);
 }
@@ -170,8 +184,10 @@ Future<void> loadAuthState() async {
   }
 
   String? token;
+  String? refreshToken;
   try {
     token = await _secureStorage.read(key: _keyCabinetToken);
+    refreshToken = await _secureStorage.read(key: _keyCabinetRefreshToken);
   } catch (e) {
     // Keystore can fail after backup-restore onto another device; treat the
     // token as lost — the user will simply have to log in again.
@@ -186,6 +202,7 @@ Future<void> loadAuthState() async {
     username: prefs.getString(_keyUsername),
     email: prefs.getString(_keyEmail),
     cabinetAccessToken: token,
+    cabinetRefreshToken: refreshToken,
   );
 }
 
@@ -201,6 +218,7 @@ Future<void> clearAuthState() async {
   await prefs.remove(_keyCabinetToken);
   try {
     await _secureStorage.delete(key: _keyCabinetToken);
+    await _secureStorage.delete(key: _keyCabinetRefreshToken);
   } catch (e) {
     debugPrint('clearAuthState: secure storage delete failed: $e');
   }
