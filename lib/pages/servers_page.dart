@@ -15,6 +15,7 @@ import '../services/ping_state.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../utils/server_icon.dart';
+import '../utils/signal_quality.dart';
 import 'auth_bottom_sheet.dart';
 import 'home_page.dart' show VpnIconBtn, VpnInfoBanner;
 import '../main.dart' show DS;
@@ -972,6 +973,9 @@ class _QualityBarsState extends State<_QualityBars>
     }
   }
 
+  // Quality bucketing is shared with the home connection card via
+  // lib/utils/signal_quality.dart — both screens MUST resolve the same
+  // (bars, colour) for the same ping value.
   ({int active, Color color, String tooltip, bool loading}) _state() {
     final p = widget.ping;
     if (widget.noLink || !widget.isAvailable) {
@@ -980,16 +984,12 @@ class _QualityBarsState extends State<_QualityBars>
     if (p == -2) {
       return (active: 0, color: DS.amber, tooltip: 'Проверяем…', loading: true);
     }
-    if (p != null && p < 0) {
-      return (active: 1, color: DS.rose, tooltip: 'Нет связи. Нажмите, чтобы повторить.', loading: false);
-    }
     if (p == null) {
       return (active: 0, color: DS.violet, tooltip: 'Нажмите, чтобы проверить', loading: false);
     }
-    if (p < 80)   return (active: 4, color: DS.emerald, tooltip: '$p мс', loading: false);
-    if (p < 180)  return (active: 3, color: DS.emerald, tooltip: '$p мс', loading: false);
-    if (p < 320)  return (active: 2, color: DS.amber,   tooltip: '$p мс', loading: false);
-    return         (active: 1, color: DS.rose,    tooltip: '$p мс', loading: false);
+    final q = signalQualityFromPing(p);
+    final tip = p < 0 ? 'Нет связи. Нажмите, чтобы повторить.' : '$p мс';
+    return (active: q.activeBars, color: q.color, tooltip: tip, loading: false);
   }
 
   static const _heights = [5.0, 7.5, 10.0, 12.5];

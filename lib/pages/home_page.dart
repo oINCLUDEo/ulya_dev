@@ -25,6 +25,7 @@ import '../services/referral_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../utils/server_icon.dart';
+import '../utils/signal_quality.dart';
 import '../utils/speed_calculator.dart';
 import 'auth_bottom_sheet.dart';
 import 'referral_page.dart';
@@ -2684,23 +2685,13 @@ class _SignalBarsState extends State<_SignalBars>
     super.dispose();
   }
 
-  int get _activeBars {
-    final ms = widget.pingMs;
-    if (ms == null) return 0;
-    if (ms <= 50) return 4;
-    if (ms <= 100) return 3;
-    if (ms <= 200) return 2;
-    return 1;
-  }
-
-  Color get _color {
-    switch (_activeBars) {
-      case 4: case 3: return DS.emerald;
-      case 2: return DS.amber;
-      case 1: return DS.rose;
-      default: return DS.textMuted;
-    }
-  }
+  // Quality bucketing lives in lib/utils/signal_quality.dart so the home
+  // indicator and the ServersPage quality badge agree on bars + colour for
+  // the same RTT — otherwise the same server can read 3 bars on one screen
+  // and 2 on another.
+  SignalQuality get _quality => signalQualityFromPing(widget.pingMs);
+  int get _activeBars => _quality.activeBars;
+  Color get _color => _quality.color;
 
   @override
   Widget build(BuildContext context) {
