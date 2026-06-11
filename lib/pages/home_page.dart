@@ -56,8 +56,6 @@ class _HomePageState extends State<HomePage>
     ['yt', 'tg'],
   ];
   static const int _defaultServerPort = 443;
-  static const Duration _nodeReachabilityTimeout = Duration(seconds: 1);
-  static const int _maxReachabilityWorkers = 4;
 
   // ── V2ray ──────────────────────────────────────────────────────────────────
   late final FlutterV2ray _v2ray;
@@ -520,45 +518,62 @@ class _HomePageState extends State<HomePage>
 
   static bool _isBypassNode(ServerNode node) => _isBypassDescription(node.description);
 
-  Future<bool> _canReachNode(ServerNode node) async {
-    final host = node.address.trim();
-    if (host.isEmpty) return false;
-    // Default to HTTPS port if backend did not provide an explicit one.
-    final port = node.serverPort > 0 ? node.serverPort : _defaultServerPort;
+  List<ServerNode> _nonBypassCandidates() => _nodes
+      .where((n) =>
+          n.protocol != 'auto' &&
+          !_isBypassNode(n) &&
+          n.link != null &&
+          !n.isDisabled)
+      .toList();
+
+  /// Protocol-level reachability: spins up a temporary xray instance with the
+  /// node's config and performs an HTTP GET through the proxy.
+  ///
+  /// A bare TCP connect is NOT a valid signal here — DPI on mobile networks
+  /// lets the TCP handshake through and kills the tunnel afterwards, which
+  /// made dead regular servers look "reachable" and wrongly blocked the
+  /// bypass servers.
+  Future<bool> _canReachNodeViaProxy(ServerNode node) async {
+    final rawLink = node.link?.trim();
+    if (rawLink == null || rawLink.isEmpty) return false;
     try {
-      final socket = await Socket.connect(
-        host,
-        port,
-        timeout: _nodeReachabilityTimeout,
-      );
-      socket.destroy();
-      return true;
+      final config = rawLink.startsWith('{')
+          ? rawLink
+          : FlutterV2ray.parseFromURL(rawLink).getFullConfiguration();
+      final delay = await _v2ray
+          .getServerDelay(config: config)
+          .timeout(const Duration(seconds: 8));
+      return delay > 0;
     } catch (_) {
       return false;
     }
   }
 
+  /// Fast estimate used by the server picker so it opens instantly: a
+  /// non-bypass server counts as "probably reachable" when the background
+  /// sweep has a recent successful reading for it. The authoritative
+  /// xray-proxy check runs only on an actual connect attempt.
+  bool _hasLikelyReachableNonBypassServer() =>
+      _nonBypassCandidates().any((n) => (PingState.get(n.uuid) ?? -1) > 0);
+
+  /// Authoritative check: any regular (non-bypass) server actually usable on
+  /// the current network? Probes through a temporary xray core (expensive —
+  /// capped at the 3 most promising candidates, run in parallel).
   Future<bool> _hasReachableNonBypassServer() async {
-    final candidates = _nodes.where((n) =>
-        n.protocol != 'auto' &&
-        !_isBypassNode(n) &&
-        n.link != null &&
-        !n.isDisabled).toList();
+    final candidates = _nonBypassCandidates();
     if (candidates.isEmpty) return false;
-    // NOTE: do NOT shortcut on `isAvailable` here — the subscription parser
-    // hardcodes isConnected=true/isDisabled=false for every node, so that
-    // flag is always true and would block bypass servers even on networks
-    // (mobile LTE) where the regular servers are genuinely unreachable.
-    // Only a live TCP probe below tells the truth for the current network.
-    for (var i = 0; i < candidates.length; i += _maxReachabilityWorkers) {
-      final end = (i + _maxReachabilityWorkers < candidates.length)
-          ? i + _maxReachabilityWorkers
-          : candidates.length;
-      final batch = candidates.sublist(i, end);
-      final checks = await Future.wait(batch.map(_canReachNode));
-      if (checks.any((ok) => ok)) return true;
-    }
-    return false;
+    // Most promising first: recent successful sweep readings, best ping on top.
+    candidates.sort((a, b) {
+      int rank(ServerNode n) {
+        final p = PingState.get(n.uuid);
+        return (p != null && p > 0) ? p : 1 << 30;
+      }
+      return rank(a).compareTo(rank(b));
+    });
+    final results = await Future.wait(
+      candidates.take(3).map(_canReachNodeViaProxy),
+    );
+    return results.any((ok) => ok);
   }
 
   Future<void> _toggleConnection() async {
@@ -580,16 +595,24 @@ class _HomePageState extends State<HomePage>
       }
       return;
     }
-    if (_isBypassNode(node) && await _hasReachableNonBypassServer()) {
-      appLogger.info(
-        'HomePage',
-        'bypass connection blocked: reachable non-bypass server detected',
-      );
-      _showUnavailableNotice(
-        title: 'Обход сейчас недоступен',
-        subtitle: 'Есть доступные обычные серверы — выберите их для подключения',
-      );
-      return;
+    if (_isBypassNode(node)) {
+      // The xray-proxy probes take a few seconds — show the connecting state
+      // so the button doesn't look dead while we check.
+      setState(() => _isConnecting = true);
+      final blocked = await _hasReachableNonBypassServer();
+      if (mounted) setState(() => _isConnecting = false);
+      if (blocked) {
+        appLogger.info(
+          'HomePage',
+          'bypass connection blocked: reachable non-bypass server detected',
+        );
+        _showUnavailableNotice(
+          title: 'Обход сейчас недоступен',
+          subtitle: 'Есть доступные обычные серверы — выберите их для подключения',
+        );
+        return;
+      }
+      if (!mounted) return;
     }
     if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
     setState(() => _isConnecting = true);
@@ -648,8 +671,9 @@ class _HomePageState extends State<HomePage>
   }
 
   Future<void> _showServerPicker() async {
-    final hasReachableNonBypass = await _hasReachableNonBypassServer();
-    if (!mounted) return;
+    // Cheap cache-based estimate — the picker must open without waiting for
+    // xray probe round-trips; the strict check happens on the connect tap.
+    final hasReachableNonBypass = _hasLikelyReachableNonBypassServer();
     String? selectedCat;
     showModalBottomSheet<void>(
       context: context,

@@ -43,12 +43,22 @@ class _ServersPageState extends State<ServersPage>
   bool _loading = true;
   bool _isPublicCatalog = false;
 
-  /// Background re-sweep cadence. Keeps signal bars of NON-selected servers
+  /// Background re-sweep schedule. Keeps signal bars of NON-selected servers
   /// fresh — without it a node probed once at startup (possibly on a network
   /// where it was unreachable) kept its stale/-1 reading until the user
   /// manually re-probed or re-selected it.
+  ///
+  /// Burst-then-settle: the first reading right after launch is often noisy
+  /// (cold radio, network still settling), so we re-probe a couple of seconds
+  /// later, then back off, then keep a slow heartbeat.
+  static const List<Duration> _sweepBurst = [
+    Duration(seconds: 3),
+    Duration(seconds: 10),
+    Duration(seconds: 30),
+  ];
   static const Duration _sweepPeriod = Duration(seconds: 60);
   Timer? _sweepTimer;
+  int _sweepBurstIdx = 0;
 
   bool _autoExpanded     = true;
   bool _bypassExpanded   = true;
@@ -69,9 +79,28 @@ class _ServersPageState extends State<ServersPage>
     meNotifier.addListener(_onMeChanged);
     favoritesNotifier.addListener(_onFavoritesChanged);
     PingState.notifier.addListener(_onPingStateChanged);
-    _sweepTimer =
-        Timer.periodic(_sweepPeriod, (_) => _tcpPingAll(silent: true));
     _loadNodes();
+  }
+
+  /// (Re)starts the burst-then-settle sweep schedule. Called after the node
+  /// list loads (initial sweep just ran) and on app resume (network changed).
+  void _restartSweepSchedule() {
+    _sweepTimer?.cancel();
+    _sweepBurstIdx = 0;
+    _scheduleNextSweep();
+  }
+
+  void _scheduleNextSweep() {
+    if (_sweepBurstIdx < _sweepBurst.length) {
+      _sweepTimer = Timer(_sweepBurst[_sweepBurstIdx], () async {
+        _sweepBurstIdx++;
+        await _tcpPingAll(silent: true);
+        if (mounted) _scheduleNextSweep();
+      });
+    } else {
+      _sweepTimer =
+          Timer.periodic(_sweepPeriod, (_) => _tcpPingAll(silent: true));
+    }
   }
 
   @override
@@ -89,8 +118,12 @@ class _ServersPageState extends State<ServersPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // The network almost certainly changed while we were backgrounded
-    // (Wi-Fi ↔ LTE) — old readings are meaningless, re-probe everything.
-    if (state == AppLifecycleState.resumed) _tcpPingAll(silent: true);
+    // (Wi-Fi ↔ LTE) — old readings are meaningless, re-probe everything and
+    // restart the burst so the fresh network gets the quick follow-ups too.
+    if (state == AppLifecycleState.resumed) {
+      _tcpPingAll(silent: true);
+      _restartSweepSchedule();
+    }
   }
 
   void _onSelectionChanged() { if (mounted) setState(() {}); }
@@ -115,7 +148,10 @@ class _ServersPageState extends State<ServersPage>
       });
       // Pre-warm the signal indicator: kick off a background sweep so the
       // bars are populated by the time the user has finished scrolling.
-      if (nodes.isNotEmpty) _tcpPingAll();
+      if (nodes.isNotEmpty) {
+        _tcpPingAll();
+        _restartSweepSchedule();
+      }
       return;
     }
     final nodes = await RemnawaveService.fetchNodes();
@@ -124,7 +160,10 @@ class _ServersPageState extends State<ServersPage>
     setState(() {
       _nodes = nodes; _loading = false;
     });
-    if (nodes.isNotEmpty) _tcpPingAll();
+    if (nodes.isNotEmpty) {
+      _tcpPingAll();
+      _restartSweepSchedule();
+    }
   }
 
   // ── Grouping ───────────────────────────────────────────────────────────────
