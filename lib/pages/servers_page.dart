@@ -67,7 +67,11 @@ class _ServersPageState extends State<ServersPage>
 
   // Pings live in the shared PingState service — see PingState.notifier /
   // PingState.get(uuid). No local cache.
+  /// UI flag: a USER-triggered sweep is running (drives the header button
+  /// spinner/disable). Background silent sweeps must not touch it.
   bool _pingAllInProgress = false;
+  /// Re-entrancy guard for any sweep, silent or not.
+  bool _sweepRunning = false;
   String _lastKnownSubUrl = '';
 
   @override
@@ -265,13 +269,14 @@ class _ServersPageState extends State<ServersPage>
     if (mounted) PingState.set(node.uuid, ms ?? -1);
   }
 
-  /// Probes every node. [silent] skips the mass "scanning" markers so a
-  /// background refresh replaces readings in place without making the whole
-  /// list flicker; the user-triggered sweep keeps the scan animation.
+  /// Probes every node. [silent] skips the mass "scanning" markers AND the
+  /// header-button progress state, so a background refresh replaces readings
+  /// in place without any UI churn; the user-triggered sweep keeps both.
   Future<void> _tcpPingAll({bool silent = false}) async {
-    if (_nodes.isEmpty || _pingAllInProgress) return;
-    setState(() => _pingAllInProgress = true);
+    if (_nodes.isEmpty || _sweepRunning) return;
+    _sweepRunning = true;
     if (!silent) {
+      setState(() => _pingAllInProgress = true);
       for (final n in _nodes) {
         if (n.link != null) PingState.markInFlight(n.uuid);
       }
@@ -283,7 +288,8 @@ class _ServersPageState extends State<ServersPage>
       }
     }
     await Future.wait(List.generate(5, (_) => worker()));
-    if (mounted) setState(() => _pingAllInProgress = false);
+    _sweepRunning = false;
+    if (!silent && mounted) setState(() => _pingAllInProgress = false);
   }
 
   // ── Sections ───────────────────────────────────────────────────────────────
@@ -382,14 +388,14 @@ class _ServersPageState extends State<ServersPage>
       ));
     }
 
-    addSection(title: 'Обход ограничений', subtitle: 'Для доступа к заблокированным сайтам',
+    addSection(title: 'Резервные серверы', subtitle: 'Выручают, когда обычные блокируются',
         nodes: groups['bypass']!, color: DS.violet,
-        icon: PhosphorIconsFill.shieldCheck, expanded: _bypassExpanded,
+        icon: PhosphorIconsFill.lifebuoy, expanded: _bypassExpanded,
         onToggle: () => setState(() => _bypassExpanded = !_bypassExpanded));
 
     addSection(title: 'Безлимитный трафик', subtitle: 'Без ограничений по объёму',
         nodes: groups['unlimited']!, color: DS.cyan,
-        icon: PhosphorIconsFill.infinity, expanded: _unlimitedExpanded,
+        icon: Icons.all_inclusive_rounded, expanded: _unlimitedExpanded,
         onToggle: () => setState(() => _unlimitedExpanded = !_unlimitedExpanded));
 
     addSection(title: 'Все серверы', subtitle: 'Остальные доступные узлы',
@@ -467,6 +473,9 @@ class _ServersPageState extends State<ServersPage>
         VpnIconBtn(
           loading: _pingAllInProgress,
           icon: PhosphorIconsBold.gauge,
+          // Rotating a speedometer looks like a glitch — show a spinner
+          // overlay instead of spinning the glyph while the sweep runs.
+          spinWhenLoading: false,
           onTap: (_loading || _pingAllInProgress) ? null : _tcpPingAll,
         ),
         const SizedBox(width: 8),
@@ -771,6 +780,9 @@ class _NodeTileState extends State<_NodeTile>
     final isSelected = widget.isSelected;
     final accentColor = widget.accentColor;
     final ping = widget.ping;
+    // Last probe failed (and we're not mid-scan) — mute the row so dead
+    // servers are obvious at a glance, not just from the badge.
+    final isOffline = ping != null && ping < 0 && ping != -2;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
@@ -806,7 +818,9 @@ class _NodeTileState extends State<_NodeTile>
                   ],
                   Expanded(child: Text(node.name, style: TextStyle(
                       fontWeight: FontWeight.w600, fontSize: 14,
-                      color: isSelected ? accentColor : DS.textPrimary),
+                      color: isSelected
+                          ? accentColor
+                          : isOffline ? DS.textMuted : DS.textPrimary),
                       overflow: TextOverflow.ellipsis)),
                 ]),
                 const SizedBox(height: 3),
@@ -1050,20 +1064,31 @@ class _QualityBarsState extends State<_QualityBars>
   // Quality bucketing is shared with the home connection card via
   // lib/utils/signal_quality.dart — both screens MUST resolve the same
   // (bars, colour) for the same ping value.
-  ({int active, Color color, String tooltip, bool loading}) _state() {
+  ({int active, Color color, String tooltip, bool loading, bool offline})
+      _state() {
     final p = widget.ping;
     if (widget.noLink || !widget.isAvailable) {
-      return (active: 0, color: DS.rose, tooltip: 'Сервер недоступен', loading: false);
+      return (active: 0, color: DS.rose, tooltip: 'Сервер недоступен',
+          loading: false, offline: true);
     }
     if (p == -2) {
-      return (active: 0, color: DS.amber, tooltip: 'Проверяем…', loading: true);
+      return (active: 0, color: DS.amber, tooltip: 'Проверяем…',
+          loading: true, offline: false);
     }
     if (p == null) {
-      return (active: 0, color: DS.violet, tooltip: 'Нажмите, чтобы проверить', loading: false);
+      return (active: 0, color: DS.violet, tooltip: 'Нажмите, чтобы проверить',
+          loading: false, offline: false);
+    }
+    if (p < 0) {
+      // Probe failed — render an explicit "offline" badge instead of a
+      // single red bar, which read as "weak signal" rather than "dead".
+      return (active: 0, color: DS.rose,
+          tooltip: 'Нет связи. Нажмите, чтобы повторить.',
+          loading: false, offline: true);
     }
     final q = signalQualityFromPing(p);
-    final tip = p < 0 ? 'Нет связи. Нажмите, чтобы повторить.' : '$p мс';
-    return (active: q.activeBars, color: q.color, tooltip: tip, loading: false);
+    return (active: q.activeBars, color: q.color, tooltip: '$p мс',
+        loading: false, offline: false);
   }
 
   static const _heights = [5.0, 7.5, 10.0, 12.5];
@@ -1160,10 +1185,15 @@ class _QualityBarsState extends State<_QualityBars>
                       fontWeight: FontWeight.w700,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ))
-                : KeyedSubtree(
-                    key: const ValueKey('bars'),
-                    child: s.loading ? _scanBars() : _staticBars(s.active, s.color),
-                  ),
+                : s.offline
+                    ? const Icon(PhosphorIconsBold.wifiSlash,
+                        key: ValueKey('offline'), size: 13, color: DS.rose)
+                    : KeyedSubtree(
+                        key: const ValueKey('bars'),
+                        child: s.loading
+                            ? _scanBars()
+                            : _staticBars(s.active, s.color),
+                      ),
           ),
         ),
       ),

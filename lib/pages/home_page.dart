@@ -607,8 +607,8 @@ class _HomePageState extends State<HomePage>
           'bypass connection blocked: reachable non-bypass server detected',
         );
         _showUnavailableNotice(
-          title: 'Обход сейчас недоступен',
-          subtitle: 'Есть доступные обычные серверы — выберите их для подключения',
+          title: 'Резервный сервер недоступен',
+          subtitle: 'Обычные серверы работают — выберите один из них',
         );
         return;
       }
@@ -754,8 +754,8 @@ class _HomePageState extends State<HomePage>
                   }
                   if (bypassBlockedNow) {
                     _showUnavailableNotice(
-                      title: 'Сервер недоступен сейчас',
-                      subtitle: 'Обход можно выбрать только, когда обычные серверы недоступны',
+                      title: 'Резервный сервер недоступен',
+                      subtitle: 'Резерв включается, только когда обычные серверы не работают',
                     );
                     return;
                   }
@@ -1020,7 +1020,7 @@ class _HomePageState extends State<HomePage>
                   child: Row(children: [
                     for (final e in <(String?, String)>[
                       (null, 'Все'),
-                      if (hasBypass)    ('bypass', 'Обход'),
+                      if (hasBypass)    ('bypass', 'Резерв'),
                       if (hasUnlimited) ('unlimited', 'Безлимит'),
                       ('other', 'Прочее'),
                     ])
@@ -2508,7 +2508,17 @@ class VpnIconBtn extends StatefulWidget {
   final bool loading;
   final IconData icon;
   final VoidCallback? onTap;
-  const VpnIconBtn({super.key, required this.loading, required this.icon, this.onTap});
+  /// When false, the glyph is replaced by a small circular spinner while
+  /// loading instead of being rotated — for icons where rotation reads as a
+  /// glitch (e.g. a speedometer) rather than as progress.
+  final bool spinWhenLoading;
+  const VpnIconBtn({
+    super.key,
+    required this.loading,
+    required this.icon,
+    this.onTap,
+    this.spinWhenLoading = true,
+  });
 
   @override
   State<VpnIconBtn> createState() => _VpnIconBtnState();
@@ -2525,12 +2535,13 @@ class _VpnIconBtnState extends State<VpnIconBtn>
       vsync: this,
       duration: const Duration(milliseconds: 700),
     );
-    if (widget.loading) _rotCtrl.repeat();
+    if (widget.loading && widget.spinWhenLoading) _rotCtrl.repeat();
   }
 
   @override
   void didUpdateWidget(VpnIconBtn old) {
     super.didUpdateWidget(old);
+    if (!widget.spinWhenLoading) return;
     if (widget.loading && !old.loading) {
       _rotCtrl.repeat();
     } else if (!widget.loading && old.loading) {
@@ -2562,10 +2573,18 @@ class _VpnIconBtnState extends State<VpnIconBtn>
         borderRadius: BorderRadius.circular(DS.radiusSm),
         border: Border.all(color: DS.border),
       ),
-      child: RotationTransition(
-        turns: _rotCtrl,
-        child: Icon(widget.icon, color: DS.textSecondary, size: 20),
-      ),
+      child: (widget.loading && !widget.spinWhenLoading)
+          ? const Center(
+              child: SizedBox(
+                width: 16, height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: DS.textSecondary),
+              ),
+            )
+          : RotationTransition(
+              turns: _rotCtrl,
+              child: Icon(widget.icon, color: DS.textSecondary, size: 20),
+            ),
     ),
   );
 }
