@@ -235,6 +235,15 @@ class _ServersPageState extends State<ServersPage> {
             : await showAuthBottomSheet(context);
         return;
       }
+      if (node.isDisabled || node.link == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Сервер временно недоступен'),
+          ),
+        );
+        return;
+      }
       HapticFeedback.selectionClick();
       selectedServerNotifier.value = node;
       final prefs = await SharedPreferences.getInstance();

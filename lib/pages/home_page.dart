@@ -500,11 +500,13 @@ class _HomePageState extends State<HomePage>
     if (raw != null) {
       try {
         return List<String>.from((jsonDecode(raw) as List).whereType<String>());
-      } catch (e) {
+      } on FormatException catch (e) {
         appLogger.error(
           'HomePage',
-          'failed to parse blocked apps setting: $e',
+          'failed to parse blocked apps JSON format: $e',
         );
+      } catch (e) {
+        appLogger.error('HomePage', 'blocked apps load error: $e');
       }
     }
     return List<String>.from(AppConfig.defaultBlockedApps);
@@ -579,7 +581,10 @@ class _HomePageState extends State<HomePage>
         'HomePage',
         'bypass connection blocked: reachable non-bypass server detected',
       );
-      _snack('Сервер обхода заблокирован: используйте обычные серверы');
+      _showUnavailableNotice(
+        title: 'Обход сейчас недоступен',
+        subtitle: 'Есть доступные обычные серверы — выберите их для подключения',
+      );
       return;
     }
     if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
@@ -638,7 +643,8 @@ class _HomePageState extends State<HomePage>
     return (auto: auto, manual: manual);
   }
 
-  void _showServerPicker() {
+  Future<void> _showServerPicker() async {
+    final hasReachableNonBypass = await _hasReachableNonBypassServer();
     String? selectedCat;
     showModalBottomSheet<void>(
       context: context,
@@ -693,7 +699,12 @@ class _HomePageState extends State<HomePage>
         // ── Card-style server tile ──────────────────────────────────────────
         Widget buildTile(ServerNode node, {required bool isAutoNode}) {
           final isSel  = _selectedNode?.uuid == node.uuid;
-          final locked = _isPublicCatalog || node.isDisabled || node.link == null;
+          final hardLocked =
+              _isPublicCatalog || node.isDisabled || node.link == null;
+          // Bypass servers are selectable only while regular servers are down.
+          final bypassBlockedNow =
+              !_isPublicCatalog && hasReachableNonBypass && _isBypassNode(node);
+          final locked = hardLocked || bypassBlockedNow;
           final accent = isAutoNode ? DS.indigoLight : DS.violet;
 
           return Padding(
@@ -703,13 +714,20 @@ class _HomePageState extends State<HomePage>
               child: InkWell(
                 borderRadius: BorderRadius.circular(DS.radiusSm),
                 onTap: () async {
-                  if (locked) {
+                  if (hardLocked) {
                     Navigator.pop(ctx);
                     if (context.mounted) {
                       authStateNotifier.value.isLoggedIn
                           ? widget.onGoToPremium?.call()
                           : await showAuthBottomSheet(context);
                     }
+                    return;
+                  }
+                  if (bypassBlockedNow) {
+                    _showUnavailableNotice(
+                      title: 'Сервер недоступен сейчас',
+                      subtitle: 'Обход можно выбрать только, когда обычные серверы недоступны',
+                    );
                     return;
                   }
                   HapticFeedback.selectionClick();
@@ -767,7 +785,7 @@ class _HomePageState extends State<HomePage>
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0.4),
                             ),
-                          if (locked) ...[
+                          if (hardLocked) ...[
                             const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -796,7 +814,8 @@ class _HomePageState extends State<HomePage>
                       ],
                     )),
                     const SizedBox(width: 8),
-                    // Trailing — selected → check pill; locked → lock; else empty.
+                    // Trailing — selected → check pill; bypass-blocked →
+                    // "Недоступно" badge; locked → lock; else empty.
                     if (isSel)
                       Container(
                         width: 26, height: 26,
@@ -806,6 +825,25 @@ class _HomePageState extends State<HomePage>
                         ),
                         child: Icon(PhosphorIconsBold.check,
                             color: Colors.white, size: 14),
+                      )
+                    else if (bypassBlockedNow)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: DS.rose.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                              color: DS.rose.withValues(alpha: 0.25)),
+                        ),
+                        child: const Text(
+                          'Недоступно',
+                          style: TextStyle(
+                            color: DS.rose,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       )
                     else if (locked)
                       Icon(PhosphorIconsBold.lock,
@@ -1003,6 +1041,63 @@ class _HomePageState extends State<HomePage>
       content: Text(msg),
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
     ));
+  }
+
+  void _showUnavailableNotice({
+    required String title,
+    String? subtitle,
+  }) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: DS.surface2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: DS.rose.withValues(alpha: 0.35)),
+        ),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        content: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: DS.rose.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.block_rounded, color: DS.rose, size: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: DS.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (subtitle != null && subtitle.isNotEmpty)
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: DS.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   String _fmtBytes(int bytes) {
