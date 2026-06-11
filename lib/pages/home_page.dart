@@ -241,17 +241,49 @@ class _HomePageState extends State<HomePage>
   // ── Ping ───────────────────────────────────────────────────────────────────
   // Cadence: 10 s while connected (live signal), 30 s otherwise (signal preview
   // from server selection). The bars are visible whenever a server is picked.
+  /// Burst-then-settle schedule.  The first few seconds after selecting a
+  /// server are when the value matters most (user just changed their mind,
+  /// or just opened the app), so we probe several times in quick succession
+  /// to nail down an accurate reading even if the network was cold.
+  /// After the burst we settle to a long-period heartbeat that just keeps
+  /// the cache fresh.
+  ///
+  /// Schedule:  0s · 3s · 9s · 21s · then every 60s (or 30s while connected).
+  static const List<Duration> _pingBurst = [
+    Duration.zero,
+    Duration(seconds: 3),
+    Duration(seconds: 9),
+    Duration(seconds: 21),
+  ];
+
+  int _pingBurstIdx = 0;
+
   void _restartPingTimer() {
     _pingTimer?.cancel();
+    _pingBurstIdx = 0;
     if (_selectedNode == null) {
       _pingTimer = null;
       return;
     }
-    _measurePing(); // immediate
-    final interval = _isConnected
-        ? const Duration(seconds: 10)
-        : const Duration(seconds: 30);
-    _pingTimer = Timer.periodic(interval, (_) => _measurePing());
+    _runPingBurstStep();
+  }
+
+  void _runPingBurstStep() {
+    if (!mounted || _selectedNode == null) return;
+    _measurePing();
+    _pingBurstIdx++;
+    if (_pingBurstIdx < _pingBurst.length) {
+      // Next burst step uses delta between this step and the next; the burst
+      // table stores absolute offsets, so we need the deltas.
+      final delta = _pingBurst[_pingBurstIdx] - _pingBurst[_pingBurstIdx - 1];
+      _pingTimer = Timer(delta, _runPingBurstStep);
+    } else {
+      // Settled — periodic heartbeat to keep the value fresh.
+      final settled = _isConnected
+          ? const Duration(seconds: 30)
+          : const Duration(seconds: 60);
+      _pingTimer = Timer.periodic(settled, (_) => _measurePing());
+    }
   }
 
   Future<void> _measurePing() async {
@@ -274,23 +306,35 @@ class _HomePageState extends State<HomePage>
     setState(() => _pingMeasuring = false);
   }
 
-  /// Measures TCP RTT with a throwaway warm-up connect first. The very first
-  /// connect to a host pays for DNS, ARP, route discovery and a TCP slow-start
-  /// — that inflates the reading by hundreds of ms on cold paths. We discard
-  /// it and time only the second connect, which runs against a warmed kernel
-  /// cache and is much closer to the real round-trip.
+  /// Measures TCP RTT with a throwaway warm-up connect first, then takes the
+  /// minimum of two follow-up measurements.
   ///
-  /// Returns null if either connect fails (host unreachable / timeout).
+  /// Why: the first connect to a host pays for DNS, ARP, route discovery and
+  /// TCP slow-start — that inflates the reading by hundreds of ms. The
+  /// warm-up burns it. Taking min(probe1, probe2) on the hot path filters
+  /// out the occasional retransmit / scheduler hiccup, leaving a number
+  /// very close to true round-trip.
+  ///
+  /// Returns null if the warm-up fails (host unreachable / timeout).
   static Future<int?> _accurateTcpRtt(String host, int port,
       {Duration timeout = const Duration(seconds: 2)}) async {
-    // ── Warm-up — discarded. ────────────────────────────────────────────
+    // Warm-up — discarded.
     try {
       final s = await Socket.connect(host, port, timeout: timeout);
       s.destroy();
     } catch (_) {
       return null; // unreachable from this network
     }
-    // ── Real measurement — hot path. ───────────────────────────────────
+    // Two real measurements; take the minimum.
+    final m1 = await _singleConnect(host, port, timeout);
+    if (m1 == null) return null;
+    final m2 = await _singleConnect(host, port, timeout);
+    if (m2 == null) return m1;
+    return m1 < m2 ? m1 : m2;
+  }
+
+  static Future<int?> _singleConnect(
+      String host, int port, Duration timeout) async {
     final sw = Stopwatch()..start();
     try {
       final s = await Socket.connect(host, port, timeout: timeout);

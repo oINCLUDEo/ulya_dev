@@ -131,20 +131,15 @@ class _ServersPageState extends State<ServersPage> {
     }
     for (final k in map.keys) {
       map[k]!.sort((a, b) {
-        // 1) Available (connected + enabled) nodes first.
+        // 1) Available (connected + enabled) nodes first. This depends on
+        //    server health flags from the catalog, NOT on the live ping
+        //    measurements — those would make the list jump around as
+        //    readings come in, which is exactly what the user reported.
         final aOk = a.isAvailable ? 0 : 1;
         final bOk = b.isAvailable ? 0 : 1;
         if (aOk != bOk) return aOk.compareTo(bOk);
 
-        // 2) Known-ping nodes float above not-yet-pinged; lower ping = better.
-        final pa = PingState.get(a.uuid), pb = PingState.get(b.uuid);
-        final aHasPing = pa != null && pa >= 0;
-        final bHasPing = pb != null && pb >= 0;
-        if (aHasPing && bHasPing) return pa.compareTo(pb);
-        if (aHasPing) return -1;
-        if (bHasPing) return 1;
-
-        // 3) Alphabetical tiebreaker.
+        // 2) Alphabetical by display name — stable, predictable order.
         return a.name.compareTo(b.name);
       });
     }
@@ -175,19 +170,20 @@ class _ServersPageState extends State<ServersPage> {
     } catch (_) { return null; }
   }
 
-  /// Throwaway connect + actual measurement. First connect to a host pays for
-  /// DNS / ARP / route setup and inflates the result by hundreds of ms; the
-  /// second connect lands on a warm kernel cache and reads true round-trip.
+  /// Warm-up connect + min of two follow-up measurements. See
+  /// _accurateTcpRtt in home_page.dart for the rationale — same approach.
   Future<int?> _tcpPingAccurate(String host, int port) async {
-    // Warm-up — discard. If this throws the host is just unreachable.
     try {
       final s = await Socket.connect(host, port, timeout: const Duration(seconds: 2));
       s.destroy();
     } catch (_) {
       return null;
     }
-    // Real measurement on the warmed path.
-    return _tcpPingRaw(host, port);
+    final m1 = await _tcpPingRaw(host, port);
+    if (m1 == null) return null;
+    final m2 = await _tcpPingRaw(host, port);
+    if (m2 == null) return m1;
+    return m1 < m2 ? m1 : m2;
   }
 
   Future<void> _tcpPingNode(ServerNode node) async {
@@ -197,7 +193,13 @@ class _ServersPageState extends State<ServersPage> {
     final host = node.address;
     if (host.isEmpty) return;
     final port = node.serverPort > 0 ? node.serverPort : 443;
-    PingState.markInFlight(node.uuid);
+    // Silent refresh: when we already have a valid cached reading for this
+    // node, don't flip the badge into the "scanning" state — replace it in
+    // place once the new value arrives. Only the first-ever probe (or one
+    // that follows a previous failure) shows the scan animation.
+    final cached = PingState.get(node.uuid);
+    final hasValid = cached != null && cached >= 0;
+    if (!hasValid) PingState.markInFlight(node.uuid);
     final ms = await _tcpPingAccurate(host, port);
     if (mounted) PingState.set(node.uuid, ms ?? -1);
   }

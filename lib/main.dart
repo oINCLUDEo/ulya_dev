@@ -15,6 +15,7 @@ import 'services/auth_state.dart';
 import 'services/favorites_state.dart';
 import 'services/me_service.dart';
 import 'services/notification_service.dart';
+import 'services/ping_state.dart';
 import 'widgets/notification_banner.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,6 +99,14 @@ void main() async {
       await loadFavorites();
     } catch (e, st) {
       appLogger.error('App', 'loadFavorites failed: $e\n$st');
+    }
+
+    try {
+      await PingState.loadFromDisk();
+      appLogger.info('App',
+          'ping cache: loaded ${PingState.notifier.value.length} entries');
+    } catch (e, st) {
+      appLogger.error('App', 'PingState.loadFromDisk failed: $e\n$st');
     }
 
     try {
