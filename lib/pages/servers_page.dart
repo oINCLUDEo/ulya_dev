@@ -842,103 +842,101 @@ class _QualityBadge extends StatelessWidget {
     required this.onLongPress,
   });
 
-  ({String label, Color color, IconData? icon, bool loading}) _state() {
-    // Server we know is dead → fixed unavailable state, no retry hint.
+  // Returns the glyph + accent colour for the current state. Label intentionally
+  // dropped — quality reads off icon + colour alone. The raw ping number is
+  // accessed by long-pressing the badge (see onLongPress).
+  ({Color color, IconData icon, bool loading, String tooltip}) _state() {
     if (noLink || !isAvailable) {
       return (
-        label: 'Недоступен',
         color: DS.rose,
         icon: PhosphorIconsBold.warningCircle,
         loading: false,
+        tooltip: 'Сервер недоступен',
       );
     }
-    // ping == -2 — measurement in flight.
     if (ping == -2) {
-      return (label: '…', color: DS.amber, icon: null, loading: true);
+      return (
+        color: DS.amber,
+        icon: PhosphorIconsBold.wifiHigh,
+        loading: true,
+        tooltip: 'Проверяем…',
+      );
     }
-    // ping == -1 — measurement failed (timeout / unreachable).
     if (ping != null && ping! < 0) {
       return (
-        label: 'Нет связи',
         color: DS.rose,
         icon: PhosphorIconsBold.wifiSlash,
         loading: false,
+        tooltip: 'Нет связи. Нажмите, чтобы повторить.',
       );
     }
-    // ping == null — never measured. Encourage the tap.
     if (ping == null) {
       return (
-        label: 'Проверить',
         color: DS.violet,
         icon: PhosphorIconsBold.wifiHigh,
         loading: false,
+        tooltip: 'Нажмите, чтобы проверить. Удерживайте для пинга.',
       );
     }
-    // Real ping value → bucket into quality tiers.
     final p = ping!;
     if (p < 80) {
       return (
-        label: 'Отлично',
         color: DS.emerald,
         icon: PhosphorIconsFill.wifiHigh,
         loading: false,
+        tooltip: '$p мс',
       );
     }
     if (p < 180) {
       return (
-        label: 'Хорошо',
         color: DS.emerald,
         icon: PhosphorIconsBold.wifiHigh,
         loading: false,
+        tooltip: '$p мс',
       );
     }
     if (p < 320) {
       return (
-        label: 'Слабо',
         color: DS.amber,
         icon: PhosphorIconsBold.wifiMedium,
         loading: false,
+        tooltip: '$p мс',
       );
     }
     return (
-      label: 'Очень слабо',
       color: DS.rose,
       icon: PhosphorIconsBold.wifiLow,
       loading: false,
+      tooltip: '$p мс',
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final s = _state();
-    return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        decoration: BoxDecoration(
-          color: s.color.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(DS.radiusXs),
-          border: Border.all(color: s.color.withValues(alpha: 0.30)),
+    return Tooltip(
+      message: s.tooltip,
+      preferBelow: false,
+      child: GestureDetector(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 32, height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: s.color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(DS.radiusXs),
+            border: Border.all(color: s.color.withValues(alpha: 0.32)),
+          ),
+          child: s.loading
+              ? SizedBox(
+                  width: 14, height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: s.color),
+                )
+              : Icon(s.icon, size: 15, color: s.color),
         ),
-        child: s.loading
-            ? SizedBox(
-                width: 14, height: 14,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: s.color),
-              )
-            : Row(mainAxisSize: MainAxisSize.min, children: [
-                if (s.icon != null) ...[
-                  Icon(s.icon, size: 11, color: s.color),
-                  const SizedBox(width: 4),
-                ],
-                Text(s.label,
-                    style: TextStyle(
-                        color: s.color,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700)),
-              ]),
       ),
     );
   }

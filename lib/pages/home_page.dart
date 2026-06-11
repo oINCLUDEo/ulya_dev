@@ -88,6 +88,11 @@ class _HomePageState extends State<HomePage>
   int? _pingMs;
   Timer? _pingTimer;
   bool _pingInFlight = false;
+  // Per-uuid cache of the most recent measurement (including failures →
+  // `null`). Switching servers shows the cached value instantly instead of
+  // a flicker of empty bars while the next TCP probe completes.
+  final Map<String, int?> _pingCache = {};
+  bool _pingMeasuring = false;
 
   // ── Speed history (sparkline ring buffers) ────────────────────────────────
   static const int _sparkLen = 18;
@@ -244,6 +249,13 @@ class _HomePageState extends State<HomePage>
     final node = _selectedNode;
     if (node == null || node.address.trim().isEmpty) return;
     _pingInFlight = true;
+    // Surface the measuring state to the UI only when we have nothing to show
+    // yet — otherwise the bars would flicker through "measuring" on every
+    // background poll, which is noisy. With a cached value, we silently
+    // refresh in the background instead.
+    if (_pingMs == null && mounted) {
+      setState(() => _pingMeasuring = true);
+    }
     final host = node.address.trim();
     final port = node.serverPort > 0 ? node.serverPort : _defaultServerPort;
     final sw = Stopwatch()..start();
@@ -259,8 +271,12 @@ class _HomePageState extends State<HomePage>
     } finally {
       _pingInFlight = false;
     }
+    _pingCache[node.uuid] = newPing;
     if (!mounted) return;
-    if (newPing != _pingMs) setState(() => _pingMs = newPing);
+    setState(() {
+      _pingMs = newPing;
+      _pingMeasuring = false;
+    });
   }
 
   @override
@@ -279,13 +295,17 @@ class _HomePageState extends State<HomePage>
     if (!mounted) return;
     final node = selectedServerNotifier.value;
     if (node?.uuid != _selectedNode?.uuid) {
+      // Prefer a cached ping value if we already measured this server — keeps
+      // the signal-bars indicator responsive instead of flicking to blank for
+      // the ~200-1000 ms it takes the next TCP probe to finish.
+      final cached =
+          node != null && _pingCache.containsKey(node.uuid)
+              ? _pingCache[node.uuid]
+              : null;
       setState(() {
         _selectedNode = node;
-        _pingMs = null; // stale until next measurement against new host
+        _pingMs = cached;
       });
-      // Measure immediately on selection, regardless of connection state, so
-      // the user sees signal bars right after picking a server. The periodic
-      // timer below is re-started so the cadence matches the new state.
       _restartPingTimer();
     }
   }
@@ -1251,7 +1271,7 @@ class _HomePageState extends State<HomePage>
                   ),
                 ),
                 if (_selectedNode != null) ...[
-                  _SignalBars(pingMs: _pingMs),
+                  _SignalBars(pingMs: _pingMs, measuring: _pingMeasuring),
                   const SizedBox(width: 8),
                 ],
                 const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 20),
@@ -2544,13 +2564,53 @@ class _RollingTimer extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 // _SignalBars — 4-bar Wi-Fi style signal indicator driven by TCP RTT.
 // Bar count vs RTT:  ≤50 → 4 · ≤100 → 3 · ≤200 → 2 · >200 → 1 · null → 0 (all dim).
+// When [measuring] is true (we have nothing to show yet AND a probe is in
+// flight) the bars run a left→right amber scan so the user gets immediate
+// feedback after picking a server, instead of staring at four dim stubs.
 // ─────────────────────────────────────────────────────────────────────────────
-class _SignalBars extends StatelessWidget {
+class _SignalBars extends StatefulWidget {
   final int? pingMs;
-  const _SignalBars({required this.pingMs});
+  final bool measuring;
+  const _SignalBars({required this.pingMs, this.measuring = false});
+
+  @override
+  State<_SignalBars> createState() => _SignalBarsState();
+}
+
+class _SignalBarsState extends State<_SignalBars>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _scanCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _scanCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    if (widget.measuring) _scanCtrl.repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SignalBars old) {
+    super.didUpdateWidget(old);
+    if (widget.measuring && !old.measuring) {
+      _scanCtrl.repeat();
+    } else if (!widget.measuring && old.measuring) {
+      _scanCtrl
+        ..stop()
+        ..reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scanCtrl.dispose();
+    super.dispose();
+  }
 
   int get _activeBars {
-    final ms = pingMs;
+    final ms = widget.pingMs;
     if (ms == null) return 0;
     if (ms <= 50) return 4;
     if (ms <= 100) return 3;
@@ -2569,9 +2629,43 @@ class _SignalBars extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const heights = [6.0, 9.0, 12.0, 15.0];
+
+    // Measuring state — animated amber scan across the four bars.
+    if (widget.measuring && _activeBars == 0) {
+      return SizedBox(
+        height: 16,
+        child: AnimatedBuilder(
+          animation: _scanCtrl,
+          builder: (_, child) {
+            // Highlight the bar at position floor(t * 4); fades around it.
+            final t = _scanCtrl.value * 4;
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (int i = 0; i < 4; i++) ...[
+                  Container(
+                    width: 3,
+                    height: heights[i],
+                    decoration: BoxDecoration(
+                      color: DS.amber.withValues(
+                          alpha: _scanAlpha(i, t)),
+                      borderRadius: BorderRadius.circular(1.5),
+                    ),
+                  ),
+                  if (i < 3) const SizedBox(width: 2),
+                ],
+              ],
+            );
+          },
+        ),
+      );
+    }
+
+    // Static state — colour bars by ping bucket, rest dimmed.
     final active = _activeBars;
     final color = _color;
-    const heights = [6.0, 9.0, 12.0, 15.0];
     return SizedBox(
       height: 16,
       child: Row(
@@ -2595,6 +2689,15 @@ class _SignalBars extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// Alpha for bar `i` during scan progress `t` ∈ [0, 4). Peaks at 0.85 for
+  /// the bar nearest `t`, decays smoothly to ~0.18 for the others.
+  double _scanAlpha(int i, double t) {
+    final d = (i - t).abs();
+    final wrapped = math.min(d, 4 - d); // wrap so scan loops smoothly
+    final n = (1 - wrapped / 2).clamp(0.0, 1.0);
+    return 0.18 + 0.67 * n;
   }
 }
 
