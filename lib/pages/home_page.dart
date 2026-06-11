@@ -544,8 +544,12 @@ class _HomePageState extends State<HomePage>
         !_isBypassNode(n) &&
         n.link != null &&
         !n.isDisabled).toList();
-    if (candidates.any((server) => server.isAvailable)) return true;
     if (candidates.isEmpty) return false;
+    // NOTE: do NOT shortcut on `isAvailable` here — the subscription parser
+    // hardcodes isConnected=true/isDisabled=false for every node, so that
+    // flag is always true and would block bypass servers even on networks
+    // (mobile LTE) where the regular servers are genuinely unreachable.
+    // Only a live TCP probe below tells the truth for the current network.
     for (var i = 0; i < candidates.length; i += _maxReachabilityWorkers) {
       final end = (i + _maxReachabilityWorkers < candidates.length)
           ? i + _maxReachabilityWorkers
@@ -645,6 +649,7 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _showServerPicker() async {
     final hasReachableNonBypass = await _hasReachableNonBypassServer();
+    if (!mounted) return;
     String? selectedCat;
     showModalBottomSheet<void>(
       context: context,

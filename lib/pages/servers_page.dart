@@ -36,10 +36,18 @@ class ServersPage extends StatefulWidget {
   State<ServersPage> createState() => _ServersPageState();
 }
 
-class _ServersPageState extends State<ServersPage> {
+class _ServersPageState extends State<ServersPage>
+    with WidgetsBindingObserver {
   List<ServerNode> _nodes = [];
   bool _loading = true;
   bool _isPublicCatalog = false;
+
+  /// Background re-sweep cadence. Keeps signal bars of NON-selected servers
+  /// fresh — without it a node probed once at startup (possibly on a network
+  /// where it was unreachable) kept its stale/-1 reading until the user
+  /// manually re-probed or re-selected it.
+  static const Duration _sweepPeriod = Duration(seconds: 60);
+  Timer? _sweepTimer;
 
   bool _autoExpanded     = true;
   bool _bypassExpanded   = true;
@@ -54,22 +62,34 @@ class _ServersPageState extends State<ServersPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     selectedServerNotifier.addListener(_onSelectionChanged);
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
     favoritesNotifier.addListener(_onFavoritesChanged);
     PingState.notifier.addListener(_onPingStateChanged);
+    _sweepTimer =
+        Timer.periodic(_sweepPeriod, (_) => _tcpPingAll(silent: true));
     _loadNodes();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _sweepTimer?.cancel();
     selectedServerNotifier.removeListener(_onSelectionChanged);
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
     favoritesNotifier.removeListener(_onFavoritesChanged);
     PingState.notifier.removeListener(_onPingStateChanged);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The network almost certainly changed while we were backgrounded
+    // (Wi-Fi ↔ LTE) — old readings are meaningless, re-probe everything.
+    if (state == AppLifecycleState.resumed) _tcpPingAll(silent: true);
   }
 
   void _onSelectionChanged() { if (mounted) setState(() {}); }
@@ -205,11 +225,16 @@ class _ServersPageState extends State<ServersPage> {
     if (mounted) PingState.set(node.uuid, ms ?? -1);
   }
 
-  Future<void> _tcpPingAll() async {
+  /// Probes every node. [silent] skips the mass "scanning" markers so a
+  /// background refresh replaces readings in place without making the whole
+  /// list flicker; the user-triggered sweep keeps the scan animation.
+  Future<void> _tcpPingAll({bool silent = false}) async {
     if (_nodes.isEmpty || _pingAllInProgress) return;
     setState(() => _pingAllInProgress = true);
-    for (final n in _nodes) {
-      if (n.link != null) PingState.markInFlight(n.uuid);
+    if (!silent) {
+      for (final n in _nodes) {
+        if (n.link != null) PingState.markInFlight(n.uuid);
+      }
     }
     final queue = _nodes.where((n) => n.link != null).toList();
     Future<void> worker() async {
