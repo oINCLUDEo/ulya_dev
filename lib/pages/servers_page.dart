@@ -5,6 +5,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_node.dart';
@@ -309,7 +310,7 @@ class _ServersPageState extends State<ServersPage>
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
         sliver: SliverToBoxAdapter(child: _SectionHeader(
           title: 'Избранное', subtitle: 'Закреплённые серверы',
-          color: DS.amber, icon: Icons.star_rounded,
+          color: DS.amber, icon: PhosphorIconsFill.star,
           expanded: true, nodeCount: favoriteNodes.length,
           onTap: () {},
         )),
@@ -329,7 +330,7 @@ class _ServersPageState extends State<ServersPage>
 
     addSection(title: 'Авто-выбор', subtitle: 'Умная балансировка — рекомендуется',
         nodes: groups['auto']!, color: DS.indigoLight,
-        icon: Icons.bolt_rounded, expanded: _autoExpanded,
+        icon: PhosphorIconsFill.lightning, expanded: _autoExpanded,
         onToggle: () => setState(() => _autoExpanded = !_autoExpanded));
 
     // Visual break: auto-select (smart) ↔ manual server list
@@ -344,17 +345,17 @@ class _ServersPageState extends State<ServersPage>
 
     addSection(title: 'Обход ограничений', subtitle: 'Для доступа к заблокированным сайтам',
         nodes: groups['bypass']!, color: DS.violet,
-        icon: Icons.shield_rounded, expanded: _bypassExpanded,
+        icon: PhosphorIconsFill.shieldCheck, expanded: _bypassExpanded,
         onToggle: () => setState(() => _bypassExpanded = !_bypassExpanded));
 
     addSection(title: 'Безлимитный трафик', subtitle: 'Без ограничений по объёму',
         nodes: groups['unlimited']!, color: DS.cyan,
-        icon: Icons.all_inclusive_rounded, expanded: _unlimitedExpanded,
+        icon: PhosphorIconsFill.infinity, expanded: _unlimitedExpanded,
         onToggle: () => setState(() => _unlimitedExpanded = !_unlimitedExpanded));
 
     addSection(title: 'Все серверы', subtitle: 'Остальные доступные узлы',
         nodes: groups['other']!, color: DS.emerald,
-        icon: Icons.public_rounded, expanded: _otherExpanded,
+        icon: PhosphorIconsFill.globeHemisphereWest, expanded: _otherExpanded,
         onToggle: () => setState(() => _otherExpanded = !_otherExpanded));
 
     return slivers;
@@ -426,12 +427,12 @@ class _ServersPageState extends State<ServersPage>
       if (!_isPublicCatalog) ...[
         VpnIconBtn(
           loading: _pingAllInProgress,
-          icon: Icons.speed_rounded,
+          icon: PhosphorIconsBold.gauge,
           onTap: (_loading || _pingAllInProgress) ? null : _tcpPingAll,
         ),
         const SizedBox(width: 8),
       ],
-      VpnIconBtn(loading: _loading, icon: Icons.refresh_rounded,
+      VpnIconBtn(loading: _loading, icon: PhosphorIconsBold.arrowsClockwise,
           onTap: _loading ? null : _loadNodes),
     ]);
   }
@@ -498,7 +499,7 @@ class _SectionHeader extends StatelessWidget {
               AnimatedRotation(
                 turns: expanded ? 0.5 : 0,
                 duration: const Duration(milliseconds: 240),
-                child: Icon(Icons.keyboard_arrow_down_rounded, color: color, size: 16),
+                child: Icon(PhosphorIconsBold.caretDown, color: color, size: 16),
               ),
             ]),
           ),
@@ -703,8 +704,8 @@ class _NodeTileState extends State<_NodeTile>
                       duration: const Duration(milliseconds: 180),
                       child: Icon(
                         widget.isFavorite
-                            ? Icons.star_rounded
-                            : Icons.star_border_rounded,
+                            ? PhosphorIconsFill.star
+                            : PhosphorIconsRegular.star,
                         key: ValueKey(widget.isFavorite),
                         color: DS.amber,
                         size: 26,
@@ -761,7 +762,7 @@ class _NodeTileState extends State<_NodeTile>
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
                   if (widget.isFavorite) ...[
-                    const Icon(Icons.star_rounded, size: 11, color: DS.amber),
+                    const Icon(PhosphorIconsFill.star, size: 11, color: DS.amber),
                     const SizedBox(width: 4),
                   ],
                   Expanded(child: Text(node.name, style: TextStyle(
@@ -778,13 +779,13 @@ class _NodeTileState extends State<_NodeTile>
               const SizedBox(width: 8),
               // Trailing
               if (isSelected)
-                Icon(Icons.check_circle_rounded, color: accentColor, size: 20)
+                Icon(PhosphorIconsFill.checkCircle, color: accentColor, size: 20)
               else if (widget.isPublicCatalog)
                 Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                     decoration: BoxDecoration(color: DS.surface2, borderRadius: BorderRadius.circular(DS.radiusXs),
                         border: Border.all(color: DS.border)),
-                    child: const Icon(Icons.lock_outline_rounded, size: 14, color: DS.textMuted))
+                    child: const Icon(PhosphorIconsRegular.lock, size: 14, color: DS.textMuted))
               else if (node.protocol == 'auto')
                 // Auto-routed host: no single address to probe, so just paint
                 // a healthy indigo bars badge — visually consistent with
@@ -1211,7 +1212,7 @@ class _EmptyState extends StatelessWidget {
             decoration: BoxDecoration(
                 color: DS.surface2, shape: BoxShape.circle,
                 border: Border.all(color: DS.border)),
-            child: const Icon(Icons.cloud_off_rounded, size: 32, color: DS.textMuted)),
+            child: const Icon(PhosphorIconsRegular.cloudSlash, size: 32, color: DS.textMuted)),
         const SizedBox(height: 18),
         Text(isPublic ? 'Каталог недоступен' : 'Серверы не получены',
             style: const TextStyle(color: DS.textPrimary, fontSize: 17, fontWeight: FontWeight.w600)),
@@ -1223,10 +1224,10 @@ class _EmptyState extends StatelessWidget {
             textAlign: TextAlign.center),
         const SizedBox(height: 22),
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          _OutlinedBtn(label: 'Повторить', icon: Icons.refresh_rounded, onTap: onRetry),
+          _OutlinedBtn(label: 'Повторить', icon: PhosphorIconsBold.arrowsClockwise, onTap: onRetry),
           if (onSettings != null) ...[
             const SizedBox(width: 10),
-            _OutlinedBtn(label: 'Настройки', icon: Icons.settings_rounded, onTap: onSettings!),
+            _OutlinedBtn(label: 'Настройки', icon: PhosphorIconsBold.gearSix, onTap: onSettings!),
           ],
         ]),
       ]),
