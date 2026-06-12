@@ -38,6 +38,15 @@ class _AuthSheetState extends State<_AuthSheet>
   String? _errorMessage;
   StreamSubscription<AuthResult>? _pollSub;
 
+  // ── Email mode ─────────────────────────────────────────────────────────────
+  bool _emailMode = false;
+  bool _registerMode = false;
+  bool _emailBusy = false;
+  bool _obscurePass = true;
+  String? _emailNotice;
+  final TextEditingController _emailCtrl = TextEditingController();
+  final TextEditingController _passCtrl = TextEditingController();
+
   late final AnimationController _successCtrl;
   late final Animation<double> _scaleAnim;
   late final Animation<double> _fadeAnim;
@@ -58,6 +67,8 @@ class _AuthSheetState extends State<_AuthSheet>
   void dispose() {
     _pollSub?.cancel();
     _successCtrl.dispose();
+    _emailCtrl.dispose();
+    _passCtrl.dispose();
     super.dispose();
   }
 
@@ -139,6 +150,77 @@ class _AuthSheetState extends State<_AuthSheet>
     setState(() { _step = _Step.idle; _errorMessage = null; });
   }
 
+  // ── Email actions ──────────────────────────────────────────────────────────
+
+  void _openEmailMode() {
+    setState(() {
+      _emailMode = true;
+      _registerMode = false;
+      _errorMessage = null;
+      _emailNotice = null;
+    });
+  }
+
+  void _closeEmailMode() {
+    if (_emailBusy) return;
+    setState(() {
+      _emailMode = false;
+      _errorMessage = null;
+      _emailNotice = null;
+    });
+  }
+
+  Future<void> _submitEmail() async {
+    if (_emailBusy) return;
+    final email = _emailCtrl.text.trim();
+    final pass = _passCtrl.text;
+    if (email.isEmpty || !email.contains('@')) {
+      setState(() => _errorMessage = 'Введите корректный email.');
+      return;
+    }
+    if (pass.length < 6) {
+      setState(() => _errorMessage = 'Пароль должен быть не короче 6 символов.');
+      return;
+    }
+    setState(() {
+      _emailBusy = true;
+      _errorMessage = null;
+      _emailNotice = null;
+    });
+
+    if (_registerMode) {
+      final r = await AuthService.registerWithEmail(email: email, password: pass);
+      if (!mounted) return;
+      if (!r.success) {
+        setState(() { _emailBusy = false; _errorMessage = r.error; });
+        return;
+      }
+      if (r.requiresVerification) {
+        setState(() {
+          _emailBusy = false;
+          _registerMode = false;
+          _emailNotice =
+              'Письмо с подтверждением отправлено на $email. Подтвердите адрес и войдите.';
+        });
+        return;
+      }
+      // Verification not required — fall through to login with the same creds.
+    }
+
+    final err = await AuthService.loginWithEmail(email: email, password: pass);
+    if (!mounted) return;
+    if (err == null) {
+      _showSuccess();
+      return;
+    }
+    setState(() {
+      _emailBusy = false;
+      _errorMessage = err == 'email_unverified'
+          ? 'Email не подтверждён — проверьте почту и перейдите по ссылке из письма.'
+          : err;
+    });
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -150,7 +232,11 @@ class _AuthSheetState extends State<_AuthSheet>
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
         top: false,
-        child: _step == _Step.success ? _buildSuccess() : _buildMain(),
+        child: _step == _Step.success
+            ? _buildSuccess()
+            : _emailMode
+                ? _buildEmailForm()
+                : _buildMain(),
       ),
     );
   }
@@ -280,6 +366,122 @@ class _AuthSheetState extends State<_AuthSheet>
     }
   }
 
+  // ── Email form ─────────────────────────────────────────────────────────────
+
+  Widget _buildEmailForm() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const SizedBox(height: 12),
+        Container(width: 40, height: 4,
+            decoration: BoxDecoration(color: DS.border, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(height: 20),
+        Row(children: [
+          IconButton(
+            onPressed: _closeEmailMode,
+            icon: const Icon(PhosphorIconsBold.caretLeft,
+                size: 18, color: DS.textSecondary),
+          ),
+          Expanded(
+            child: Text(
+              _registerMode ? 'Регистрация' : 'Вход по email',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w600),
+            ),
+          ),
+          // Symmetry filler matching the back button's footprint.
+          const SizedBox(width: 48),
+        ]),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _emailCtrl,
+          enabled: !_emailBusy,
+          keyboardType: TextInputType.emailAddress,
+          autocorrect: false,
+          textInputAction: TextInputAction.next,
+          style: const TextStyle(color: DS.textPrimary, fontSize: 15),
+          decoration: const InputDecoration(
+            hintText: 'email@example.com',
+            prefixIcon: Icon(PhosphorIconsRegular.envelopeSimple,
+                size: 18, color: DS.textMuted),
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _passCtrl,
+          enabled: !_emailBusy,
+          obscureText: _obscurePass,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _submitEmail(),
+          style: const TextStyle(color: DS.textPrimary, fontSize: 15),
+          decoration: InputDecoration(
+            hintText: 'Пароль',
+            prefixIcon: const Icon(PhosphorIconsRegular.lockSimple,
+                size: 18, color: DS.textMuted),
+            suffixIcon: IconButton(
+              onPressed: () => setState(() => _obscurePass = !_obscurePass),
+              icon: Icon(
+                _obscurePass
+                    ? PhosphorIconsRegular.eye
+                    : PhosphorIconsRegular.eyeSlash,
+                size: 18, color: DS.textMuted,
+              ),
+            ),
+          ),
+        ),
+        if (_emailNotice != null) ...[
+          const SizedBox(height: 12),
+          Text(_emailNotice!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: DS.emerald, fontSize: 13, height: 1.4)),
+        ],
+        if (_errorMessage != null) ...[
+          const SizedBox(height: 12),
+          Text(_errorMessage!,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: DS.rose.withValues(alpha: 0.9), fontSize: 13, height: 1.4)),
+        ],
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: _emailBusy ? null : _submitEmail,
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(DS.radius)),
+            ),
+            child: _emailBusy
+                ? const SizedBox(width: 20, height: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : Text(_registerMode ? 'Создать аккаунт' : 'Войти',
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.w600)),
+          ),
+        ),
+        const SizedBox(height: 6),
+        TextButton(
+          onPressed: _emailBusy
+              ? null
+              : () => setState(() {
+                    _registerMode = !_registerMode;
+                    _errorMessage = null;
+                    _emailNotice = null;
+                  }),
+          child: Text(
+            _registerMode
+                ? 'Уже есть аккаунт? Войти'
+                : 'Нет аккаунта? Зарегистрироваться',
+            style: const TextStyle(color: DS.textSecondary, fontSize: 13),
+          ),
+        ),
+      ]),
+    );
+  }
+
   Widget _buildAction() {
     switch (_step) {
       case _Step.idle:
@@ -291,6 +493,8 @@ class _AuthSheetState extends State<_AuthSheet>
           ),
           const SizedBox(height: 10),
           _GoogleButton(onTap: _onGoogleTap),
+          const SizedBox(height: 10),
+          _EmailButton(onTap: _openEmailMode),
         ]);
       case _Step.opening:
       case _Step.waiting:
@@ -327,6 +531,39 @@ class _GoogleButton extends StatelessWidget {
                   color: const Color(0xFFEA4335), size: 20),
               const SizedBox(width: 10),
               const Text('Войти через Google',
+                  style: TextStyle(
+                      color: DS.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ),
+      );
+}
+
+// Email sign-in CTA — same neutral surface treatment as the Google button so
+// the three options read as one coherent stack.
+class _EmailButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EmailButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: double.infinity,
+        child: GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: DS.surface1,
+              borderRadius: BorderRadius.circular(DS.radius),
+              border: Border.all(color: DS.border),
+            ),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(PhosphorIconsDuotone.envelopeSimple,
+                  color: DS.violet, size: 20),
+              const SizedBox(width: 10),
+              const Text('Войти по email',
                   style: TextStyle(
                       color: DS.textPrimary,
                       fontSize: 15,

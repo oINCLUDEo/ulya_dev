@@ -185,6 +185,10 @@ class AuthService {
         lastName: userMap['last_name'] as String?,
         username: userMap['username'] as String?,
         subscriptionUrl: body['subscription_url'] as String?,
+        // Cabinet JWT pair issued by the backend alongside the telegram
+        // verification — unlocks /cabinet/* (referral etc.) for bot users.
+        cabinetAccessToken: body['access_token'] as String?,
+        cabinetRefreshToken: body['refresh_token'] as String?,
       );
 
       await saveAuthState(newState);
