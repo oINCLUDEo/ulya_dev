@@ -18,6 +18,7 @@ import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../utils/server_icon.dart';
 import '../utils/signal_quality.dart';
+import '../widgets/skeleton.dart';
 import 'auth_bottom_sheet.dart';
 import 'home_page.dart' show VpnIconBtn, VpnInfoBanner;
 import '../main.dart' show DS;
@@ -445,8 +446,20 @@ class _ServersPageState extends State<ServersPage>
                 )),
               ),
             if (_loading)
-              const SliverFillRemaining(
-                  child: Center(child: CircularProgressIndicator(color: DS.violet)))
+              // Skeleton of the future layout (sections + rows) — reads as
+              // "almost there" instead of a void with a spinner.
+              const SliverPadding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+                sliver: SliverToBoxAdapter(
+                  child: SkeletonTheme(
+                    child: Column(children: [
+                      ServerSectionSkeleton(rows: 1),
+                      ServerSectionSkeleton(rows: 3),
+                      ServerSectionSkeleton(rows: 2),
+                    ]),
+                  ),
+                ),
+              )
             else if (_nodes.isEmpty)
               SliverFillRemaining(child: _EmptyState(
                 onRetry: _loadNodes,

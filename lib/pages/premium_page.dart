@@ -11,6 +11,7 @@ import '../models/me_response.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
+import '../widgets/skeleton.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 
@@ -1708,12 +1709,15 @@ class _PremiumPageState extends State<PremiumPage>
                       ),
                       const SizedBox(height: 12),
 
-                      // Лоадер пока тарифы/опции ещё загружаются
+                      // Скелетоны карточек, пока тарифы/опции загружаются
                       if (_loadingOptions && _options == null && !hasTariffs) ...[
-                        const SizedBox(height: 40),
-                        const Center(child: CircularProgressIndicator(
-                            color: DS.violet, strokeWidth: 2.5)),
-                        const SizedBox(height: 40),
+                        const SkeletonTheme(
+                          child: Column(children: [
+                            TariffCardSkeleton(),
+                            TariffCardSkeleton(),
+                          ]),
+                        ),
+                        const SizedBox(height: 16),
 
                       ] else if (hasTariffs) ...[
                         _ActionToggle(
@@ -1797,11 +1801,16 @@ class _PremiumPageState extends State<PremiumPage>
                         const SizedBox(height: 16),
                       ],
 
-                      // Loading
+                      // Loading — skeleton tariff cards
                       if (_loadingOptions && _options == null && !hasTariffs) ...[
-                        const SizedBox(height: 80),
-                        const Center(child: CircularProgressIndicator(
-                            color: DS.violet, strokeWidth: 2.5)),
+                        const SizedBox(height: 12),
+                        const SkeletonTheme(
+                          child: Column(children: [
+                            TariffCardSkeleton(),
+                            TariffCardSkeleton(),
+                            TariffCardSkeleton(),
+                          ]),
+                        ),
 
                       // ── Tariff flow: radio card list ─────────────────────
                       ] else if (hasTariffs) ...[

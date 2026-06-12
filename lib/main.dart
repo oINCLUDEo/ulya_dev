@@ -15,6 +15,7 @@ import 'pages/settings_page.dart';
 import 'services/app_logger.dart';
 import 'services/auth_state.dart';
 import 'services/favorites_state.dart';
+import 'services/launch_action_service.dart';
 import 'services/me_service.dart';
 import 'services/network_monitor.dart';
 import 'services/notification_service.dart';
@@ -147,6 +148,8 @@ Future<void> _boot() async {
 
     // Watch for Wi-Fi ↔ LTE switches so pages can re-probe immediately.
     NetworkMonitor.start();
+    // Launcher shortcut / QS tile action (if the app was opened through one).
+    await LaunchActionService.poll();
 
     // Background refresh — does NOT block startup.
     MeService.refresh();
@@ -300,8 +303,36 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    LaunchActionService.pending.addListener(_onLaunchAction);
+    _onLaunchAction();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    LaunchActionService.pending.removeListener(_onLaunchAction);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The QS tile / shortcut can fire while the app is alive in background —
+    // re-poll the platform side on every return to foreground.
+    if (state == AppLifecycleState.resumed) LaunchActionService.poll();
+  }
+
+  void _onLaunchAction() {
+    // "toggle" is consumed by HomePage itself; the shell only handles tab
+    // navigation actions.
+    if (LaunchActionService.consume('servers')) _go(1);
+  }
 
   void _goToPremium() {
     Navigator.push(

@@ -1302,6 +1302,7 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
   }
 
   void _toggle(String pkg) {
+    HapticFeedback.selectionClick();
     setState(() {
       _blocked.contains(pkg)
           ? _blocked.remove(pkg)

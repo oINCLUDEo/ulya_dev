@@ -4,7 +4,9 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../main.dart' show DS;
+import '../services/app_logger.dart';
 import '../services/referral_service.dart';
+import '../utils/referral_card.dart';
 
 /// Full-page referral hub: invite hero with code, progress strip, friends
 /// list (paginated), earnings history.
@@ -67,6 +69,21 @@ class _ReferralPageState extends State<ReferralPage> {
     final info = _info;
     if (info == null) return;
     HapticFeedback.selectionClick();
+    // Branded invite card with QR — falls back to plain text on any failure.
+    try {
+      final png = await renderReferralCardPng(info);
+      if (png != null) {
+        await SharePlus.instance.share(ShareParams(
+          files: [
+            XFile.fromData(png, mimeType: 'image/png', name: 'ulya_invite.png'),
+          ],
+          text: info.shareText,
+        ));
+        return;
+      }
+    } catch (e) {
+      appLogger.error('ReferralPage', 'card render failed: $e');
+    }
     await SharePlus.instance.share(ShareParams(text: info.shareText));
   }
 

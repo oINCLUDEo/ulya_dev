@@ -19,12 +19,14 @@ import '../config/app_config.dart';
 import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
+import '../services/launch_action_service.dart';
 import '../services/me_service.dart';
 import '../services/network_monitor.dart';
 import '../services/ping_state.dart';
 import '../services/referral_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
+import '../utils/referral_card.dart';
 import '../utils/server_icon.dart';
 import '../utils/signal_quality.dart';
 import '../utils/speed_calculator.dart';
@@ -132,6 +134,8 @@ class _HomePageState extends State<HomePage>
     // Network switched (Wi-Fi ↔ LTE) — re-burst the selected node's ping so
     // the connection card reflects the new network within seconds.
     NetworkMonitor.changeTick.addListener(_restartPingTimer);
+    // QS tile / "Подключить" shortcut while the app is already running.
+    LaunchActionService.pending.addListener(_onLaunchAction);
     _speedCalc = SpeedCalculator(smoothing: 0.25);
     _v2ray = FlutterV2ray();
     _init();
@@ -221,6 +225,21 @@ class _HomePageState extends State<HomePage>
     final info = _referralInfo;
     if (info == null) return;
     HapticFeedback.selectionClick();
+    // Branded invite card with QR — falls back to plain text on any failure.
+    try {
+      final png = await renderReferralCardPng(info);
+      if (png != null) {
+        await SharePlus.instance.share(ShareParams(
+          files: [
+            XFile.fromData(png, mimeType: 'image/png', name: 'ulya_invite.png'),
+          ],
+          text: info.shareText,
+        ));
+        return;
+      }
+    } catch (e) {
+      appLogger.error('HomePage', 'referral card render failed: $e');
+    }
     await SharePlus.instance.share(ShareParams(text: info.shareText));
   }
 
@@ -360,6 +379,7 @@ class _HomePageState extends State<HomePage>
     globalRefreshNotifier.removeListener(_onGlobalRefresh);
     PingState.notifier.removeListener(_onPingStateChanged);
     NetworkMonitor.changeTick.removeListener(_restartPingTimer);
+    LaunchActionService.pending.removeListener(_onLaunchAction);
     _statusSub?.cancel();
     _pingTimer?.cancel();
     super.dispose();
@@ -379,6 +399,23 @@ class _HomePageState extends State<HomePage>
   void _onAuthChanged() {
     _loadNodes();
     _loadReferral();
+  }
+
+  // ── Launch actions (QS tile / launcher shortcut) ──────────────────────────
+
+  void _onLaunchAction() => _maybeHandleToggleAction();
+
+  /// Runs the pending "toggle" action once the page is actually able to
+  /// connect: v2ray initialised, nodes loaded, a server selected. Called from
+  /// the pending-action listener and again after _loadNodes resolves, so a
+  /// cold start through the tile connects as soon as data is ready.
+  void _maybeHandleToggleAction() {
+    if (LaunchActionService.pending.value != 'toggle') return;
+    if (!_initialized || _isTransitioning) return;
+    if (_selectedNode == null) return; // retried after _loadNodes
+    LaunchActionService.consume('toggle');
+    appLogger.info('HomePage', 'launch action: toggle connection');
+    _toggleConnection();
   }
 
   void _onMeChanged() {
@@ -489,6 +526,8 @@ class _HomePageState extends State<HomePage>
     // for a node that no longer exists or had no pingable address), the new
     // one will measure against the current selection.
     if (_selectedNode != null) _restartPingTimer();
+    // A shortcut/tile "toggle" may have been waiting for nodes to arrive.
+    _maybeHandleToggleAction();
     // If a load was requested while we were busy, run it now once.
     if (_pendingLoad && mounted) {
       _pendingLoad = false;

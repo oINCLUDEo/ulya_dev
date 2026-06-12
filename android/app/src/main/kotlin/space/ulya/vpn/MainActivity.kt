@@ -1,6 +1,7 @@
 package space.ulya.vpn
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -33,6 +34,23 @@ class MainActivity: FlutterActivity() {
     // keeping the PNG payload ~2 KB instead of 100+ KB for a raw 432px
     // adaptive icon.
     private val ICON_SIZE = 64
+
+    // Pending action delivered by a launcher shortcut or the QS tile
+    // ("toggle" | "servers"). Consumed once by the Dart side via
+    // getLaunchAction.
+    private var launchAction: String? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        launchAction = intent?.getStringExtra("shortcut_action")
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // App was already running (singleTop) — remember the action; the Dart
+        // side polls it on resume.
+        launchAction = intent.getStringExtra("shortcut_action")
+    }
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -72,6 +90,11 @@ class MainActivity: FlutterActivity() {
             .setMethodCallHandler { call, result ->
 
                 when (call.method) {
+
+                    "getLaunchAction" -> {
+                        result.success(launchAction)
+                        launchAction = null // consume-once
+                    }
 
                     "getInstalledApps" -> appsExecutor.execute {
                         try {
