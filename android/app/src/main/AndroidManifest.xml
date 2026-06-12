@@ -10,7 +10,16 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission"/>
+    <!-- Package visibility for the split-tunneling app picker. The launcher
+         intent filter exposes exactly the set we show (apps with a launch
+         icon) without the QUERY_ALL_PACKAGES permission, which Google Play
+         restricts and audits. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+    </queries>
 
     <application
             tools:targetApi="35.0.1"

@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 /// Model for the GET /mobile/v1/me response.
 class MeResponse {
   const MeResponse({
@@ -105,9 +103,6 @@ class MeSubscription {
   }
 
   factory MeSubscription.fromJson(Map<String, dynamic> json) {
-    // Log subscription JSON keys once to help identify the plan-name field.
-    debugPrint('MeSubscription.fromJson keys: ${json.keys.toList()}');
-
     // Try several common field names for the tariff / plan label.
     final rawPlan =
         (json['plan_name']         as String?) ??
