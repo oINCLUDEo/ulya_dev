@@ -16,8 +16,10 @@ class AppsService {
       {"packageName": packageName},
     );
 
-    if (bytes == null) return null;
-
-    return Uint8List.fromList(List<int>.from(bytes));
+    // The platform channel already delivers byte arrays as Uint8List —
+    // avoid the old double copy through List<int>.
+    if (bytes is Uint8List) return bytes;
+    if (bytes is List) return Uint8List.fromList(bytes.cast<int>());
+    return null;
   }
 }

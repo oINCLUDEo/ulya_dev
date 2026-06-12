@@ -1384,53 +1384,35 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
           const Divider(height: 1, color: DS.border),
           Expanded(
             child: Stack(children: [
-              ValueListenableBuilder<int>(
-                valueListenable:
-                    AppsRepository.instance.iconsVersion,
-                builder: (_, _, _) => ListView.builder(
-                  controller: scrollCtrl,
-                  itemCount: _filtered.length,
-                  itemBuilder: (_, i) {
-                    final app = _filtered[i];
-                    final pkg = app['packageName'] as String;
-                    final name = app['appName'] as String;
-                    final isBlocked = _blocked.contains(pkg);
-                    final icon =
-                        AppsRepository.instance.icons[pkg];
-                    return ListTile(
-                      onTap: () => _toggle(pkg),
-                      leading: icon != null
-                          ? Image.memory(icon,
-                              width: 32,
-                              height: 32,
-                              gaplessPlayback: true)
-                          : Container(
-                              width: 32,
-                              height: 32,
-                              decoration: BoxDecoration(
-                                  color: DS.surface2,
-                                  borderRadius:
-                                      BorderRadius.circular(
-                                          DS.radiusXs)),
-                              child: const Icon(
-                                  Icons.android_rounded,
-                                  size: 20,
-                                  color: DS.textMuted)),
-                      title: Text(name,
-                          style: const TextStyle(
-                              color: DS.textPrimary,
-                              fontSize: 14)),
-                      subtitle: Text(pkg,
-                          style: const TextStyle(
-                              color: DS.textMuted,
-                              fontSize: 11,
-                              fontFamily: 'monospace')),
-                      trailing: Checkbox(
-                          value: isBlocked,
-                          onChanged: (_) => _toggle(pkg)),
-                    );
-                  },
-                ),
+              // NOTE: the icons notifier is consumed PER TILE (see _AppIcon),
+              // not around the whole list — a version tick repaints only the
+              // visible 32px leading slots instead of relayouting every row.
+              ListView.builder(
+                controller: scrollCtrl,
+                itemCount: _filtered.length,
+                itemExtent: 64,
+                itemBuilder: (_, i) {
+                  final app = _filtered[i];
+                  final pkg = app['packageName'] as String;
+                  final name = app['appName'] as String;
+                  final isBlocked = _blocked.contains(pkg);
+                  return ListTile(
+                    onTap: () => _toggle(pkg),
+                    leading: _AppIcon(packageName: pkg),
+                    title: Text(name,
+                        style: const TextStyle(
+                            color: DS.textPrimary,
+                            fontSize: 14)),
+                    subtitle: Text(pkg,
+                        style: const TextStyle(
+                            color: DS.textMuted,
+                            fontSize: 11,
+                            fontFamily: 'monospace')),
+                    trailing: Checkbox(
+                        value: isBlocked,
+                        onChanged: (_) => _toggle(pkg)),
+                  );
+                },
               ),
               if (_appsLoading)
                 const Align(
@@ -1444,6 +1426,38 @@ class _BlockedAppsSheetState extends State<BlockedAppsSheet> {
           ),
         ]),
       ),
+    );
+  }
+}
+
+/// Leading icon of an app row. Listens to the icons cache on its own so a
+/// freshly loaded icon repaints just this 32×32 slot — the surrounding tile
+/// and list stay untouched.
+class _AppIcon extends StatelessWidget {
+  final String packageName;
+  const _AppIcon({required this.packageName});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<int>(
+      valueListenable: AppsRepository.instance.iconsVersion,
+      builder: (_, _, _) {
+        final icon = AppsRepository.instance.icons[packageName];
+        if (icon != null) {
+          return Image.memory(icon,
+              width: 32, height: 32, gaplessPlayback: true);
+        }
+        return Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: DS.surface2,
+            borderRadius: BorderRadius.circular(DS.radiusXs),
+          ),
+          child: const Icon(Icons.android_rounded,
+              size: 20, color: DS.textMuted),
+        );
+      },
     );
   }
 }

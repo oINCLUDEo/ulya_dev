@@ -16,11 +16,23 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.Executors
 
 class MainActivity: FlutterActivity() {
 
     private val CHANNEL = "apps.channel"
     private val NETWORK_CHANNEL = "ulya/network_events"
+
+    // PackageManager look-ups and bitmap work are slow (binder calls, drawable
+    // inflation, compression) — never run them on the platform main thread or
+    // every icon request janks the UI for tens of milliseconds.
+    private val appsExecutor = Executors.newFixedThreadPool(2)
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    // Icons are rendered at 32dp in the picker; 64px covers 2x density while
+    // keeping the PNG payload ~2 KB instead of 100+ KB for a raw 432px
+    // adaptive icon.
+    private val ICON_SIZE = 64
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -59,12 +71,11 @@ class MainActivity: FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
 
-                val pm = packageManager
-
                 when (call.method) {
 
-                    "getInstalledApps" -> {
+                    "getInstalledApps" -> appsExecutor.execute {
                         try {
+                            val pm = packageManager
                             val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
 
                             val list = apps
@@ -76,9 +87,9 @@ class MainActivity: FlutterActivity() {
                                     )
                                 }
 
-                            result.success(list)
+                            mainHandler.post { result.success(list) }
                         } catch (e: Exception) {
-                            result.error("ERROR", e.message, null)
+                            mainHandler.post { result.error("ERROR", e.message, null) }
                         }
                     }
 
@@ -90,35 +101,47 @@ class MainActivity: FlutterActivity() {
                             return@setMethodCallHandler
                         }
 
-                        try {
-                            val drawable = pm.getApplicationIcon(packageName)
-
-                            val bitmap = if (drawable is BitmapDrawable) {
-                                drawable.bitmap
-                            } else {
-                                val bmp = Bitmap.createBitmap(
-                                    drawable.intrinsicWidth,
-                                    drawable.intrinsicHeight,
-                                    Bitmap.Config.ARGB_8888
-                                )
-                                val canvas = Canvas(bmp)
-                                drawable.setBounds(0, 0, canvas.width, canvas.height)
-                                drawable.draw(canvas)
-                                bmp
-                            }
-
-                            val stream = ByteArrayOutputStream()
-                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-
-                            result.success(stream.toByteArray())
-
-                        } catch (e: Exception) {
-                            result.success(null)
+                        appsExecutor.execute {
+                            val bytes = renderIconPng(packageName)
+                            mainHandler.post { result.success(bytes) }
                         }
                     }
 
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /// Draws the app icon straight into an ICON_SIZE bitmap (no full-size
+    /// intermediate) and compresses it to PNG off the main thread.
+    private fun renderIconPng(packageName: String): ByteArray? {
+        return try {
+            val drawable = packageManager.getApplicationIcon(packageName)
+            val bmp = Bitmap.createBitmap(ICON_SIZE, ICON_SIZE, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            if (drawable is BitmapDrawable && drawable.bitmap != null) {
+                val src = drawable.bitmap
+                canvas.drawBitmap(
+                    src,
+                    null,
+                    android.graphics.RectF(0f, 0f, ICON_SIZE.toFloat(), ICON_SIZE.toFloat()),
+                    android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+                )
+            } else {
+                drawable.setBounds(0, 0, ICON_SIZE, ICON_SIZE)
+                drawable.draw(canvas)
+            }
+            val stream = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            bmp.recycle()
+            stream.toByteArray()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    override fun onDestroy() {
+        appsExecutor.shutdown()
+        super.onDestroy()
     }
 }
