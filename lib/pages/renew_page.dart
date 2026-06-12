@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:math' show max;
 
 import 'package:flutter/material.dart';
@@ -274,7 +274,7 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() => _pollingForPayment = false);
       if (confirmed) {
-        globalRefreshNotifier.notifyListeners();
+        globalRefreshNotifier.value++;
         _snack('Подписка продлена!', ok: true);
         await Future.delayed(const Duration(milliseconds: 900));
         if (mounted) Navigator.of(context).pop();
@@ -345,7 +345,7 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
         _snack('Ошибка соединения с сервером');
       } else if (r.isSuccess) {
         await MeService.refresh();
-        globalRefreshNotifier.notifyListeners();
+        globalRefreshNotifier.value++;
         _snack('Подписка продлена!', ok: true);
         await Future.delayed(const Duration(milliseconds: 900));
         if (mounted) Navigator.of(context).pop();

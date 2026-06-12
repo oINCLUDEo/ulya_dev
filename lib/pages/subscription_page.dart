@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart' show DS;
@@ -1556,9 +1555,9 @@ class _DevicesCardState extends State<_DevicesCard> {
               physics: const NeverScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               itemCount: count,
-              separatorBuilder: (_, __) => const SizedBox(height: 6),
+              separatorBuilder: (_, _) => const SizedBox(height: 6),
               itemBuilder: (_, i) {
-                final device = result!.devices[i];
+                final device = result.devices[i];
                 final hwid = device.hwid;
                 final client = device.clientName;
                 final platform = device.platformName;
