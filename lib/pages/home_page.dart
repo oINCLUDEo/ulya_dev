@@ -20,6 +20,7 @@ import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
+import '../services/network_monitor.dart';
 import '../services/ping_state.dart';
 import '../services/referral_service.dart';
 import '../services/remnawave_service.dart';
@@ -126,6 +127,9 @@ class _HomePageState extends State<HomePage>
     // Rebuild on shared ping cache updates — picks up measurements made by
     // the ServersPage sweep without us having to re-probe locally.
     PingState.notifier.addListener(_onPingStateChanged);
+    // Network switched (Wi-Fi ↔ LTE) — re-burst the selected node's ping so
+    // the connection card reflects the new network within seconds.
+    NetworkMonitor.changeTick.addListener(_restartPingTimer);
     _speedCalc = SpeedCalculator(smoothing: 0.25);
     _v2ray = FlutterV2ray();
     _init();
@@ -353,6 +357,7 @@ class _HomePageState extends State<HomePage>
     meNotifier.removeListener(_onMeChanged);
     globalRefreshNotifier.removeListener(_onGlobalRefresh);
     PingState.notifier.removeListener(_onPingStateChanged);
+    NetworkMonitor.changeTick.removeListener(_restartPingTimer);
     _statusSub?.cancel();
     _pingTimer?.cancel();
     super.dispose();
@@ -607,7 +612,7 @@ class _HomePageState extends State<HomePage>
           'bypass connection blocked: reachable non-bypass server detected',
         );
         _showUnavailableNotice(
-          title: 'Резервный сервер недоступен',
+          title: 'Белый список недоступен',
           subtitle: 'Обычные серверы работают — выберите один из них',
         );
         return;
@@ -671,9 +676,6 @@ class _HomePageState extends State<HomePage>
   }
 
   Future<void> _showServerPicker() async {
-    // Cheap cache-based estimate — the picker must open without waiting for
-    // xray probe round-trips; the strict check happens on the connect tap.
-    final hasReachableNonBypass = _hasLikelyReachableNonBypassServer();
     String? selectedCat;
     showModalBottomSheet<void>(
       context: context,
@@ -682,7 +684,15 @@ class _HomePageState extends State<HomePage>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
+      // The sheet re-evaluates availability on every ping-cache update, so
+      // when the user switches Wi-Fi ↔ LTE the "Недоступно" badges clear as
+      // soon as the background sweep re-probes — no manual refresh needed.
+      builder: (ctx) => ValueListenableBuilder<Map<String, int?>>(
+        valueListenable: PingState.notifier,
+        builder: (_, pings, child) => StatefulBuilder(builder: (ctx, setSheet) {
+        // Cheap cache-based estimate — the picker must open without waiting
+        // for xray probe round-trips; the strict check runs on connect tap.
+        final hasReachableNonBypass = _hasLikelyReachableNonBypassServer();
         // ── Category detection (Обход / Безлимит) ───────────────────────────
         bool hasBypass = false, hasUnlimited = false;
         for (final n in _nodes) {
@@ -754,8 +764,8 @@ class _HomePageState extends State<HomePage>
                   }
                   if (bypassBlockedNow) {
                     _showUnavailableNotice(
-                      title: 'Резервный сервер недоступен',
-                      subtitle: 'Резерв включается, только когда обычные серверы не работают',
+                      title: 'Белый список недоступен',
+                      subtitle: 'Белые списки включаются, только когда обычные серверы не работают',
                     );
                     return;
                   }
@@ -1020,7 +1030,7 @@ class _HomePageState extends State<HomePage>
                   child: Row(children: [
                     for (final e in <(String?, String)>[
                       (null, 'Все'),
-                      if (hasBypass)    ('bypass', 'Резерв'),
+                      if (hasBypass)    ('bypass', 'Белые списки'),
                       if (hasUnlimited) ('unlimited', 'Безлимит'),
                       ('other', 'Прочее'),
                     ])
@@ -1059,7 +1069,8 @@ class _HomePageState extends State<HomePage>
             ),
           ]),
         );
-      }),
+        }),
+      ),
     );
   }
 
@@ -2508,9 +2519,9 @@ class VpnIconBtn extends StatefulWidget {
   final bool loading;
   final IconData icon;
   final VoidCallback? onTap;
-  /// When false, the glyph is replaced by a small circular spinner while
-  /// loading instead of being rotated — for icons where rotation reads as a
-  /// glitch (e.g. a speedometer) rather than as progress.
+  /// When false, the glyph stays perfectly static and just dims while
+  /// loading — for icons where any rotation reads as a glitch (e.g. a
+  /// speedometer). Progress feedback is the per-row scan animation instead.
   final bool spinWhenLoading;
   const VpnIconBtn({
     super.key,
@@ -2574,13 +2585,8 @@ class _VpnIconBtnState extends State<VpnIconBtn>
         border: Border.all(color: DS.border),
       ),
       child: (widget.loading && !widget.spinWhenLoading)
-          ? const Center(
-              child: SizedBox(
-                width: 16, height: 16,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: DS.textSecondary),
-              ),
-            )
+          ? Icon(widget.icon,
+              color: DS.textSecondary.withValues(alpha: 0.35), size: 20)
           : RotationTransition(
               turns: _rotCtrl,
               child: Icon(widget.icon, color: DS.textSecondary, size: 20),

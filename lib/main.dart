@@ -14,6 +14,7 @@ import 'services/app_logger.dart';
 import 'services/auth_state.dart';
 import 'services/favorites_state.dart';
 import 'services/me_service.dart';
+import 'services/network_monitor.dart';
 import 'services/notification_service.dart';
 import 'services/ping_state.dart';
 import 'widgets/notification_banner.dart';
@@ -116,6 +117,9 @@ void main() async {
     } catch (e, st) {
       appLogger.error('App', 'MeService.loadFromCache failed: $e\n$st');
     }
+
+    // Watch for Wi-Fi ↔ LTE switches so pages can re-probe immediately.
+    NetworkMonitor.start();
 
     // Background refresh — does NOT block startup.
     MeService.refresh();

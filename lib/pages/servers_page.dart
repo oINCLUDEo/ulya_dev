@@ -12,6 +12,7 @@ import '../models/server_node.dart';
 import '../services/auth_state.dart';
 import '../services/favorites_state.dart';
 import '../services/me_service.dart';
+import '../services/network_monitor.dart';
 import '../services/ping_state.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
@@ -83,7 +84,16 @@ class _ServersPageState extends State<ServersPage>
     meNotifier.addListener(_onMeChanged);
     favoritesNotifier.addListener(_onFavoritesChanged);
     PingState.notifier.addListener(_onPingStateChanged);
+    NetworkMonitor.changeTick.addListener(_onNetworkChanged);
     _loadNodes();
+  }
+
+  /// Default network switched (Wi-Fi ↔ LTE) — every cached reading is for
+  /// the OLD network. Re-probe immediately and restart the burst schedule.
+  void _onNetworkChanged() {
+    if (!mounted) return;
+    _tcpPingAll(silent: true);
+    _restartSweepSchedule();
   }
 
   /// (Re)starts the burst-then-settle sweep schedule. Called after the node
@@ -116,6 +126,7 @@ class _ServersPageState extends State<ServersPage>
     meNotifier.removeListener(_onMeChanged);
     favoritesNotifier.removeListener(_onFavoritesChanged);
     PingState.notifier.removeListener(_onPingStateChanged);
+    NetworkMonitor.changeTick.removeListener(_onNetworkChanged);
     super.dispose();
   }
 
@@ -388,9 +399,9 @@ class _ServersPageState extends State<ServersPage>
       ));
     }
 
-    addSection(title: 'Резервные серверы', subtitle: 'Выручают, когда обычные блокируются',
+    addSection(title: 'Белые списки', subtitle: 'YouTube, Telegram и базовые сервисы — даже при жёстких блокировках',
         nodes: groups['bypass']!, color: DS.violet,
-        icon: PhosphorIconsFill.lifebuoy, expanded: _bypassExpanded,
+        icon: PhosphorIconsFill.listChecks, expanded: _bypassExpanded,
         onToggle: () => setState(() => _bypassExpanded = !_bypassExpanded));
 
     addSection(title: 'Безлимитный трафик', subtitle: 'Без ограничений по объёму',
