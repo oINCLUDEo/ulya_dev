@@ -31,6 +31,12 @@ class AppConfig {
   static const String oauthScheme   = 'ulyavpn';
   static const String oauthCallback = 'ulyavpn://oauth/callback';
 
+  /// Sentry DSN for crash reporting. Empty string disables Sentry entirely
+  /// (no SDK init, zero network calls) — safe default for local dev builds.
+  /// Create a Flutter project at sentry.io (or self-hosted) and paste the
+  /// DSN here before building a release.
+  static const String sentryDsn = '';
+
   /// Package names excluded from VPN tunnel by default (on first launch).
   static const List<String> defaultBlockedApps = [
     'com.vk.vkvideo',        // VK Video

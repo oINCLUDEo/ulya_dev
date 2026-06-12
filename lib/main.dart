@@ -4,7 +4,9 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
+import 'config/app_config.dart';
 import 'pages/home_page.dart';
 import 'pages/onboarding_page.dart';
 import 'pages/premium_page.dart';
@@ -67,6 +69,31 @@ class DS {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void main() async {
+  // Crash reporting is opt-in via AppConfig.sentryDsn — with an empty DSN the
+  // SDK is never initialised and the app boots exactly as before.
+  if (AppConfig.sentryDsn.isNotEmpty) {
+    await SentryFlutter.init(
+      (options) {
+        options.dsn = AppConfig.sentryDsn;
+        // VPN app: never attach user IPs or PII to crash events.
+        options.sendDefaultPii = false;
+        options.tracesSampleRate = 0.1;
+        options.attachScreenshot = false;
+      },
+      appRunner: _boot,
+    );
+  } else {
+    await _boot();
+  }
+}
+
+/// Sends [error] to Sentry when crash reporting is enabled. No-op otherwise.
+void _reportCrash(Object error, StackTrace? stack) {
+  if (AppConfig.sentryDsn.isEmpty) return;
+  unawaited(Sentry.captureException(error, stackTrace: stack));
+}
+
+Future<void> _boot() async {
   // Catch synchronous errors during boot so the crash trail lands in the
   // log file before the process dies.
   await runZonedGuarded<Future<void>>(() async {
@@ -129,18 +156,20 @@ void main() async {
         'boot done — showOnboarding=$showOnboarding, launching UI');
     await appLogger.flush();
 
-    // Surface Flutter-framework errors into the app log too.
+    // Surface Flutter-framework errors into the app log and Sentry.
     FlutterError.onError = (FlutterErrorDetails details) {
       appLogger.error(
         'FlutterError',
         '${details.exceptionAsString()}\n${details.stack ?? ""}',
       );
+      _reportCrash(details.exception, details.stack);
       FlutterError.presentError(details);
     };
 
     runApp(UlyaVpnApp(showOnboarding: showOnboarding));
   }, (error, stack) {
     appLogger.error('App', 'Uncaught zone error: $error\n$stack');
+    _reportCrash(error, stack);
     appLogger.flush();
   });
 }
