@@ -677,32 +677,41 @@ class _SlidePainter extends CustomPainter {
       ..strokeWidth = 2.8
       ..color = color.withValues(alpha: 0.90));
 
-    // Lock icon centered inside shield
+    // ── Padlock, centred in the shield ──────────────────────────────────────
+    final lock = Paint()..color = Colors.white.withValues(alpha: 0.92);
+    final lockW = shW * 0.46;          // body width
+    final bodyH = lockW * 0.82;
     final lCx = cx;
-    final lCy = cy + shH * 0.10;
-    // Body
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset(lCx, lCy + 12), width: 36, height: 28),
-        const Radius.circular(6),
-      ),
-      Paint()..color = Colors.white.withValues(alpha: 0.88),
-    );
-    // Shackle
+    final bodyTop = cy + shH * 0.04;   // body sits a touch below shield centre
+
+    // Shackle — a semicircle ABOVE the body (top half: left → up → right).
+    final shackleR = lockW * 0.30;
+    final shackleCy = bodyTop - shackleR * 0.18;
     canvas.drawArc(
-      Rect.fromCenter(center: Offset(lCx, lCy + 3), width: 24, height: 24),
-      math.pi, -math.pi, false,
+      Rect.fromCircle(center: Offset(lCx, shackleCy), radius: shackleR),
+      math.pi, math.pi, false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 4
-        ..strokeCap = StrokeCap.round
-        ..color = Colors.white.withValues(alpha: 0.88),
+        ..strokeWidth = shackleR * 0.42
+        ..color = Colors.white.withValues(alpha: 0.92),
     );
-    // Keyhole dot
-    canvas.drawCircle(
-      Offset(lCx, lCy + 12),
-      4,
-      Paint()..color = color.withValues(alpha: 0.6),
+
+    // Body — rounded rectangle.
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(lCx - lockW / 2, bodyTop, lockW, bodyH),
+        Radius.circular(lockW * 0.18),
+      ),
+      lock,
+    );
+
+    // Keyhole — circle + stem, punched out in the brand colour.
+    final khR = lockW * 0.12;
+    final khCy = bodyTop + bodyH * 0.40;
+    canvas.drawCircle(Offset(lCx, khCy), khR, Paint()..color = color);
+    canvas.drawRect(
+      Rect.fromLTWH(lCx - khR * 0.45, khCy, khR * 0.9, bodyH * 0.30),
+      Paint()..color = color,
     );
   }
 
