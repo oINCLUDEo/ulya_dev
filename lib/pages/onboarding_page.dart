@@ -1017,18 +1017,28 @@ class _AuthSlide extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(context).bottom + 160,
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 40, 24, 0),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 320),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: _buildContent(context),
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          padding: EdgeInsets.only(bottom: keyboard),
+          child: ConstrainedBox(
+            // Fill the viewport so the content can be vertically centred even
+            // when it's short (avoids the heading hugging the top).
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Padding(
+              // Bottom inset leaves room for the page dots; centring is done
+              // within the remaining space.
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 96),
+              child: Center(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 320),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: _buildContent(context),
+                ),
+              ),
+            ),
           ),
         ),
       ),
