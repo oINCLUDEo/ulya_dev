@@ -480,15 +480,15 @@ class _FeatureSlide extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
-          flex: 58,
+          flex: 54,
           child: _SlideIllustration(index: index, color: slide.color),
         ),
         Expanded(
-          flex: 42,
+          flex: 46,
           child: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(40, 16, 40, 172),
+              padding: const EdgeInsets.fromLTRB(40, 12, 40, 150),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.start,
                 children: [
