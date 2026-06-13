@@ -47,6 +47,19 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Telegram OIDC Native Login App Link. Telegram redirects the
+                 authorization result here (https://app{id}-login.tg.dev/tglogin);
+                 the domain is auto-verified against the SHA-256 registered in
+                 @BotFather, so Android opens the app directly. Caught in Dart
+                 via the app_links package (see TelegramAuthLink). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"
+                      android:host="app1151606946-login.tg.dev"
+                      android:pathPrefix="/tglogin"/>
+            </intent-filter>
             <!-- Static launcher shortcuts: long-press the app icon. -->
             <meta-data
                     android:name="android.app.shortcuts"

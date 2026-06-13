@@ -13,6 +13,7 @@ import 'app_logger.dart';
 import 'auth_state.dart';
 import 'me_service.dart';
 import 'remnawave_service.dart';
+import 'telegram_auth_link.dart';
 
 /// Result of an auth initiation or poll.
 class AuthResult {
@@ -496,12 +497,12 @@ class AuthService {
   /// Authorization Code flow — the same provider the web cabinet uses, NOT the
   /// bot deep-link. Native: no web bridge page required.
   ///
-  /// 1. Open the Telegram authorize endpoint in an in-app browser with PKCE +
-  ///    CSRF state and our registered custom-scheme [AppConfig.telegramAuthCallback]
-  ///    as `redirect_uri` (must be registered in @BotFather → Native Login /
-  ///    Redirect URIs).
-  /// 2. Telegram delivers the authorization `code` straight to that scheme
-  ///    (`ulyavpn://oauth/telegram?code=…&state=…`), caught by flutter_web_auth_2.
+  /// 1. Open the Telegram authorize endpoint in the system browser with PKCE +
+  ///    CSRF state and our App Link [AppConfig.telegramAuthCallback]
+  ///    (`https://app{id}-login.tg.dev/tglogin`) as `redirect_uri` — registered
+  ///    in @BotFather → Native Login and verified against the release SHA-256.
+  /// 2. After consent Telegram redirects to that https App Link; Android opens
+  ///    the app directly with `?code=…&state=…`, caught via [TelegramAuthLink].
   /// 3. We POST `{code, code_verifier, redirect_uri}` to
   ///    `/cabinet/auth/telegram/oidc/code`. The backend exchanges the code for
   ///    an id_token (it holds the confidential client secret), validates it via
@@ -511,8 +512,8 @@ class AuthService {
   /// [telegramFallback] if the caller should try the deep-link flow, or a
   /// localised error string for a hard failure.
   static Future<String?> signInWithTelegram() async {
-    // PKCE (S256) + CSRF state. The code arrives via a custom scheme that any
-    // installed app could claim, so PKCE binds the exchange to this client.
+    // PKCE (S256) + CSRF state. The code arrives via an App Link; PKCE binds
+    // the exchange to this client, state guards against cross-session replay.
     final codeVerifier = _randomToken(48);
     final codeChallenge = base64Url
         .encode(sha256.convert(utf8.encode(codeVerifier)).bytes)
@@ -531,23 +532,27 @@ class AuthService {
       },
     ).toString();
 
-    final String resultUrl;
-    try {
-      resultUrl = await FlutterWebAuth2.authenticate(
-        url: authUrl,
-        callbackUrlScheme: AppConfig.oauthScheme,
-      );
-    } on PlatformException catch (e) {
-      // Most likely user cancellation. Treat as a soft cancel — the caller
-      // decides whether to offer the deep-link instead.
-      appLogger.info('AuthService', 'telegram oidc cancelled/unavailable: ${e.message}');
-      return telegramCancelled;
-    } on Exception catch (e) {
-      appLogger.error('AuthService', 'telegram oidc browser error: $e');
+    // Start waiting for the App Link redirect BEFORE opening the browser, so a
+    // fast round-trip can't slip past us.
+    await TelegramAuthLink.start();
+    final redirectFut = TelegramAuthLink.awaitRedirect();
+
+    final launched = await launchUrl(
+      Uri.parse(authUrl),
+      mode: LaunchMode.externalApplication,
+    ).catchError((_) => false);
+    if (!launched) {
+      TelegramAuthLink.cancel();
+      appLogger.error('AuthService', 'telegram authorize: failed to open browser');
       return telegramFallback;
     }
 
-    final cb = Uri.parse(resultUrl);
+    final cb = await redirectFut;
+    if (cb == null) {
+      // Timed out — browser blocked, App Link unverified, or user wandered off.
+      return telegramFallback;
+    }
+
     final err = cb.queryParameters['error'];
     if (err != null && err.isNotEmpty) {
       appLogger.error('AuthService', 'telegram authorize error: $err');
@@ -557,7 +562,7 @@ class AuthService {
     final code = cb.queryParameters['code'];
     final returnedState = cb.queryParameters['state'];
     if (code == null || code.isEmpty) {
-      appLogger.error('AuthService', 'telegram authorize: no code in $resultUrl');
+      appLogger.error('AuthService', 'telegram authorize: no code in $cb');
       return telegramFallback;
     }
     if (returnedState != state) {
