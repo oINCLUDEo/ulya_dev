@@ -786,7 +786,16 @@ class _PremiumPageState extends State<PremiumPage>
   Future<void> _openPaymentUrl(String url) async {
     try {
       final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
+      // Open the payment page in an in-app browser window (Custom Tab /
+      // SFSafariViewController) instead of switching to the external browser.
+      final opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView)
+          .catchError((_) => false);
+      if (opened) {
+        if (mounted) {
+          _snack('Страница оплаты открыта. После оплаты закройте окно и вернитесь в приложение.', ok: true);
+          _pendingPaymentPoll = true;
+        }
+      } else if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
         if (mounted) {
           _snack('Страница оплаты открыта. После оплаты вернитесь в приложение.', ok: true);
