@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:http/http.dart' as http;
@@ -490,29 +492,49 @@ class AuthService {
   /// failure). For a VPN audience this is the important resilience path.
   static const String telegramFallback = '__tg_fallback__';
 
-  /// Full Telegram login through `oauth.telegram.org` — the same authoritative
-  /// flow the web cabinet uses, NOT the bot deep-link.
+  /// Full Telegram login through `oauth.telegram.org` via the OIDC
+  /// Authorization Code flow — the same provider the web cabinet uses, NOT the
+  /// bot deep-link. Native: no web bridge page required.
   ///
-  /// 1. Open [AppConfig.telegramBridgeUrl] in an in-app browser. That page is
-  ///    served from the @BotFather-registered domain (the trusted origin), so
-  ///    Telegram allows the OAuth widget there.
-  /// 2. The bridge runs the Telegram OAuth flow and redirects back to
-  ///    [AppConfig.telegramAuthCallback] with either:
-  ///      • `?id_token=<jwt>`          → real OIDC (validated via JWKS), or
-  ///      • `?tgAuthResult=<base64url>` → Login Widget data (validated via HMAC),
-  ///      • `?error=<code>`            → failure.
-  /// 3. We POST whichever we got to the matching cabinet endpoint
-  ///    (`/cabinet/auth/telegram/oidc` or `/cabinet/auth/telegram/widget`),
-  ///    receive the JWT pair + user, persist the session.
+  /// 1. Open the Telegram authorize endpoint in an in-app browser with PKCE +
+  ///    CSRF state and our registered custom-scheme [AppConfig.telegramAuthCallback]
+  ///    as `redirect_uri` (must be registered in @BotFather → Native Login /
+  ///    Redirect URIs).
+  /// 2. Telegram delivers the authorization `code` straight to that scheme
+  ///    (`ulyavpn://oauth/telegram?code=…&state=…`), caught by flutter_web_auth_2.
+  /// 3. We POST `{code, code_verifier, redirect_uri}` to
+  ///    `/cabinet/auth/telegram/oidc/code`. The backend exchanges the code for
+  ///    an id_token (it holds the confidential client secret), validates it via
+  ///    JWKS, creates/logs in the user, and returns the JWT pair + user.
   ///
   /// Returns `null` on success, [telegramCancelled] if the user aborted,
   /// [telegramFallback] if the caller should try the deep-link flow, or a
   /// localised error string for a hard failure.
   static Future<String?> signInWithTelegram() async {
+    // PKCE (S256) + CSRF state. The code arrives via a custom scheme that any
+    // installed app could claim, so PKCE binds the exchange to this client.
+    final codeVerifier = _randomToken(48);
+    final codeChallenge = base64Url
+        .encode(sha256.convert(utf8.encode(codeVerifier)).bytes)
+        .replaceAll('=', '');
+    final state = _randomToken(16);
+
+    final authUrl = Uri.parse(AppConfig.telegramAuthorizeEndpoint).replace(
+      queryParameters: {
+        'client_id': AppConfig.telegramOidcClientId,
+        'redirect_uri': AppConfig.telegramAuthCallback,
+        'response_type': 'code',
+        'scope': 'openid profile',
+        'state': state,
+        'code_challenge': codeChallenge,
+        'code_challenge_method': 'S256',
+      },
+    ).toString();
+
     final String resultUrl;
     try {
       resultUrl = await FlutterWebAuth2.authenticate(
-        url: AppConfig.telegramBridgeUrl,
+        url: authUrl,
         callbackUrlScheme: AppConfig.oauthScheme,
       );
     } on PlatformException catch (e) {
@@ -528,50 +550,42 @@ class AuthService {
     final cb = Uri.parse(resultUrl);
     final err = cb.queryParameters['error'];
     if (err != null && err.isNotEmpty) {
-      appLogger.error('AuthService', 'telegram bridge error: $err');
-      // Domain blocked / widget failed → let the caller fall back to deep-link.
+      appLogger.error('AuthService', 'telegram authorize error: $err');
+      // Domain blocked / provider failed → let the caller fall back to deep-link.
       return telegramFallback;
     }
-
-    final idToken = cb.queryParameters['id_token'];
-    final tgAuthResult = cb.queryParameters['tgAuthResult'];
+    final code = cb.queryParameters['code'];
+    final returnedState = cb.queryParameters['state'];
+    if (code == null || code.isEmpty) {
+      appLogger.error('AuthService', 'telegram authorize: no code in $resultUrl');
+      return telegramFallback;
+    }
+    if (returnedState != state) {
+      appLogger.error('AuthService', 'telegram authorize: state mismatch');
+      return 'Сессия входа устарела. Попробуйте снова.';
+    }
 
     try {
-      final Map<String, dynamic> reqBody;
-      final String endpoint;
-
-      if (idToken != null && idToken.isNotEmpty) {
-        endpoint = '/cabinet/auth/telegram/oidc';
-        reqBody = {'id_token': idToken};
-      } else if (tgAuthResult != null && tgAuthResult.isNotEmpty) {
-        final widget = _decodeTgAuthResult(tgAuthResult);
-        if (widget == null) {
-          appLogger.error('AuthService', 'telegram bridge: bad tgAuthResult');
-          return telegramFallback;
-        }
-        endpoint = '/cabinet/auth/telegram/widget';
-        reqBody = widget;
-      } else {
-        appLogger.error('AuthService', 'telegram bridge: no token in $resultUrl');
-        return telegramFallback;
-      }
-
       final resp = await http
           .post(
-            Uri.parse('${AppConfig.backendBaseUrl}$endpoint'),
+            Uri.parse('${AppConfig.backendBaseUrl}/cabinet/auth/telegram/oidc/code'),
             headers: const {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             },
-            body: jsonEncode(reqBody),
+            body: jsonEncode({
+              'code': code,
+              'code_verifier': codeVerifier,
+              'redirect_uri': AppConfig.telegramAuthCallback,
+            }),
           )
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 20));
 
       if (resp.statusCode != 200) {
         appLogger.error('AuthService',
-            'telegram auth failed: HTTP ${resp.statusCode} body=${resp.body}');
-        // 400 here usually means OIDC isn't enabled on the backend — still
-        // better to fall back than to dead-end the user.
+            'telegram code exchange failed: HTTP ${resp.statusCode} body=${resp.body}');
+        // e.g. OIDC not configured on the backend — fall back rather than
+        // dead-end the user.
         return telegramFallback;
       }
 
@@ -607,39 +621,16 @@ class AuthService {
           'user authenticated via telegram oidc: ${newState.displayName}');
       return null; // success
     } on Exception catch (e) {
-      appLogger.error('AuthService', 'telegram auth exchange failed: $e');
+      appLogger.error('AuthService', 'telegram code exchange error: $e');
       return telegramFallback;
     }
   }
 
-  /// Decode the Login Widget payload Telegram returns in `tgAuthResult`
-  /// (base64url of a JSON object: id, first_name, …, auth_date, hash).
-  static Map<String, dynamic>? _decodeTgAuthResult(String raw) {
-    try {
-      var s = raw.replaceAll('-', '+').replaceAll('_', '/');
-      switch (s.length % 4) {
-        case 2: s += '=='; break;
-        case 3: s += '='; break;
-      }
-      final decoded = utf8.decode(base64.decode(s));
-      final map = jsonDecode(decoded) as Map<String, dynamic>;
-      // Coerce to the exact field set the /telegram/widget schema expects.
-      final out = <String, dynamic>{
-        'id': map['id'],
-        'first_name': map['first_name'] ?? '',
-        'auth_date': map['auth_date'],
-        'hash': map['hash'],
-      };
-      if (map['last_name'] != null) out['last_name'] = map['last_name'];
-      if (map['username'] != null) out['username'] = map['username'];
-      if (map['photo_url'] != null) out['photo_url'] = map['photo_url'];
-      if (out['id'] == null || out['hash'] == null || out['auth_date'] == null) {
-        return null;
-      }
-      return out;
-    } catch (_) {
-      return null;
-    }
+  /// Cryptographically-random URL-safe token (PKCE verifier + CSRF state).
+  static String _randomToken(int bytes) {
+    final r = math.Random.secure();
+    final b = List<int>.generate(bytes, (_) => r.nextInt(256));
+    return base64Url.encode(b).replaceAll('=', '');
   }
 
   /// Maps common OAuth error codes returned in the deeplink to a Russian
