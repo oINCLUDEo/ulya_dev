@@ -41,6 +41,7 @@ flutter:
   assets:
     - assets/anim/loading.json
     - assets/icon/logo.svg
+    - assets/image/app_icon.png
 
 flutter_native_splash:
   color: "#0F0F1A"

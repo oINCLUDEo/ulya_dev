@@ -3,9 +3,23 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../services/referral_service.dart';
+
+/// Decode a bundled asset into a [ui.Image] (null on any failure — the card
+/// then falls back to a vector glyph so rendering never breaks).
+Future<ui.Image?> _loadAssetImage(String path) async {
+  try {
+    final data = await rootBundle.load(path);
+    final codec = await ui.instantiateImageCodec(data.buffer.asUint8List());
+    final frame = await codec.getNextFrame();
+    return frame.image;
+  } catch (_) {
+    return null;
+  }
+}
 
 /// Renders a shareable referral invite card as a PNG (1080×1350, 4:5 — the
 /// sweet spot for messengers and stories).
@@ -32,6 +46,9 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   final link = info.botReferralLink.isNotEmpty
       ? info.botReferralLink
       : info.referralLink;
+
+  // VPN app icon used as the brand mark (replaces the old lightning bolt).
+  final brandIcon = await _loadAssetImage('assets/image/app_icon.png');
 
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, w, h));
@@ -95,7 +112,7 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
       painter.paint(canvas, Offset((w - painter.width) / 2, y));
 
   // Vertical cursor — every block advances it, so nothing overlaps.
-  var y = 72.0;
+  var y = 64.0;
 
   // ── Brand pill ─────────────────────────────────────────────────────────────
   final brand = tp(
@@ -108,9 +125,13 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
     ),
   );
   const pillH = 84.0;
-  final pillW = brand.width + 150;
+  const iconSize = 50.0;
+  const iconGap = 18.0;
+  // pill width = side padding + icon + gap + wordmark + side padding
+  final pillW = 52 + iconSize + iconGap + brand.width + 52;
+  final pillLeft = (w - pillW) / 2;
   final pillRect = RRect.fromRectAndRadius(
-    Rect.fromLTWH((w - pillW) / 2, y, pillW, pillH),
+    Rect.fromLTWH(pillLeft, y, pillW, pillH),
     const Radius.circular(42),
   );
   canvas.drawRRect(pillRect, Paint()..color = violet.withValues(alpha: 0.16));
@@ -121,50 +142,69 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
       ..strokeWidth = 2
       ..color = violet.withValues(alpha: 0.55),
   );
-  // Lightning bolt to the left of the wordmark.
-  final boltX = (w - pillW) / 2 + 52;
-  final boltY = y + 18.0;
-  final bolt = Path()
-    ..moveTo(boltX + 14, boltY)
-    ..lineTo(boltX, boltY + 27)
-    ..lineTo(boltX + 11, boltY + 27)
-    ..lineTo(boltX + 8, boltY + 48)
-    ..lineTo(boltX + 24, boltY + 20)
-    ..lineTo(boltX + 13, boltY + 20)
-    ..close();
-  canvas.drawPath(bolt, Paint()..color = gold);
-  brand.paint(canvas, Offset((w - pillW) / 2 + 92, y + (pillH - brand.height) / 2));
-  y += pillH + 56;
+  // VPN app icon (rounded) to the left of the wordmark.
+  final iconRect = Rect.fromLTWH(
+      pillLeft + 52, y + (pillH - iconSize) / 2, iconSize, iconSize);
+  if (brandIcon != null) {
+    final rrect =
+        RRect.fromRectAndRadius(iconRect, const Radius.circular(12));
+    canvas.save();
+    canvas.clipRRect(rrect);
+    canvas.drawImageRect(
+      brandIcon,
+      Rect.fromLTWH(0, 0, brandIcon.width.toDouble(), brandIcon.height.toDouble()),
+      iconRect,
+      Paint()..filterQuality = FilterQuality.high,
+    );
+    canvas.restore();
+  } else {
+    // Fallback: a small shield glyph in brand violet.
+    final sx = iconRect.left, sy = iconRect.top, sw = iconSize;
+    final shield = Path()
+      ..moveTo(sx + sw / 2, sy)
+      ..lineTo(sx + sw, sy + sw * 0.18)
+      ..lineTo(sx + sw, sy + sw * 0.55)
+      ..quadraticBezierTo(sx + sw, sy + sw * 0.9, sx + sw / 2, sy + sw)
+      ..quadraticBezierTo(sx, sy + sw * 0.9, sx, sy + sw * 0.55)
+      ..lineTo(sx, sy + sw * 0.18)
+      ..close();
+    canvas.drawPath(shield, Paint()..color = violet);
+  }
+  brand.paint(
+      canvas,
+      Offset(pillLeft + 52 + iconSize + iconGap,
+          y + (pillH - brand.height) / 2));
+  y += pillH + 48;
 
   // ── Headline ───────────────────────────────────────────────────────────────
   final headline = tp(
     'Дарю интернет\nбез границ',
     const TextStyle(
       color: textPrimary,
-      fontSize: 86,
+      fontSize: 84,
       fontWeight: FontWeight.w800,
       height: 1.12,
       letterSpacing: -1.5,
     ),
   );
   drawCentered(headline, y);
-  y += headline.height + 28;
+  y += headline.height + 22;
 
   final sub = tp(
     'Подключайся по моему коду —\nполучишь бонус при регистрации',
     const TextStyle(
       color: textSecondary,
-      fontSize: 36,
+      fontSize: 35,
       fontWeight: FontWeight.w500,
       height: 1.4,
     ),
   );
   drawCentered(sub, y);
-  y += sub.height + 52;
+  y += sub.height + 44;
 
   // ── QR glass card ──────────────────────────────────────────────────────────
-  const cardW = 452.0;
-  const cardH = 452.0;
+  const cardW = 420.0;
+  const cardH = 420.0;
   final cardX = (w - cardW) / 2;
   final cardRect = RRect.fromRectAndRadius(
     Rect.fromLTWH(cardX, y, cardW, cardH),
@@ -180,7 +220,7 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   canvas.drawRRect(cardRect, Paint()..color = Colors.white);
 
   // QR code (dark modules on white for maximum scanner contrast).
-  const qrSize = 372.0;
+  const qrSize = 344.0;
   final qr = QrPainter(
     data: link,
     version: QrVersions.auto,
@@ -198,10 +238,10 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   canvas.translate((w - qrSize) / 2, y + (cardH - qrSize) / 2);
   qr.paint(canvas, const Size(qrSize, qrSize));
   canvas.restore();
-  y += cardH + 44;
+  y += cardH + 40;
 
   // ── Referral code pill (label + code stacked inside) ────────────────────────
-  const codeH = 150.0;
+  const codeH = 142.0;
   final code = tp(
     info.referralCode.toUpperCase(),
     const TextStyle(
@@ -234,14 +274,14 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
       ..strokeWidth = 2
       ..color = gold.withValues(alpha: 0.45),
   );
-  drawCentered(label, y + 28);
-  drawCentered(code, y + 28 + label.height + 8);
-  y += codeH + 40;
+  drawCentered(label, y + 26);
+  drawCentered(code, y + 26 + label.height + 6);
+  y += codeH + 30;
 
   // ── Footer ─────────────────────────────────────────────────────────────────
   final footer = tp(
     'Сканируй камерой — установка за минуту',
-    const TextStyle(color: textSecondary, fontSize: 30, fontWeight: FontWeight.w500),
+    const TextStyle(color: textSecondary, fontSize: 29, fontWeight: FontWeight.w500),
   );
   drawCentered(footer, y);
 
