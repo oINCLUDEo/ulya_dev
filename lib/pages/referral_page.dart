@@ -255,27 +255,34 @@ class _ReferralPageState extends State<ReferralPage> {
               border: Border.all(color: DS.border),
             ),
             child: Row(children: [
-              const Text('ВАШ КОД',
-                  style: TextStyle(
-                    color: DS.textMuted,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.4,
-                  )),
-              const SizedBox(width: 14),
               Expanded(
-                child: Text(
-                  info.referralCode.isEmpty ? '—' : info.referralCode,
-                  style: const TextStyle(
-                    color: DS.textPrimary,
-                    fontSize: 19,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 2,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                  overflow: TextOverflow.ellipsis,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('ВАШ КОД',
+                        style: TextStyle(
+                          color: DS.textMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.4,
+                        )),
+                    const SizedBox(height: 4),
+                    Text(
+                      info.referralCode.isEmpty ? '—' : info.referralCode,
+                      style: const TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 2,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(width: 12),
               GestureDetector(
                 onTap: _copyCode,
                 child: AnimatedContainer(

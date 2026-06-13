@@ -11,9 +11,13 @@ import '../services/referral_service.dart';
 /// sweet spot for messengers and stories).
 ///
 /// Visual language mirrors the app: deep #0A0A0F background, violet/cyan
-/// aurora glows, glass card with the QR code and the referral code in a
-/// monospace pill. Everything is drawn directly on a [Canvas] — no widget
-/// tree, no BuildContext, safe to call from anywhere.
+/// aurora glows, a white glass QR card and the referral code in a gold pill.
+/// Everything is drawn directly on a [Canvas] — no widget tree, no
+/// BuildContext, safe to call from anywhere.
+///
+/// The vertical layout is driven by a running `y` cursor so blocks always
+/// stack with real gaps and never overlap (the previous fixed-offset version
+/// collided the footer with the code pill).
 Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   const w = 1080.0;
   const h = 1350.0;
@@ -48,9 +52,9 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   }
 
   glow(const Offset(170, 180), 480, violet, 0.45);
-  glow(const Offset(950, 380), 420, cyan, 0.22);
-  glow(const Offset(540, 1280), 520, violet, 0.30);
-  glow(const Offset(120, 1100), 300, gold, 0.10);
+  glow(const Offset(950, 360), 420, cyan, 0.22);
+  glow(const Offset(540, 1290), 520, violet, 0.30);
+  glow(const Offset(120, 1080), 300, gold, 0.10);
 
   // Sprinkle of tiny stars.
   final rnd = math.Random(7);
@@ -90,8 +94,10 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   void drawCentered(TextPainter painter, double y) =>
       painter.paint(canvas, Offset((w - painter.width) / 2, y));
 
+  // Vertical cursor — every block advances it, so nothing overlaps.
+  var y = 72.0;
+
   // ── Brand pill ─────────────────────────────────────────────────────────────
-  const pillY = 96.0;
   final brand = tp(
     'ULYA VPN',
     const TextStyle(
@@ -101,9 +107,10 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
       letterSpacing: 6,
     ),
   );
+  const pillH = 84.0;
   final pillW = brand.width + 150;
   final pillRect = RRect.fromRectAndRadius(
-    Rect.fromLTWH((w - pillW) / 2, pillY, pillW, 84),
+    Rect.fromLTWH((w - pillW) / 2, y, pillW, pillH),
     const Radius.circular(42),
   );
   canvas.drawRRect(pillRect, Paint()..color = violet.withValues(alpha: 0.16));
@@ -116,7 +123,7 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   );
   // Lightning bolt to the left of the wordmark.
   final boltX = (w - pillW) / 2 + 52;
-  const boltY = pillY + 18.0;
+  final boltY = y + 18.0;
   final bolt = Path()
     ..moveTo(boltX + 14, boltY)
     ..lineTo(boltX, boltY + 27)
@@ -126,40 +133,42 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
     ..lineTo(boltX + 13, boltY + 20)
     ..close();
   canvas.drawPath(bolt, Paint()..color = gold);
-  brand.paint(
-      canvas, Offset((w - pillW) / 2 + 92, pillY + (84 - brand.height) / 2));
+  brand.paint(canvas, Offset((w - pillW) / 2 + 92, y + (pillH - brand.height) / 2));
+  y += pillH + 56;
 
   // ── Headline ───────────────────────────────────────────────────────────────
   final headline = tp(
     'Дарю интернет\nбез границ',
     const TextStyle(
       color: textPrimary,
-      fontSize: 88,
+      fontSize: 86,
       fontWeight: FontWeight.w800,
       height: 1.12,
       letterSpacing: -1.5,
     ),
   );
-  drawCentered(headline, 248);
+  drawCentered(headline, y);
+  y += headline.height + 28;
 
   final sub = tp(
     'Подключайся по моему коду —\nполучишь бонус при регистрации',
     const TextStyle(
       color: textSecondary,
-      fontSize: 38,
+      fontSize: 36,
       fontWeight: FontWeight.w500,
       height: 1.4,
     ),
   );
-  drawCentered(sub, 478);
+  drawCentered(sub, y);
+  y += sub.height + 52;
 
   // ── QR glass card ──────────────────────────────────────────────────────────
-  const cardW = 520.0;
-  const cardH = 520.0;
-  const cardY = 632.0;
+  const cardW = 452.0;
+  const cardH = 452.0;
+  final cardX = (w - cardW) / 2;
   final cardRect = RRect.fromRectAndRadius(
-    Rect.fromLTWH((w - cardW) / 2, cardY, cardW, cardH),
-    const Radius.circular(44),
+    Rect.fromLTWH(cardX, y, cardW, cardH),
+    const Radius.circular(40),
   );
   // Soft violet halo behind the card.
   canvas.drawRRect(
@@ -171,7 +180,7 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   canvas.drawRRect(cardRect, Paint()..color = Colors.white);
 
   // QR code (dark modules on white for maximum scanner contrast).
-  const qrSize = 416.0;
+  const qrSize = 372.0;
   final qr = QrPainter(
     data: link,
     version: QrVersions.auto,
@@ -186,19 +195,20 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
     ),
   );
   canvas.save();
-  canvas.translate((w - qrSize) / 2, cardY + (cardH - qrSize) / 2);
+  canvas.translate((w - qrSize) / 2, y + (cardH - qrSize) / 2);
   qr.paint(canvas, const Size(qrSize, qrSize));
   canvas.restore();
+  y += cardH + 44;
 
-  // ── Referral code pill ─────────────────────────────────────────────────────
-  const codeY = cardY + cardH + 56;
+  // ── Referral code pill (label + code stacked inside) ────────────────────────
+  const codeH = 150.0;
   final code = tp(
     info.referralCode.toUpperCase(),
     const TextStyle(
       color: textPrimary,
-      fontSize: 56,
+      fontSize: 52,
       fontWeight: FontWeight.w800,
-      letterSpacing: 10,
+      letterSpacing: 9,
       fontFeatures: [ui.FontFeature.tabularFigures()],
     ),
   );
@@ -206,14 +216,14 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
     'ТВОЙ КОД',
     TextStyle(
       color: gold.withValues(alpha: 0.95),
-      fontSize: 26,
+      fontSize: 25,
       fontWeight: FontWeight.w700,
       letterSpacing: 5,
     ),
   );
-  final codeW = math.max(code.width, label.width) + 140;
+  final codeW = math.max(code.width, label.width) + 150;
   final codeRect = RRect.fromRectAndRadius(
-    Rect.fromLTWH((w - codeW) / 2, codeY, codeW, 150),
+    Rect.fromLTWH((w - codeW) / 2, y, codeW, codeH),
     const Radius.circular(34),
   );
   canvas.drawRRect(codeRect, Paint()..color = Colors.white.withValues(alpha: 0.06));
@@ -224,15 +234,16 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
       ..strokeWidth = 2
       ..color = gold.withValues(alpha: 0.45),
   );
-  drawCentered(label, codeY + 26);
-  drawCentered(code, codeY + 62);
+  drawCentered(label, y + 28);
+  drawCentered(code, y + 28 + label.height + 8);
+  y += codeH + 40;
 
   // ── Footer ─────────────────────────────────────────────────────────────────
   final footer = tp(
     'Сканируй камерой — установка за минуту',
-    const TextStyle(color: textSecondary, fontSize: 32, fontWeight: FontWeight.w500),
+    const TextStyle(color: textSecondary, fontSize: 30, fontWeight: FontWeight.w500),
   );
-  drawCentered(footer, h - 130);
+  drawCentered(footer, y);
 
   // ── Encode ─────────────────────────────────────────────────────────────────
   final picture = recorder.endRecording();

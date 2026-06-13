@@ -303,13 +303,22 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
+class _MainShellState extends State<MainShell>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   int _currentIndex = 0;
+  // Quick fade-through when switching tabs (IndexedStack keeps every page alive,
+  // so this just animates the swap, not a rebuild).
+  late final AnimationController _tabFade;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _tabFade = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+      value: 1,
+    );
     LaunchActionService.pending.addListener(_onLaunchAction);
     _onLaunchAction();
   }
@@ -317,6 +326,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _tabFade.dispose();
     LaunchActionService.pending.removeListener(_onLaunchAction);
     super.dispose();
   }
@@ -356,7 +366,18 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     return Scaffold(
       extendBody: true,
       backgroundColor: DS.surface0,
-      body: IndexedStack(index: _currentIndex, children: pages),
+      body: FadeTransition(
+        opacity: _tabFade,
+        child: AnimatedBuilder(
+          animation: _tabFade,
+          builder: (context, child) => Transform.translate(
+            // Subtle 10px rise as the new tab fades in.
+            offset: Offset(0, (1 - _tabFade.value) * 10),
+            child: child,
+          ),
+          child: IndexedStack(index: _currentIndex, children: pages),
+        ),
+      ),
       bottomNavigationBar: _NavBarContainer(
         currentIndex: _currentIndex,
         onTabSelected: _go,
@@ -364,7 +385,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     );
   }
 
-  void _go(int i) => setState(() => _currentIndex = i);
+  void _go(int i) {
+    if (i == _currentIndex) return;
+    setState(() => _currentIndex = i);
+    _tabFade.forward(from: 0);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
