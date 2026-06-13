@@ -170,6 +170,33 @@ class _OnboardingPageState extends State<OnboardingPage> {
       _authError = null;
     });
 
+    // Primary: full Telegram OAuth via oauth.telegram.org (same as the cabinet).
+    final res = await AuthService.signInWithTelegram();
+    if (!mounted) return;
+    if (res == null) {
+      _onAuthSuccess();
+      return;
+    }
+    if (res == AuthService.telegramCancelled) {
+      setState(() => _authStep = _AuthStep.idle);
+      return;
+    }
+    // oauth.telegram.org unreachable/blocked or backend rejected → fall back
+    // to the bot deep-link, which keeps working behind Telegram-OAuth blocks.
+    await _startDeepLinkTelegram();
+  }
+
+  /// Resilience fallback: the original bot deep-link login. Used when the
+  /// oauth.telegram.org OIDC path fails (commonly because the domain is
+  /// blocked — exactly the situation a VPN user is in).
+  Future<void> _startDeepLinkTelegram() async {
+    if (!mounted) return;
+    setState(() {
+      _authStep = _AuthStep.openingTg;
+      _authProvider = _AuthProvider.telegram;
+      _authError = null;
+    });
+
     final token = await AuthService.startLogin(onError: (msg) {
       if (mounted) setState(() { _authStep = _AuthStep.error; _authError = msg; });
     });

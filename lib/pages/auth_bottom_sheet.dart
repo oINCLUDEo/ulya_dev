@@ -81,6 +81,31 @@ class _AuthSheetState extends State<_AuthSheet>
       _errorMessage = null;
     });
 
+    // Primary: full Telegram OAuth via oauth.telegram.org (same as the cabinet).
+    final res = await AuthService.signInWithTelegram();
+    if (!mounted) return;
+    if (res == null) {
+      _showSuccess();
+      return;
+    }
+    if (res == AuthService.telegramCancelled) {
+      setState(() => _step = _Step.idle);
+      return;
+    }
+    // Blocked/unreachable oauth.telegram.org → fall back to the bot deep-link.
+    await _startDeepLinkTelegram();
+  }
+
+  /// Resilience fallback: original bot deep-link login, used when the
+  /// oauth.telegram.org OIDC path fails (e.g. the domain is blocked).
+  Future<void> _startDeepLinkTelegram() async {
+    if (!mounted) return;
+    setState(() {
+      _step = _Step.opening;
+      _provider = _Provider.telegram;
+      _errorMessage = null;
+    });
+
     final token = await AuthService.startLogin(onError: (msg) {
       if (mounted) setState(() { _step = _Step.error; _errorMessage = msg; });
     });

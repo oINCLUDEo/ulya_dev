@@ -314,19 +314,6 @@ class _ServersPageState extends State<ServersPage>
     final favorites = favoritesNotifier.value;
     final slivers = <Widget>[];
 
-    // Lowest successful ping among real connectable servers — gets the
-    // "Лучший" badge so the choice is obvious at a glance.
-    String? bestUuid;
-    var bestPing = 1 << 30;
-    for (final n in _nodes) {
-      if (n.protocol == 'auto' || n.link == null || n.isDisabled) continue;
-      final p = PingState.get(n.uuid);
-      if (p != null && p > 0 && p < bestPing) {
-        bestPing = p;
-        bestUuid = n.uuid;
-      }
-    }
-
     Future<void> onSelect(ServerNode node) async {
       if (_isPublicCatalog) {
         authStateNotifier.value.isLoggedIn
@@ -373,7 +360,6 @@ class _ServersPageState extends State<ServersPage>
           selectedUuid: selectedUuid, onSelect: onSelect,
           isPublicCatalog: _isPublicCatalog,
           favorites: favorites,
-          bestUuid: bestUuid,
         )),
       ));
     }
@@ -400,7 +386,6 @@ class _ServersPageState extends State<ServersPage>
           selectedUuid: selectedUuid, onSelect: onSelect,
           isPublicCatalog: false,
           favorites: favorites,
-          bestUuid: bestUuid,
         )),
       ));
     }
@@ -615,15 +600,12 @@ class _ServerGroup extends StatefulWidget {
   final Future<void> Function(ServerNode)? onSelect;
   final bool isPublicCatalog;
   final Set<String> favorites;
-  /// Uuid of the server with the lowest live ping — gets a "Лучший" badge.
-  final String? bestUuid;
 
   const _ServerGroup({
     required this.expanded, required this.nodes, required this.pings,
     required this.onPing, required this.color, this.selectedUuid,
     this.onSelect, this.isPublicCatalog = false,
     this.favorites = const {},
-    this.bestUuid,
   });
 
   @override
@@ -680,7 +662,6 @@ class _ServerGroupState extends State<_ServerGroup>
                     isPublicCatalog: widget.isPublicCatalog,
                     accentColor: widget.color,
                     isFavorite: widget.favorites.contains(node.uuid),
-                    isBest: node.uuid == widget.bestUuid,
                   ),
                   if (i != widget.nodes.length - 1)
                     const Divider(height: 1, indent: 16, endIndent: 16,
@@ -708,14 +689,12 @@ class _NodeTile extends StatefulWidget {
   final bool isPublicCatalog;
   final Color accentColor;
   final bool isFavorite;
-  final bool isBest;
 
   const _NodeTile({
     required this.node, this.ping, this.onPing,
     this.isSelected = false, this.onSelect,
     this.isPublicCatalog = false, required this.accentColor,
     this.isFavorite = false,
-    this.isBest = false,
   });
 
   @override
@@ -872,26 +851,6 @@ class _NodeTileState extends State<_NodeTile>
                           ? accentColor
                           : isOffline ? DS.textMuted : DS.textPrimary),
                       overflow: TextOverflow.ellipsis)),
-                  if (widget.isBest && !isOffline) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: DS.gold.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                            color: DS.gold.withValues(alpha: 0.40)),
-                      ),
-                      child: const Text('ЛУЧШИЙ',
-                          style: TextStyle(
-                            color: DS.gold,
-                            fontSize: 8.5,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.8,
-                          )),
-                    ),
-                  ],
                 ]),
                 const SizedBox(height: 3),
                 if ((node.protocol ?? '').isNotEmpty)

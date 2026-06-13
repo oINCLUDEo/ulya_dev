@@ -31,6 +31,20 @@ class AppConfig {
   static const String oauthScheme   = 'ulyavpn';
   static const String oauthCallback = 'ulyavpn://oauth/callback';
 
+  /// Telegram OIDC bridge page (a tiny static HTML file) hosted on the SAME
+  /// domain that is registered in @BotFather (`/setdomain`) — the trusted
+  /// origin for `oauth.telegram.org`. The mobile app opens this page in an
+  /// in-app browser; the page runs the Telegram OAuth flow and redirects back
+  /// to the app via [telegramAuthCallback] carrying the auth result.
+  ///
+  /// Deploy `web_bridge/tg-mobile.html` from this repo to that URL.
+  static const String telegramBridgeUrl =
+      'https://web.ulya.space/tg-mobile.html';
+
+  /// Deep-link the Telegram OIDC bridge redirects to once it has the auth
+  /// result. Caught by flutter_web_auth_2 (callbackUrlScheme = [oauthScheme]).
+  static const String telegramAuthCallback = 'ulyavpn://oauth/telegram';
+
   /// Sentry DSN for crash reporting. Empty string disables Sentry entirely
   /// (no SDK init, zero network calls) — safe default for local dev builds.
   /// Create a Flutter project at sentry.io (or self-hosted) and paste the

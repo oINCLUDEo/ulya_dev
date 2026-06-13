@@ -478,6 +478,170 @@ class AuthService {
     }
   }
 
+  // ── Telegram OIDC (oauth.telegram.org) ────────────────────────────────────
+
+  /// Sentinel returned by [signInWithTelegram] when the user explicitly
+  /// dismissed the in-app browser — the caller should quietly return to idle.
+  static const String telegramCancelled = '__tg_cancelled__';
+
+  /// Sentinel returned by [signInWithTelegram] when the OIDC flow could not be
+  /// completed for a reason that warrants falling back to the bot deep-link
+  /// (e.g. oauth.telegram.org unreachable/blocked, bridge page error, network
+  /// failure). For a VPN audience this is the important resilience path.
+  static const String telegramFallback = '__tg_fallback__';
+
+  /// Full Telegram login through `oauth.telegram.org` — the same authoritative
+  /// flow the web cabinet uses, NOT the bot deep-link.
+  ///
+  /// 1. Open [AppConfig.telegramBridgeUrl] in an in-app browser. That page is
+  ///    served from the @BotFather-registered domain (the trusted origin), so
+  ///    Telegram allows the OAuth widget there.
+  /// 2. The bridge runs the Telegram OAuth flow and redirects back to
+  ///    [AppConfig.telegramAuthCallback] with either:
+  ///      • `?id_token=<jwt>`          → real OIDC (validated via JWKS), or
+  ///      • `?tgAuthResult=<base64url>` → Login Widget data (validated via HMAC),
+  ///      • `?error=<code>`            → failure.
+  /// 3. We POST whichever we got to the matching cabinet endpoint
+  ///    (`/cabinet/auth/telegram/oidc` or `/cabinet/auth/telegram/widget`),
+  ///    receive the JWT pair + user, persist the session.
+  ///
+  /// Returns `null` on success, [telegramCancelled] if the user aborted,
+  /// [telegramFallback] if the caller should try the deep-link flow, or a
+  /// localised error string for a hard failure.
+  static Future<String?> signInWithTelegram() async {
+    final String resultUrl;
+    try {
+      resultUrl = await FlutterWebAuth2.authenticate(
+        url: AppConfig.telegramBridgeUrl,
+        callbackUrlScheme: AppConfig.oauthScheme,
+      );
+    } on PlatformException catch (e) {
+      // Most likely user cancellation. Treat as a soft cancel — the caller
+      // decides whether to offer the deep-link instead.
+      appLogger.info('AuthService', 'telegram oidc cancelled/unavailable: ${e.message}');
+      return telegramCancelled;
+    } on Exception catch (e) {
+      appLogger.error('AuthService', 'telegram oidc browser error: $e');
+      return telegramFallback;
+    }
+
+    final cb = Uri.parse(resultUrl);
+    final err = cb.queryParameters['error'];
+    if (err != null && err.isNotEmpty) {
+      appLogger.error('AuthService', 'telegram bridge error: $err');
+      // Domain blocked / widget failed → let the caller fall back to deep-link.
+      return telegramFallback;
+    }
+
+    final idToken = cb.queryParameters['id_token'];
+    final tgAuthResult = cb.queryParameters['tgAuthResult'];
+
+    try {
+      final Map<String, dynamic> reqBody;
+      final String endpoint;
+
+      if (idToken != null && idToken.isNotEmpty) {
+        endpoint = '/cabinet/auth/telegram/oidc';
+        reqBody = {'id_token': idToken};
+      } else if (tgAuthResult != null && tgAuthResult.isNotEmpty) {
+        final widget = _decodeTgAuthResult(tgAuthResult);
+        if (widget == null) {
+          appLogger.error('AuthService', 'telegram bridge: bad tgAuthResult');
+          return telegramFallback;
+        }
+        endpoint = '/cabinet/auth/telegram/widget';
+        reqBody = widget;
+      } else {
+        appLogger.error('AuthService', 'telegram bridge: no token in $resultUrl');
+        return telegramFallback;
+      }
+
+      final resp = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}$endpoint'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            body: jsonEncode(reqBody),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (resp.statusCode != 200) {
+        appLogger.error('AuthService',
+            'telegram auth failed: HTTP ${resp.statusCode} body=${resp.body}');
+        // 400 here usually means OIDC isn't enabled on the backend — still
+        // better to fall back than to dead-end the user.
+        return telegramFallback;
+      }
+
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      final accessToken = json['access_token'] as String?;
+      final refreshToken = json['refresh_token'] as String?;
+      final userMap = json['user'] as Map<String, dynamic>?;
+      if (accessToken == null || userMap == null) {
+        return 'Неверный ответ сервера.';
+      }
+
+      final subUrl = await _fetchCabinetSubscriptionUrl(accessToken);
+      final newState = AuthState(
+        isLoggedIn: true,
+        telegramId: (userMap['telegram_id'] as num?)?.toInt(),
+        firstName: userMap['first_name'] as String?,
+        lastName: userMap['last_name'] as String?,
+        username: userMap['username'] as String?,
+        email: userMap['email'] as String?,
+        cabinetAccessToken: accessToken,
+        cabinetRefreshToken: refreshToken,
+        subscriptionUrl: subUrl,
+      );
+
+      await saveAuthState(newState);
+      if (subUrl != null && subUrl.isNotEmpty) {
+        await RemnawaveService.saveSubscriptionUrl(subUrl);
+      }
+      authStateNotifier.value = newState;
+      MeService.refresh();
+
+      appLogger.info('AuthService',
+          'user authenticated via telegram oidc: ${newState.displayName}');
+      return null; // success
+    } on Exception catch (e) {
+      appLogger.error('AuthService', 'telegram auth exchange failed: $e');
+      return telegramFallback;
+    }
+  }
+
+  /// Decode the Login Widget payload Telegram returns in `tgAuthResult`
+  /// (base64url of a JSON object: id, first_name, …, auth_date, hash).
+  static Map<String, dynamic>? _decodeTgAuthResult(String raw) {
+    try {
+      var s = raw.replaceAll('-', '+').replaceAll('_', '/');
+      switch (s.length % 4) {
+        case 2: s += '=='; break;
+        case 3: s += '='; break;
+      }
+      final decoded = utf8.decode(base64.decode(s));
+      final map = jsonDecode(decoded) as Map<String, dynamic>;
+      // Coerce to the exact field set the /telegram/widget schema expects.
+      final out = <String, dynamic>{
+        'id': map['id'],
+        'first_name': map['first_name'] ?? '',
+        'auth_date': map['auth_date'],
+        'hash': map['hash'],
+      };
+      if (map['last_name'] != null) out['last_name'] = map['last_name'];
+      if (map['username'] != null) out['username'] = map['username'];
+      if (map['photo_url'] != null) out['photo_url'] = map['photo_url'];
+      if (out['id'] == null || out['hash'] == null || out['auth_date'] == null) {
+        return null;
+      }
+      return out;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Maps common OAuth error codes returned in the deeplink to a Russian
   /// message the user can act on.
   static String _humaniseOauthError(String code) {
