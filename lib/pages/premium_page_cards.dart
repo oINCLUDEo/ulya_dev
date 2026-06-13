@@ -1502,13 +1502,30 @@ class _Disclaimer extends StatelessWidget {
   const _Disclaimer();
 
   @override
-  Widget build(BuildContext context) => const Row(
-    mainAxisAlignment: MainAxisAlignment.center,
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
     children: [
-      Icon(Icons.lock_outline_rounded, size: 11, color: _t2),
-      SizedBox(width: 5),
-      Text('Безопасная оплата · YooKassa',
-          style: TextStyle(color: _t2, fontSize: 11)),
+      const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.lock_outline_rounded, size: 11, color: _t2),
+          SizedBox(width: 5),
+          Text('Безопасная оплата · YooKassa',
+              style: TextStyle(color: _t2, fontSize: 11)),
+        ],
+      ),
+      const SizedBox(height: 5),
+      // Reassurance line — reduces pre-purchase hesitation.
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(PhosphorIconsFill.lightning,
+              size: 11, color: DS.gold.withValues(alpha: 0.85)),
+          const SizedBox(width: 5),
+          const Text('Доступ открывается сразу после оплаты',
+              style: TextStyle(color: _t2, fontSize: 11)),
+        ],
+      ),
     ],
   );
 }
