@@ -98,6 +98,11 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
   Timer? _pollTimer;
   int _pollAttempt = 0;
   bool _pollingForPayment = false;
+  // Pre-checkout snapshot so polling distinguishes a real switch from a cancel
+  // (the user is always an active subscriber here, so "has active sub" alone
+  // can't signal success).
+  String?   _payBaselinePlan;
+  DateTime? _payBaselineExpiry;
 
   static const int _maxPollAttempts = 30;
   static const Duration _pollInterval = Duration(seconds: 4);
@@ -286,7 +291,14 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
       return;
     }
     final sub = meNotifier.value?.subscription;
-    final confirmed = sub != null && sub.isActive && !sub.isTrial;
+    final active = sub != null && sub.isActive && !sub.isTrial;
+    // A switch is confirmed when the plan name changes or the expiry advances
+    // past the pre-checkout snapshot — not merely because a sub is active.
+    final confirmed = active &&
+        ((sub.planName != null && sub.planName != _payBaselinePlan) ||
+            (sub.expireDate != null &&
+                _payBaselineExpiry != null &&
+                sub.expireDate!.isAfter(_payBaselineExpiry!)));
     if (confirmed || _pollAttempt >= _maxPollAttempts) {
       timer.cancel();
       _pollTimer = null;
@@ -306,6 +318,11 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
   Future<void> _openPaymentUrl(String url) async {
     try {
       if (!mounted) return;
+      // Snapshot current plan/expiry so polling can tell a real switch from a
+      // cancelled checkout.
+      final curSub = meNotifier.value?.subscription;
+      _payBaselinePlan = curSub?.planName;
+      _payBaselineExpiry = curSub?.expireDate;
       // Embedded in-app payment window (own top bar, no browser UI); poll the
       // backend for the result once it closes.
       await Navigator.of(context).push(MaterialPageRoute(

@@ -98,6 +98,11 @@ class _PremiumPageState extends State<PremiumPage>
   bool   _pollingForPayment  = false;
   bool   _pendingPaymentPoll = false;
   bool   _showSuccessOverlay = false;
+  /// Subscription expiry captured right before opening checkout. Payment is
+  /// only "confirmed" if the expiry advances past this (so cancelling with an
+  /// already-active sub no longer reports a false success).
+  DateTime? _payBaselineExpiry;
+  bool      _payHadSubBefore = false;
   static const int      _maxPollAttempts = 30;
   static const Duration _pollInterval    = Duration(seconds: 4);
 
@@ -492,8 +497,16 @@ class _PremiumPageState extends State<PremiumPage>
     _pollAttempt++;
     await MeService.refresh();
     if (!mounted) { timer.cancel(); return; }
-    final sub       = meNotifier.value?.subscription;
-    final confirmed = sub != null && sub.isActive && !sub.isTrial;
+    final sub    = meNotifier.value?.subscription;
+    final active = sub != null && sub.isActive && !sub.isTrial;
+    // Confirmed only when a NEW paid period landed: either the user had no paid
+    // sub before, or the expiry moved forward past the pre-checkout baseline.
+    final exp = sub?.expireDate;
+    final confirmed = active &&
+        (!_payHadSubBefore ||
+            _payBaselineExpiry == null ||
+            exp == null ||
+            exp.isAfter(_payBaselineExpiry!));
     if (confirmed || _pollAttempt >= _maxPollAttempts) {
       timer.cancel(); _pollTimer = null;
       if (!mounted) return;
@@ -785,6 +798,12 @@ class _PremiumPageState extends State<PremiumPage>
 
   Future<void> _openPaymentUrl(String url) async {
     if (!mounted) return;
+    // Snapshot the current expiry so polling can tell a real payment from a
+    // cancelled one (see _onPollTick).
+    final curSub = meNotifier.value?.subscription;
+    _payHadSubBefore = curSub != null && curSub.isActive && !curSub.isTrial;
+    _payBaselineExpiry = curSub?.expireDate;
+
     // Open checkout in an embedded in-app window (our own top bar, no browser
     // UI). When it closes we poll the backend for the payment result.
     await Navigator.of(context).push(MaterialPageRoute(

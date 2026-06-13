@@ -38,6 +38,18 @@ class _PaymentWebViewPageState extends State<PaymentWebViewPage> {
         onProgress: (p) {
           if (mounted) setState(() => _progress = p);
         },
+        // Keep web navigations inside the WebView; never bounce to Chrome.
+        // Non-http schemes (intent://, bank apps) are blocked here — the user
+        // can use the "open externally" action if a provider needs them.
+        onNavigationRequest: (req) {
+          final u = req.url;
+          if (u.startsWith('http://') ||
+              u.startsWith('https://') ||
+              u.startsWith('about:')) {
+            return NavigationDecision.navigate;
+          }
+          return NavigationDecision.prevent;
+        },
         onWebResourceError: (err) {
           // Only the main-frame failure matters; sub-resource errors are noise.
           if (err.isForMainFrame ?? true) {
