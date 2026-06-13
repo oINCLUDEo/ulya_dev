@@ -518,31 +518,51 @@ class _FeatureSlide extends StatelessWidget {
             top: false,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(40, 12, 40, 150),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.start,
-                children: [
-                  Text(
-                    slide.title,
-                    style: const TextStyle(
-                      color: DS.textPrimary,
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      height: 1.15,
-                      letterSpacing: -0.5,
+              // Text rises and fades in just behind the illustration: it slides
+              // a touch slower (parallax depth) and lifts up as it settles.
+              child: AnimatedBuilder(
+                animation: controller,
+                builder: (context, child) {
+                  final page = (controller.hasClients &&
+                          controller.position.haveDimensions)
+                      ? (controller.page ?? index.toDouble())
+                      : index.toDouble();
+                  final delta = (page - index).clamp(-1.0, 1.0);
+                  final dist = delta.abs();
+                  return Opacity(
+                    opacity: (1 - dist * 1.3).clamp(0.0, 1.0),
+                    child: Transform.translate(
+                      offset: Offset(delta * -24, dist * 28),
+                      child: child,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    slide.body,
-                    style: const TextStyle(
-                      color: DS.textSecondary,
-                      fontSize: 16,
-                      height: 1.65,
+                  );
+                },
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: [
+                    Text(
+                      slide.title,
+                      style: const TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w800,
+                        height: 1.15,
+                        letterSpacing: -0.5,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
+                    const SizedBox(height: 14),
+                    Text(
+                      slide.body,
+                      style: const TextStyle(
+                        color: DS.textSecondary,
+                        fontSize: 16,
+                        height: 1.65,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

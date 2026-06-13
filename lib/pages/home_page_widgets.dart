@@ -178,8 +178,10 @@ class _ConnectButtonState extends State<_ConnectButton>
                       child: widget.isLoading
                           ? RotationTransition(
                               turns: _spinCtrl,
-                              child: const Icon(Icons.refresh_rounded,
-                                  color: Colors.white, size: 44),
+                              child: CustomPaint(
+                                size: const Size(56, 56),
+                                painter: _SweepArcPainter(),
+                              ),
                             )
                           : AnimatedSwitcher(
                               duration: const Duration(milliseconds: 250),
@@ -286,6 +288,31 @@ class _PulseRingsPainter extends CustomPainter {
   @override
   bool shouldRepaint(_PulseRingsPainter old) =>
       old.t != t || old.color != color;
+}
+
+// ── Sweep-arc spinner shown inside the orb while connecting ──────────────────
+// A 270° arc whose tail fades to transparent (SweepGradient); the parent spins
+// it via _spinCtrl. Reads as a smooth indeterminate progress ring instead of a
+// rotating refresh glyph.
+class _SweepArcPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.width / 2 - 3;
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4
+      ..strokeCap = StrokeCap.round
+      ..shader = const SweepGradient(
+        colors: [Color(0x00FFFFFF), Color(0xFFFFFFFF)],
+        stops: [0.0, 1.0],
+      ).createShader(rect);
+    canvas.drawArc(rect, 0, math.pi * 1.5, false, paint);
+  }
+
+  @override
+  bool shouldRepaint(_SweepArcPainter oldDelegate) => false;
 }
 
 // ── Rising bubbles — atmospheric layer behind the connect button ────────────
