@@ -2,6 +2,18 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // Telegram Login SDK (org.telegram:login-sdk) is published on GitHub
+        // Packages. Credentials come from gradle.properties (gpr.user/gpr.key)
+        // or env (GITHUB_USERNAME/GITHUB_TOKEN). Use a PAT with read:packages.
+        maven {
+            url = uri("https://maven.pkg.github.com/TelegramMessenger/telegram-login-android")
+            credentials {
+                username = providers.gradleProperty("gpr.user").orNull
+                    ?: System.getenv("GITHUB_USERNAME")
+                password = providers.gradleProperty("gpr.key").orNull
+                    ?: System.getenv("GITHUB_TOKEN")
+            }
+        }
     }
 }
 

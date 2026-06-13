@@ -77,4 +77,7 @@ flutter {
 
 dependencies {
     implementation(files("libs/libxray.aar"))
+    // Telegram Native Login (app-to-app OIDC). See android/build.gradle.kts for
+    // the GitHub Packages repo + credentials.
+    implementation("org.telegram:login-sdk:1.0.0")
 }

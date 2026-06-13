@@ -18,11 +18,22 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import org.telegram.login.TelegramLogin
 
 class MainActivity: FlutterActivity() {
 
     private val CHANNEL = "apps.channel"
     private val NETWORK_CHANNEL = "ulya/network_events"
+    private val TELEGRAM_CHANNEL = "ulya/telegram_login"
+
+    // Telegram OIDC client (from @BotFather → Login Widget). The redirect URI
+    // is the auto-verified App Link; the SDK delivers the result back to this
+    // activity via onNewIntent.
+    private val TELEGRAM_CLIENT_ID = "8380612257"
+    private val TELEGRAM_REDIRECT_URI = "https://app982852799-login.tg.dev/tglogin"
+    private var telegramInited = false
+    // Pending reply for an in-flight Dart `login` call.
+    private var telegramResult: MethodChannel.Result? = null
 
     // PackageManager look-ups and bitmap work are slow (binder calls, drawable
     // inflation, compression) — never run them on the platform main thread or
@@ -50,6 +61,22 @@ class MainActivity: FlutterActivity() {
         // App was already running (singleTop) — remember the action; the Dart
         // side polls it on resume.
         launchAction = intent.getStringExtra("shortcut_action")
+
+        // Telegram Login App Link redirect (https://app{id}-login.tg.dev/tglogin).
+        val data = intent.data
+        if (data != null && data.host?.endsWith("-login.tg.dev") == true) {
+            TelegramLogin.handleLoginResponse(
+                data,
+                onSuccess = { loginData ->
+                    telegramResult?.success(loginData.idToken)
+                    telegramResult = null
+                },
+                onError = { error ->
+                    telegramResult?.error("TG_LOGIN_FAILED", error.message, null)
+                    telegramResult = null
+                },
+            )
+        }
     }
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
@@ -85,6 +112,35 @@ class MainActivity: FlutterActivity() {
                     connectivityManager = null
                 }
             })
+
+        // Telegram Native Login (app-to-app OIDC). Dart calls `login`; the SDK
+        // opens Telegram (or browser fallback) and the result arrives via the
+        // App Link in onNewIntent, which replies to the stored result.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, TELEGRAM_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "login" -> {
+                        // Reject overlapping calls.
+                        telegramResult?.error("TG_BUSY", "Login already in progress", null)
+                        telegramResult = result
+                        try {
+                            if (!telegramInited) {
+                                TelegramLogin.init(
+                                    clientId = TELEGRAM_CLIENT_ID,
+                                    redirectUri = TELEGRAM_REDIRECT_URI,
+                                    scopes = listOf("profile"),
+                                )
+                                telegramInited = true
+                            }
+                            TelegramLogin.startLogin(this)
+                        } catch (e: Exception) {
+                            telegramResult?.error("TG_START_FAILED", e.message, null)
+                            telegramResult = null
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->

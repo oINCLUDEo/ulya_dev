@@ -20,7 +20,6 @@ import 'services/me_service.dart';
 import 'services/network_monitor.dart';
 import 'services/notification_service.dart';
 import 'services/ping_state.dart';
-import 'services/telegram_auth_link.dart';
 import 'widgets/notification_banner.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,8 +148,6 @@ Future<void> _boot() async {
 
     // Watch for Wi-Fi ↔ LTE switches so pages can re-probe immediately.
     NetworkMonitor.start();
-    // Listen for the Telegram Native Login App Link redirect.
-    await TelegramAuthLink.start();
     // Launcher shortcut / QS tile action (if the app was opened through one).
     await LaunchActionService.poll();
 

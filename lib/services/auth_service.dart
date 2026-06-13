@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 
-import 'package:crypto/crypto.dart';
-import 'package:flutter/services.dart' show PlatformException;
+import 'package:flutter/services.dart'
+    show MethodChannel, MissingPluginException, PlatformException;
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
@@ -13,7 +12,6 @@ import 'app_logger.dart';
 import 'auth_state.dart';
 import 'me_service.dart';
 import 'remnawave_service.dart';
-import 'telegram_auth_link.dart';
 
 /// Result of an auth initiation or poll.
 class AuthResult {
@@ -481,114 +479,73 @@ class AuthService {
     }
   }
 
-  // ── Telegram OIDC (oauth.telegram.org) ────────────────────────────────────
+  // ── Telegram Native Login (app-to-app OIDC) ───────────────────────────────
+
+  /// Platform channel backed by the official Telegram Login SDK
+  /// (`org.telegram:login-sdk`) on the Android side (see MainActivity).
+  static const MethodChannel _telegramChannel =
+      MethodChannel('ulya/telegram_login');
 
   /// Sentinel returned by [signInWithTelegram] when the user explicitly
-  /// dismissed the in-app browser — the caller should quietly return to idle.
+  /// dismissed the login — the caller should quietly return to idle.
   static const String telegramCancelled = '__tg_cancelled__';
 
-  /// Sentinel returned by [signInWithTelegram] when the OIDC flow could not be
+  /// Sentinel returned by [signInWithTelegram] when login could not be
   /// completed for a reason that warrants falling back to the bot deep-link
-  /// (e.g. oauth.telegram.org unreachable/blocked, bridge page error, network
-  /// failure). For a VPN audience this is the important resilience path.
+  /// (native SDK unavailable, network failure, backend rejection). For a VPN
+  /// audience this is the important resilience path.
   static const String telegramFallback = '__tg_fallback__';
 
-  /// Full Telegram login through `oauth.telegram.org` via the OIDC
-  /// Authorization Code flow — the same provider the web cabinet uses, NOT the
-  /// bot deep-link. Native: no web bridge page required.
+  /// Full Telegram login via the official Native Login SDK (app-to-app OIDC) —
+  /// the same provider the web cabinet uses, NOT the bot deep-link, and NOT a
+  /// browser flow (so it is immune to the Chrome/MIUI App Link handoff issues).
   ///
-  /// 1. Open the Telegram authorize endpoint in the system browser with PKCE +
-  ///    CSRF state and our App Link [AppConfig.telegramAuthCallback]
-  ///    (`https://app{id}-login.tg.dev/tglogin`) as `redirect_uri` — registered
-  ///    in @BotFather → Native Login and verified against the release SHA-256.
-  /// 2. After consent Telegram redirects to that https App Link; Android opens
-  ///    the app directly with `?code=…&state=…`, caught via [TelegramAuthLink].
-  /// 3. We POST `{code, code_verifier, redirect_uri}` to
-  ///    `/cabinet/auth/telegram/oidc/code`. The backend exchanges the code for
-  ///    an id_token (it holds the confidential client secret), validates it via
-  ///    JWKS, creates/logs in the user, and returns the JWT pair + user.
+  /// 1. The native side calls the Telegram SDK, which opens the installed
+  ///    Telegram app (or its own browser fallback) and returns an OIDC
+  ///    `id_token` (JWT) to us via the App Link → onNewIntent.
+  /// 2. We POST `{id_token}` to `/cabinet/auth/telegram/oidc`. The backend
+  ///    validates it via JWKS, creates/logs in the user, returns the JWT pair.
   ///
   /// Returns `null` on success, [telegramCancelled] if the user aborted,
   /// [telegramFallback] if the caller should try the deep-link flow, or a
   /// localised error string for a hard failure.
   static Future<String?> signInWithTelegram() async {
-    // PKCE (S256) + CSRF state. The code arrives via an App Link; PKCE binds
-    // the exchange to this client, state guards against cross-session replay.
-    final codeVerifier = _randomToken(48);
-    final codeChallenge = base64Url
-        .encode(sha256.convert(utf8.encode(codeVerifier)).bytes)
-        .replaceAll('=', '');
-    final state = _randomToken(16);
-
-    final authUrl = Uri.parse(AppConfig.telegramAuthorizeEndpoint).replace(
-      queryParameters: {
-        'client_id': AppConfig.telegramOidcClientId,
-        'redirect_uri': AppConfig.telegramAuthCallback,
-        'response_type': 'code',
-        'scope': 'openid profile',
-        'state': state,
-        'code_challenge': codeChallenge,
-        'code_challenge_method': 'S256',
-      },
-    ).toString();
-
-    // Start waiting for the App Link redirect BEFORE opening the browser, so a
-    // fast round-trip can't slip past us.
-    await TelegramAuthLink.start();
-    final redirectFut = TelegramAuthLink.awaitRedirect();
-
-    final launched = await launchUrl(
-      Uri.parse(authUrl),
-      mode: LaunchMode.externalApplication,
-    ).catchError((_) => false);
-    if (!launched) {
-      TelegramAuthLink.cancel();
-      appLogger.error('AuthService', 'telegram authorize: failed to open browser');
+    final String? idToken;
+    try {
+      idToken = await _telegramChannel.invokeMethod<String>('login');
+    } on MissingPluginException {
+      // Native SDK not wired (e.g. iOS or an old build) → fall back.
+      appLogger.info('AuthService', 'telegram native login unavailable');
+      return telegramFallback;
+    } on PlatformException catch (e) {
+      appLogger.error('AuthService', 'telegram native login error: ${e.code} ${e.message}');
+      final msg = (e.message ?? '').toLowerCase();
+      if (e.code == 'TG_CANCELLED' || msg.contains('cancel')) {
+        return telegramCancelled;
+      }
       return telegramFallback;
     }
 
-    final cb = await redirectFut;
-    if (cb == null) {
-      // Timed out — browser blocked, App Link unverified, or user wandered off.
+    if (idToken == null || idToken.isEmpty) {
+      appLogger.error('AuthService', 'telegram native login: empty id_token');
       return telegramFallback;
-    }
-
-    final err = cb.queryParameters['error'];
-    if (err != null && err.isNotEmpty) {
-      appLogger.error('AuthService', 'telegram authorize error: $err');
-      // Domain blocked / provider failed → let the caller fall back to deep-link.
-      return telegramFallback;
-    }
-    final code = cb.queryParameters['code'];
-    final returnedState = cb.queryParameters['state'];
-    if (code == null || code.isEmpty) {
-      appLogger.error('AuthService', 'telegram authorize: no code in $cb');
-      return telegramFallback;
-    }
-    if (returnedState != state) {
-      appLogger.error('AuthService', 'telegram authorize: state mismatch');
-      return 'Сессия входа устарела. Попробуйте снова.';
     }
 
     try {
       final resp = await http
           .post(
-            Uri.parse('${AppConfig.backendBaseUrl}/cabinet/auth/telegram/oidc/code'),
+            Uri.parse('${AppConfig.backendBaseUrl}/cabinet/auth/telegram/oidc'),
             headers: const {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             },
-            body: jsonEncode({
-              'code': code,
-              'code_verifier': codeVerifier,
-              'redirect_uri': AppConfig.telegramAuthCallback,
-            }),
+            body: jsonEncode({'id_token': idToken}),
           )
           .timeout(const Duration(seconds: 20));
 
       if (resp.statusCode != 200) {
         appLogger.error('AuthService',
-            'telegram code exchange failed: HTTP ${resp.statusCode} body=${resp.body}');
+            'telegram oidc failed: HTTP ${resp.statusCode} body=${resp.body}');
         // e.g. OIDC not configured on the backend — fall back rather than
         // dead-end the user.
         return telegramFallback;
@@ -626,16 +583,9 @@ class AuthService {
           'user authenticated via telegram oidc: ${newState.displayName}');
       return null; // success
     } on Exception catch (e) {
-      appLogger.error('AuthService', 'telegram code exchange error: $e');
+      appLogger.error('AuthService', 'telegram oidc exchange error: $e');
       return telegramFallback;
     }
-  }
-
-  /// Cryptographically-random URL-safe token (PKCE verifier + CSRF state).
-  static String _randomToken(int bytes) {
-    final r = math.Random.secure();
-    final b = List<int>.generate(bytes, (_) => r.nextInt(256));
-    return base64Url.encode(b).replaceAll('=', '');
   }
 
   /// Maps common OAuth error codes returned in the deeplink to a Russian
