@@ -425,7 +425,8 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 : const ClampingScrollPhysics(),
             onPageChanged: (i) => setState(() => _currentPage = i),
             children: [
-              ..._kSlides.asMap().entries.map((e) => _FeatureSlide(slide: e.value, index: e.key)),
+              ..._kSlides.asMap().entries.map((e) =>
+                  _FeatureSlide(slide: e.value, index: e.key, controller: _pageCtrl)),
               _AuthSlide(
                 step: _authStep,
                 provider: _authProvider,
@@ -470,9 +471,14 @@ class _OnboardingPageState extends State<OnboardingPage> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _FeatureSlide extends StatelessWidget {
-  const _FeatureSlide({required this.slide, required this.index});
+  const _FeatureSlide({
+    required this.slide,
+    required this.index,
+    required this.controller,
+  });
   final _SlideData slide;
   final int index;
+  final PageController controller;
 
   @override
   Widget build(BuildContext context) {
@@ -481,7 +487,30 @@ class _FeatureSlide extends StatelessWidget {
       children: [
         Expanded(
           flex: 54,
-          child: _SlideIllustration(index: index, color: slide.color),
+          // Parallax: the illustration drifts, fades and shrinks slightly as the
+          // slide scrolls off, giving the swipe real depth.
+          child: AnimatedBuilder(
+            animation: controller,
+            builder: (context, child) {
+              final page = (controller.hasClients &&
+                      controller.position.haveDimensions)
+                  ? (controller.page ?? index.toDouble())
+                  : index.toDouble();
+              final delta = (page - index).clamp(-1.0, 1.0);
+              final dist = delta.abs();
+              return Transform.translate(
+                offset: Offset(delta * -48, 0),
+                child: Opacity(
+                  opacity: (1 - dist * 0.9).clamp(0.0, 1.0),
+                  child: Transform.scale(
+                    scale: 1 - dist * 0.14,
+                    child: child,
+                  ),
+                ),
+              );
+            },
+            child: _SlideIllustration(index: index, color: slide.color),
+          ),
         ),
         Expanded(
           flex: 46,

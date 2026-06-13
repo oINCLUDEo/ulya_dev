@@ -26,6 +26,10 @@ class _ConnectButtonState extends State<_ConnectButton>
   late final AnimationController _spinCtrl;
   // Concentric pulse rings (2.4s, staggered 0/0.8/1.6s) — runs when active.
   late final AnimationController _pulseCtrl;
+  // Finger-press spring (orb scales down on touch).
+  late final AnimationController _pressCtrl;
+  // Gentle "breathing" while connected — makes the orb feel alive.
+  late final AnimationController _breatheCtrl;
 
   bool get _ringsActive => widget.isConnected || widget.isLoading;
 
@@ -40,8 +44,19 @@ class _ConnectButtonState extends State<_ConnectButton>
       vsync: this,
       duration: const Duration(milliseconds: 2400),
     );
+    _pressCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 130),
+      lowerBound: 0,
+      upperBound: 1,
+    );
+    _breatheCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    );
     if (widget.isLoading) _spinCtrl.repeat();
     if (_ringsActive) _pulseCtrl.repeat();
+    if (widget.isConnected) _breatheCtrl.repeat(reverse: true);
   }
 
   @override
@@ -62,12 +77,29 @@ class _ConnectButtonState extends State<_ConnectButton>
         ..stop()
         ..reset();
     }
+    if (widget.isConnected && !old.isConnected) {
+      _breatheCtrl.repeat(reverse: true);
+    } else if (!widget.isConnected && old.isConnected) {
+      _breatheCtrl
+        ..stop()
+        ..animateTo(0, duration: const Duration(milliseconds: 300));
+    }
   }
+
+  void _onTapDown() {
+    if (widget.isLoading) return;
+    HapticFeedback.selectionClick();
+    _pressCtrl.forward();
+  }
+
+  void _releasePress() => _pressCtrl.reverse();
 
   @override
   void dispose() {
     _spinCtrl.dispose();
     _pulseCtrl.dispose();
+    _pressCtrl.dispose();
+    _breatheCtrl.dispose();
     super.dispose();
   }
 
@@ -102,21 +134,39 @@ class _ConnectButtonState extends State<_ConnectButton>
                     child: _PulseRings(controller: _pulseCtrl, color: _color),
                   ),
                 ),
-              AnimatedBuilder(
-                animation: _spinCtrl,
-                builder: (_, child) {
-                  return GestureDetector(
-                    onTap: widget.isLoading ? null : widget.onTap,
-                    child: AnimatedContainer(
+              GestureDetector(
+                onTapDown: (_) => _onTapDown(),
+                onTapUp: (_) => _releasePress(),
+                onTapCancel: _releasePress,
+                onTap: widget.isLoading ? null : widget.onTap,
+                child: AnimatedBuilder(
+                  animation: Listenable.merge([_spinCtrl, _pressCtrl, _breatheCtrl]),
+                  builder: (_, child) {
+                    // Press dips the orb to 0.92; breathing adds a slow ±2.5%
+                    // swell only while connected.
+                    final press = 1 - _pressCtrl.value * 0.08;
+                    final breathe =
+                        widget.isConnected ? 1 + _breatheCtrl.value * 0.025 : 1.0;
+                    return Transform.scale(
+                      scale: press * breathe,
+                      child: AnimatedContainer(
                       duration: const Duration(milliseconds: 350),
                       width: 128,
                       height: 128,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: _color,
-                        // Single soft glow only — pulse rings carry the rest of
-                        // the "alive" feel. The previous hard-spread ring shadow
-                        // clashed with the rings, so it's gone.
+                        // Radial gradient gives the flat disc real depth: a soft
+                        // top-left highlight fading to a darker lower-right.
+                        gradient: RadialGradient(
+                          center: const Alignment(-0.35, -0.45),
+                          radius: 1.05,
+                          colors: [
+                            Color.lerp(_color, Colors.white, 0.24)!,
+                            _color,
+                            Color.lerp(_color, Colors.black, 0.20)!,
+                          ],
+                          stops: const [0.0, 0.55, 1.0],
+                        ),
                         boxShadow: [
                           BoxShadow(
                             color: _color.withValues(alpha: 0.32),
@@ -159,6 +209,7 @@ class _ConnectButtonState extends State<_ConnectButton>
                     ),
                   );
                 },
+                ),
               ),
             ],
           ),
