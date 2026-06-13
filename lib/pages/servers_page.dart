@@ -73,9 +73,6 @@ class _ServersPageState extends State<ServersPage>
   /// spinner/disable). Background silent sweeps must not touch it.
   bool _pingAllInProgress = false;
 
-  // ── Search ────────────────────────────────────────────────────────────────
-  final TextEditingController _searchCtrl = TextEditingController();
-  String _query = '';
   /// Re-entrancy guard for any sweep, silent or not.
   bool _sweepRunning = false;
   String _lastKnownSubUrl = '';
@@ -132,20 +129,10 @@ class _ServersPageState extends State<ServersPage>
     favoritesNotifier.removeListener(_onFavoritesChanged);
     PingState.notifier.removeListener(_onPingStateChanged);
     NetworkMonitor.changeTick.removeListener(_onNetworkChanged);
-    _searchCtrl.dispose();
     super.dispose();
   }
 
-  /// Nodes matching the current search query (name, category, country).
-  List<ServerNode> _visibleNodes() {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return _nodes;
-    return _nodes.where((n) {
-      return n.name.toLowerCase().contains(q) ||
-          (n.description ?? '').toLowerCase().contains(q) ||
-          countryNameForCode(n.countryCode).toLowerCase().contains(q);
-    }).toList();
-  }
+  List<ServerNode> _visibleNodes() => _nodes;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -326,7 +313,6 @@ class _ServersPageState extends State<ServersPage>
     final selectedUuid = selectedServerNotifier.value?.uuid;
     final favorites = favoritesNotifier.value;
     final slivers = <Widget>[];
-    final searching = _query.trim().isNotEmpty;
 
     // Lowest successful ping among real connectable servers — gets the
     // "Лучший" badge so the choice is obvious at a glance.
@@ -370,9 +356,7 @@ class _ServersPageState extends State<ServersPage>
       required IconData icon, required bool expanded, required VoidCallback onToggle,
     }) {
       if (nodes.isEmpty) return;
-      // While searching every matching section is force-expanded — collapsed
-      // matches would look like an empty result.
-      final isExpanded = expanded || searching;
+      final isExpanded = expanded;
       slivers.add(SliverPadding(
         padding: const EdgeInsets.fromLTRB(16, 18, 16, 4),
         sliver: SliverToBoxAdapter(child: _SectionHeader(
@@ -451,22 +435,6 @@ class _ServersPageState extends State<ServersPage>
         icon: PhosphorIconsFill.globeHemisphereWest, expanded: _otherExpanded,
         onToggle: () => setState(() => _otherExpanded = !_otherExpanded));
 
-    if (slivers.isEmpty && searching) {
-      slivers.add(SliverPadding(
-        padding: const EdgeInsets.fromLTRB(16, 60, 16, 0),
-        sliver: SliverToBoxAdapter(
-          child: Column(children: [
-            const Icon(PhosphorIconsRegular.magnifyingGlass,
-                size: 40, color: DS.textMuted),
-            const SizedBox(height: 12),
-            Text('Ничего не найдено по «${_query.trim()}»',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: DS.textSecondary, fontSize: 14)),
-          ]),
-        ),
-      ));
-    }
-
     return slivers;
   }
 
@@ -489,33 +457,6 @@ class _ServersPageState extends State<ServersPage>
                 child: _buildHeader(),
               ),
             ),
-            if (!_loading && _nodes.length > 5)
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-                sliver: SliverToBoxAdapter(
-                  child: TextField(
-                    controller: _searchCtrl,
-                    onChanged: (v) => setState(() => _query = v),
-                    style: const TextStyle(color: DS.textPrimary, fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: 'Поиск: сервер, страна, категория',
-                      isDense: true,
-                      prefixIcon: const Icon(PhosphorIconsRegular.magnifyingGlass,
-                          size: 18, color: DS.textMuted),
-                      suffixIcon: _query.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(PhosphorIconsBold.x,
-                                  size: 16, color: DS.textMuted),
-                              onPressed: () {
-                                _searchCtrl.clear();
-                                setState(() => _query = '');
-                              },
-                            ),
-                    ),
-                  ),
-                ),
-              ),
             if (!_loading && _isPublicCatalog && _nodes.isNotEmpty)
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),

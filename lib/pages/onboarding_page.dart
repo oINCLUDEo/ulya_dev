@@ -43,12 +43,10 @@ Future<void> resetOnboarding() async {
 
 class _SlideData {
   const _SlideData({
-    required this.icon,
     required this.title,
     required this.body,
     required this.color,
   });
-  final IconData icon;
   final String title;
   final String body;
   final Color color;
@@ -56,19 +54,16 @@ class _SlideData {
 
 const _kSlides = <_SlideData>[
   _SlideData(
-    icon: Icons.shield_rounded,
     title: 'Безопасное соединение',
     body: 'Надёжное шифрование защищает ваши данные в любых сетях — дома и в путешествиях.',
     color: DS.violet,
   ),
   _SlideData(
-    icon: Icons.bolt_rounded,
     title: 'Высокая скорость',
     body: 'Серверы по всему миру обеспечивают стабильное и быстрое соединение.',
     color: DS.cyan,
   ),
   _SlideData(
-    icon: Icons.tune_rounded,
     title: 'Просто управлять',
     body: 'Одно касание — и вы под защитой. Подключайтесь и отключайтесь мгновенно.',
     color: DS.emerald,
@@ -403,7 +398,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 : const ClampingScrollPhysics(),
             onPageChanged: (i) => setState(() => _currentPage = i),
             children: [
-              ..._kSlides.map((s) => _FeatureSlide(slide: s)),
+              ..._kSlides.asMap().entries.map((e) => _FeatureSlide(slide: e.value, index: e.key)),
               _AuthSlide(
                 step: _authStep,
                 provider: _authProvider,
@@ -448,58 +443,500 @@ class _OnboardingPageState extends State<OnboardingPage> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _FeatureSlide extends StatelessWidget {
-  const _FeatureSlide({required this.slide});
+  const _FeatureSlide({required this.slide, required this.index});
   final _SlideData slide;
+  final int index;
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(32, 60, 32, 160),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 120, height: 120,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: slide.color.withValues(alpha: 0.1),
-                border: Border.all(color: slide.color.withValues(alpha: 0.3), width: 1.5),
-                boxShadow: [
-                  BoxShadow(
-                    color: slide.color.withValues(alpha: 0.22),
-                    blurRadius: 48,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 58,
+          child: _SlideIllustration(index: index, color: slide.color),
+        ),
+        Expanded(
+          flex: 42,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(40, 16, 40, 172),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  Text(
+                    slide.title,
+                    style: const TextStyle(
+                      color: DS.textPrimary,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w800,
+                      height: 1.15,
+                      letterSpacing: -0.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    slide.body,
+                    style: const TextStyle(
+                      color: DS.textSecondary,
+                      fontSize: 16,
+                      height: 1.65,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
-              child: Icon(slide.icon, size: 56, color: slide.color),
             ),
-            const SizedBox(height: 48),
-            Text(
-              slide.title,
-              style: const TextStyle(
-                color: DS.textPrimary,
-                fontSize: 26,
-                fontWeight: FontWeight.w700,
-                height: 1.2,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              slide.body,
-              style: const TextStyle(
-                color: DS.textSecondary,
-                fontSize: 16,
-                height: 1.65,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+          ),
         ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Slide illustration — animated Canvas drawing, one per feature slide
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SlideIllustration extends StatefulWidget {
+  const _SlideIllustration({required this.index, required this.color});
+  final int index;
+  final Color color;
+
+  @override
+  State<_SlideIllustration> createState() => _SlideIllustrationState();
+}
+
+class _SlideIllustrationState extends State<_SlideIllustration>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 10),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) => CustomPaint(
+        painter: _SlidePainter(
+          index: widget.index,
+          color: widget.color,
+          t: _ctrl.value,
+        ),
+        size: Size.infinite,
       ),
     );
   }
+}
+
+class _SlidePainter extends CustomPainter {
+  const _SlidePainter({
+    required this.index,
+    required this.color,
+    required this.t,
+  });
+  final int index;
+  final Color color;
+  final double t;
+
+  static const _gold = Color(0xFFD4A84B);
+
+  void _radialGlow(Canvas canvas, Offset center, double radius, Color c, double alpha) {
+    canvas.drawCircle(
+      center, radius,
+      Paint()
+        ..shader = ui.Gradient.radial(center, radius, [
+          c.withValues(alpha: alpha),
+          c.withValues(alpha: 0),
+        ]),
+    );
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    switch (index) {
+      case 0: _paintShield(canvas, size);
+      case 1: _paintGlobe(canvas, size);
+      case 2: _paintToggle(canvas, size);
+    }
+  }
+
+  // ── Slide 0: shield with orbital protection rings ──────────────────────────
+  void _paintShield(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height * 0.50;
+
+    _radialGlow(canvas, Offset(cx, cy), size.width * 0.56, color, 0.30);
+
+    // Expanding pulse rings
+    for (var i = 0; i < 2; i++) {
+      final phase = (t + i * 0.50) % 1.0;
+      final r = size.width * 0.20 + phase * size.width * 0.24;
+      canvas.drawCircle(
+        Offset(cx, cy), r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5
+          ..color = color.withValues(alpha: (1 - phase) * 0.55),
+      );
+    }
+
+    // Three orbital ellipses with rotating dots
+    final orbits = [
+      (rFrac: 0.29, dotN: 4, speed: 0.30, dotR: 4.5),
+      (rFrac: 0.39, dotN: 5, speed: 0.20, dotR: 3.5),
+      (rFrac: 0.50, dotN: 6, speed: 0.13, dotR: 2.5),
+    ];
+    for (var i = 0; i < orbits.length; i++) {
+      final o = orbits[i];
+      final orbitR = size.width * o.rFrac;
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset(cx, cy), width: orbitR * 2, height: orbitR * 0.52 * 2),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.9
+          ..color = color.withValues(alpha: 0.22 - i * 0.04),
+      );
+      for (var d = 0; d < o.dotN; d++) {
+        final angle = (t * o.speed * math.pi * 2) + (d * math.pi * 2 / o.dotN);
+        final dx = cx + math.cos(angle) * orbitR;
+        final dy = cy + math.sin(angle) * orbitR * 0.52;
+        canvas.drawCircle(
+          Offset(dx, dy), o.dotR,
+          Paint()..color = color.withValues(alpha: 0.70 - i * 0.14),
+        );
+      }
+    }
+
+    // Shield shape (classic heraldic)
+    final shW = size.width * 0.40;
+    final shH = shW * 1.20;
+    final shX = cx - shW / 2;
+    final shY = cy - shH * 0.54;
+
+    final shield = Path()
+      ..moveTo(cx, shY)
+      ..lineTo(shX + shW, shY + shH * 0.14)
+      ..lineTo(shX + shW, shY + shH * 0.56)
+      ..quadraticBezierTo(shX + shW, shY + shH * 0.90, cx, shY + shH)
+      ..quadraticBezierTo(shX, shY + shH * 0.90, shX, shY + shH * 0.56)
+      ..lineTo(shX, shY + shH * 0.14)
+      ..close();
+
+    // Soft blur glow behind shield
+    canvas.drawPath(shield, Paint()
+      ..color = color.withValues(alpha: 0.25)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
+    // Fill
+    canvas.drawPath(shield, Paint()..color = color.withValues(alpha: 0.13));
+    // Stroke
+    canvas.drawPath(shield, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.8
+      ..color = color.withValues(alpha: 0.90));
+
+    // Lock icon centered inside shield
+    final lCx = cx;
+    final lCy = cy + shH * 0.10;
+    // Body
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(lCx, lCy + 12), width: 36, height: 28),
+        const Radius.circular(6),
+      ),
+      Paint()..color = Colors.white.withValues(alpha: 0.88),
+    );
+    // Shackle
+    canvas.drawArc(
+      Rect.fromCenter(center: Offset(lCx, lCy + 3), width: 24, height: 24),
+      math.pi, -math.pi, false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..strokeCap = StrokeCap.round
+        ..color = Colors.white.withValues(alpha: 0.88),
+    );
+    // Keyhole dot
+    canvas.drawCircle(
+      Offset(lCx, lCy + 12),
+      4,
+      Paint()..color = color.withValues(alpha: 0.6),
+    );
+  }
+
+  // ── Slide 1: globe with speed lines and lightning ──────────────────────────
+  void _paintGlobe(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height * 0.50;
+    final gr = size.width * 0.30;
+
+    _radialGlow(canvas, Offset(cx, cy), size.width * 0.54, color, 0.26);
+
+    // Stars in background
+    final rnd = math.Random(42);
+    for (var i = 0; i < 28; i++) {
+      final sx = rnd.nextDouble() * size.width;
+      final sy = rnd.nextDouble() * size.height;
+      final sr = 0.8 + rnd.nextDouble() * 1.4;
+      canvas.drawCircle(
+        Offset(sx, sy), sr,
+        Paint()..color = Colors.white.withValues(alpha: 0.04 + rnd.nextDouble() * 0.10),
+      );
+    }
+
+    // Globe fill + outline
+    canvas.drawCircle(Offset(cx, cy), gr, Paint()..color = color.withValues(alpha: 0.09));
+    canvas.drawCircle(Offset(cx, cy), gr, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.2
+      ..color = color.withValues(alpha: 0.80));
+
+    // Latitude ovals (3) — clipped to globe
+    canvas.save();
+    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: gr)));
+    for (var i = -1; i <= 1; i++) {
+      final latH = gr * 0.58 * i;
+      final latR = math.sqrt(math.max(0.0, gr * gr - latH * latH));
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset(cx, cy + latH), width: latR * 2, height: latR * 0.38),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = color.withValues(alpha: 0.42),
+      );
+    }
+    // Longitude ovals (2 rotating)
+    canvas.save();
+    canvas.translate(cx, cy);
+    for (var li = 0; li < 2; li++) {
+      canvas.save();
+      canvas.rotate(t * math.pi * 2 * (li == 0 ? 0.12 : -0.08) + li * math.pi / 2.5);
+      canvas.drawOval(
+        Rect.fromCenter(center: Offset.zero, width: gr * 0.54, height: gr * 2),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = color.withValues(alpha: 0.38 - li * 0.06),
+      );
+      canvas.restore();
+    }
+    canvas.restore();
+    canvas.restore();
+
+    // Radiating speed lines (8 directions)
+    for (var i = 0; i < 8; i++) {
+      final angle = (i / 8) * math.pi * 2;
+      final phase = (t * 1.6 + i / 8) % 1.0;
+      final r0 = gr + 10 + phase * 46;
+      final r1 = r0 + 20 + (i % 3) * 10;
+      canvas.drawLine(
+        Offset(cx + math.cos(angle) * r0, cy + math.sin(angle) * r0),
+        Offset(cx + math.cos(angle) * r1, cy + math.sin(angle) * r1),
+        Paint()
+          ..strokeWidth = 1.8
+          ..strokeCap = StrokeCap.round
+          ..color = color.withValues(alpha: (1 - phase) * 0.65),
+      );
+    }
+
+    // Three connection nodes on globe surface with an arc between two of them
+    final nodes = [
+      Offset(cx + gr * 0.58, cy - gr * 0.48),
+      Offset(cx - gr * 0.62, cy + gr * 0.28),
+      Offset(cx + gr * 0.28, cy + gr * 0.68),
+    ];
+    for (final pt in nodes) {
+      canvas.drawCircle(pt, 5.5, Paint()..color = Colors.white.withValues(alpha: 0.75));
+      canvas.drawCircle(pt, 5.5, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = color.withValues(alpha: 0.85));
+    }
+    // Curved arc between node 0 and 2
+    final ctrl = Offset(
+      (nodes[0].dx + nodes[2].dx) / 2 - 28,
+      (nodes[0].dy + nodes[2].dy) / 2 - 54,
+    );
+    canvas.drawPath(
+      Path()..moveTo(nodes[0].dx, nodes[0].dy)
+            ..quadraticBezierTo(ctrl.dx, ctrl.dy, nodes[2].dx, nodes[2].dy),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = color.withValues(alpha: 0.50),
+    );
+
+    // Central lightning bolt (gold)
+    const bW = 26.0;
+    const bH = 46.0;
+    final bX = cx - bW / 2;
+    final bY = cy - bH / 2;
+    final bolt = Path()
+      ..moveTo(bX + bW * 0.65, bY)
+      ..lineTo(bX,            bY + bH * 0.52)
+      ..lineTo(bX + bW * 0.48, bY + bH * 0.52)
+      ..lineTo(bX + bW * 0.35, bY + bH)
+      ..lineTo(bX + bW,        bY + bH * 0.48)
+      ..lineTo(bX + bW * 0.52, bY + bH * 0.48)
+      ..close();
+    canvas.drawPath(bolt, Paint()
+      ..color = _gold.withValues(alpha: 0.30)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+    canvas.drawPath(bolt, Paint()..color = _gold);
+  }
+
+  // ── Slide 2: large VPN toggle with server list preview ────────────────────
+  void _paintToggle(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height * 0.40;
+
+    _radialGlow(canvas, Offset(cx, cy), size.width * 0.52, color, 0.28);
+
+    // Expanding pulse rings from toggle center
+    for (var i = 0; i < 3; i++) {
+      final phase = (t * 0.85 + i * 0.33) % 1.0;
+      canvas.drawCircle(
+        Offset(cx, cy),
+        size.width * 0.14 + phase * size.width * 0.30,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = color.withValues(alpha: (1 - phase) * 0.48),
+      );
+    }
+
+    // Toggle pill (horizontal, large — mirrors the app's VPN button feel)
+    const pillW = 148.0;
+    const pillH = 60.0;
+    final pillRect = RRect.fromRectAndRadius(
+      Rect.fromCenter(center: Offset(cx, cy), width: pillW, height: pillH),
+      const Radius.circular(30),
+    );
+    // Outer glow
+    canvas.drawRRect(pillRect.inflate(8), Paint()
+      ..color = color.withValues(alpha: 0.20)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
+    // Fill — active gradient
+    canvas.drawRRect(pillRect, Paint()
+      ..shader = ui.Gradient.linear(
+        Offset(cx - pillW / 2, cy),
+        Offset(cx + pillW / 2, cy),
+        [color.withValues(alpha: 0.70), color],
+      ));
+
+    // Thumb — positioned right (ON)
+    final thumbX = cx + pillW / 2 - 30 - 4;
+    canvas.drawCircle(Offset(thumbX, cy), 23, Paint()..color = Colors.white);
+    // Checkmark on thumb
+    final chk = Path()
+      ..moveTo(thumbX - 7, cy + 1)
+      ..lineTo(thumbX - 1, cy + 7)
+      ..lineTo(thumbX + 9, cy - 7);
+    canvas.drawPath(chk, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..color = color);
+
+    // "OFF" label on the left of pill (faint white)
+    // Represented as two short horizontal lines (UX affordance)
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(cx - pillW / 2 + 18, cy - 5, 22, 4),
+        const Radius.circular(2),
+      ),
+      Paint()..color = Colors.white.withValues(alpha: 0.30),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(cx - pillW / 2 + 18, cy + 5, 16, 4),
+        const Radius.circular(2),
+      ),
+      Paint()..color = Colors.white.withValues(alpha: 0.20),
+    );
+
+    // Decorative server rows below toggle
+    final rowBase = cy + pillH / 2 + 30;
+    for (var i = 0; i < 3; i++) {
+      final ry = rowBase + i * 44.0;
+      final rw = size.width * 0.68;
+      final rx = cx - rw / 2;
+      final isActive = i == 0;
+
+      // Row background
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(Rect.fromLTWH(rx, ry, rw, 36), const Radius.circular(10)),
+        Paint()..color = isActive
+            ? color.withValues(alpha: 0.16)
+            : Colors.white.withValues(alpha: 0.05),
+      );
+      if (isActive) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromLTWH(rx, ry, rw, 36), const Radius.circular(10)),
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5
+            ..color = color.withValues(alpha: 0.60),
+        );
+      }
+      // Flag circle
+      canvas.drawCircle(
+        Offset(rx + 24, ry + 18), 9,
+        Paint()..color = isActive
+            ? color.withValues(alpha: 0.65)
+            : Colors.white.withValues(alpha: 0.12),
+      );
+      // Name line
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(rx + 42, ry + 9, rw * (0.40 - i * 0.06), 8),
+          const Radius.circular(4),
+        ),
+        Paint()..color = isActive
+            ? Colors.white.withValues(alpha: 0.82)
+            : Colors.white.withValues(alpha: 0.22),
+      );
+      // Sub-label line
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(rx + 42, ry + 21, rw * 0.24, 5),
+          const Radius.circular(3),
+        ),
+        Paint()..color = Colors.white.withValues(alpha: 0.12),
+      );
+      // Ping indicator (right side)
+      final pingW = 28.0 - i * 4;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(rx + rw - 40, ry + 13, pingW, 9),
+          const Radius.circular(5),
+        ),
+        Paint()..color = isActive
+            ? color.withValues(alpha: 0.55)
+            : Colors.white.withValues(alpha: 0.10),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SlidePainter old) =>
+      old.index != index || old.t != t || old.color != color;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
