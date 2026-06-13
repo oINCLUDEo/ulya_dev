@@ -49,16 +49,11 @@ class AppConfig {
   /// App Link (autoVerify), the OS opens the app directly. Caught in Dart via
   /// the app_links package (see TelegramAuthLink). Must match BotFather exactly.
   static const String telegramAuthCallback =
-      'https://app1151606946-login.tg.dev/tglogin';
+      'https://app982852799-login.tg.dev/tglogin';
 
   /// Host portion of [telegramAuthCallback] — used to match the incoming App
   /// Link. Keep in sync with the AndroidManifest intent-filter.
-  static const String telegramAuthCallbackHost = 'app1151606946-login.tg.dev';
-
-  /// Legacy fallback bridge page (web flow). Only relevant if the App Link
-  /// flow is unavailable; kept for reference, not used by the primary flow.
-  static const String telegramBridgeUrl =
-      'https://web.ulya.space/tg-mobile.html';
+  static const String telegramAuthCallbackHost = 'app982852799-login.tg.dev';
 
   /// Sentry DSN for crash reporting. Empty string disables Sentry entirely
   /// (no SDK init, zero network calls) — safe default for local dev builds.
