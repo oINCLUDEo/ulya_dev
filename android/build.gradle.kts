@@ -8,9 +8,12 @@ allprojects {
         maven {
             url = uri("https://maven.pkg.github.com/TelegramMessenger/telegram-login-android")
             credentials {
-                username = providers.gradleProperty("gpr.user").orNull
+                // findProperty reads gradle.properties from GRADLE_USER_HOME too
+                // (providers.gradleProperty does NOT) — needed since this machine
+                // has a custom GRADLE_USER_HOME.
+                username = (findProperty("gpr.user") as String?)
                     ?: System.getenv("GITHUB_USERNAME")
-                password = providers.gradleProperty("gpr.key").orNull
+                password = (findProperty("gpr.key") as String?)
                     ?: System.getenv("GITHUB_TOKEN")
             }
         }
