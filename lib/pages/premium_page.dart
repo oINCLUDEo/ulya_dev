@@ -4,7 +4,6 @@ import 'dart:math' show Random, cos, sin, pi;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:phosphor_flutter/phosphor_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart' show DS;
 import '../models/me_response.dart';
@@ -14,6 +13,7 @@ import '../services/subscription_api_service.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
+import 'payment_webview_page.dart';
 
 part 'premium_page_cards.dart';
 part 'premium_page_status.dart';
@@ -784,27 +784,16 @@ class _PremiumPageState extends State<PremiumPage>
   }
 
   Future<void> _openPaymentUrl(String url) async {
-    try {
-      final uri = Uri.parse(url);
-      // Open the payment page in an in-app browser window (Custom Tab /
-      // SFSafariViewController) instead of switching to the external browser.
-      final opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView)
-          .catchError((_) => false);
-      if (opened) {
-        if (mounted) {
-          _snack('Страница оплаты открыта. После оплаты закройте окно и вернитесь в приложение.', ok: true);
-          _pendingPaymentPoll = true;
-        }
-      } else if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (mounted) {
-          _snack('Страница оплаты открыта. После оплаты вернитесь в приложение.', ok: true);
-          _pendingPaymentPoll = true;
-        }
-      } else {
-        if (mounted) _snack('Не удалось открыть страницу оплаты');
-      }
-    } catch (_) { if (mounted) _snack('Ошибка при открытии оплаты'); }
+    if (!mounted) return;
+    // Open checkout in an embedded in-app window (our own top bar, no browser
+    // UI). When it closes we poll the backend for the payment result.
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => PaymentWebViewPage(url: url),
+      fullscreenDialog: true,
+    ));
+    if (!mounted) return;
+    _snack('Проверяем оплату…', ok: true);
+    _startPaymentPolling();
   }
 
   void _snack(String msg, {bool ok = false}) {

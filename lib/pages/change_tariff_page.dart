@@ -4,12 +4,12 @@ import 'dart:math' show max;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart' show DS;
 import '../models/me_response.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
+import 'payment_webview_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Тарифные иконки — выбираются по ключевым словам в названии тарифа
@@ -305,28 +305,16 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
 
   Future<void> _openPaymentUrl(String url) async {
     try {
-      final uri = Uri.parse(url);
-      // Open the payment page in an in-app browser window (Custom Tab /
-      // SFSafariViewController) instead of switching to the external browser.
-      // Falls back to the external app if the in-app view isn't available.
-      final opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView)
-          .catchError((_) => false);
-      if (opened) {
-        if (mounted) {
-          _snack(
-              'Страница оплаты открыта. После оплаты закройте окно и вернитесь в приложение.',
-              ok: true);
-          _pendingPaymentPoll = true;
-        }
-      } else if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (mounted) {
-          _snack('Страница оплаты открыта. После оплаты вернитесь в приложение.',
-              ok: true);
-          _pendingPaymentPoll = true;
-        }
-      } else {
-        if (mounted) _snack('Не удалось открыть страницу оплаты');
+      if (!mounted) return;
+      // Embedded in-app payment window (own top bar, no browser UI); poll the
+      // backend for the result once it closes.
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PaymentWebViewPage(url: url),
+        fullscreenDialog: true,
+      ));
+      if (mounted) {
+        _snack('Проверяем оплату…', ok: true);
+        _startPaymentPolling();
       }
     } catch (_) {
       if (mounted) _snack('Ошибка при открытии оплаты');
