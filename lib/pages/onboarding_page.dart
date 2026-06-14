@@ -54,18 +54,18 @@ class _SlideData {
 
 const _kSlides = <_SlideData>[
   _SlideData(
-    title: 'Безопасное соединение',
-    body: 'Надёжное шифрование защищает ваши данные в любых сетях — дома и в путешествиях.',
+    title: 'Ваш интернет — только ваш',
+    body: 'Шифруем трафик, чтобы никто не видел, что вы открываете. Даже в публичном Wi-Fi в кафе или метро.',
     color: DS.violet,
   ),
   _SlideData(
-    title: 'Высокая скорость',
-    body: 'Серверы по всему миру обеспечивают стабильное и быстрое соединение.',
+    title: 'Открывается всё',
+    body: 'Любимые сайты и сервисы снова работают — быстро и без тормозов, где бы вы ни были.',
     color: DS.cyan,
   ),
   _SlideData(
-    title: 'Просто управлять',
-    body: 'Одно касание — и вы под защитой. Подключайтесь и отключайтесь мгновенно.',
+    title: 'Одна кнопка — и готово',
+    body: 'Никаких сложных настроек. Нажали «Подключить» — и вы защищены за пару секунд.',
     color: DS.emerald,
   ),
 ];
@@ -652,109 +652,112 @@ class _SlidePainter extends CustomPainter {
     }
   }
 
-  // ── Slide 0: shield with orbital protection rings ──────────────────────────
+  // ── Slide 0: glossy glass shield (privacy) ─────────────────────────────────
   void _paintShield(Canvas canvas, Size size) {
     final cx = size.width / 2;
     final cy = size.height * 0.50;
 
-    _radialGlow(canvas, Offset(cx, cy), size.width * 0.56, color, 0.30);
+    _radialGlow(canvas, Offset(cx, cy), size.width * 0.58, color, 0.34);
 
-    // Expanding pulse rings
+    // Soft protective pulse rings.
     for (var i = 0; i < 2; i++) {
-      final phase = (t + i * 0.50) % 1.0;
-      final r = size.width * 0.20 + phase * size.width * 0.24;
+      final phase = (t + i * 0.5) % 1.0;
+      final r = size.width * 0.22 + phase * size.width * 0.22;
       canvas.drawCircle(
         Offset(cx, cy), r,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
-          ..color = color.withValues(alpha: (1 - phase) * 0.55),
+          ..strokeWidth = 1.4
+          ..color = color.withValues(alpha: (1 - phase) * 0.40),
       );
     }
 
-    // Three orbital ellipses with rotating dots
-    final orbits = [
-      (rFrac: 0.29, dotN: 4, speed: 0.30, dotR: 4.5),
-      (rFrac: 0.39, dotN: 5, speed: 0.20, dotR: 3.5),
-      (rFrac: 0.50, dotN: 6, speed: 0.13, dotR: 2.5),
-    ];
-    for (var i = 0; i < orbits.length; i++) {
-      final o = orbits[i];
-      final orbitR = size.width * o.rFrac;
-      canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx, cy), width: orbitR * 2, height: orbitR * 0.52 * 2),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.9
-          ..color = color.withValues(alpha: 0.22 - i * 0.04),
+    // Drifting particles.
+    final rnd = math.Random(11);
+    for (var i = 0; i < 14; i++) {
+      final a = rnd.nextDouble() * math.pi * 2;
+      final rad = size.width * (0.30 + rnd.nextDouble() * 0.22);
+      final drift = math.sin(t * math.pi * 2 + i) * 4;
+      canvas.drawCircle(
+        Offset(cx + math.cos(a) * rad, cy + math.sin(a) * rad + drift),
+        1.0 + rnd.nextDouble() * 1.8,
+        Paint()..color = color.withValues(alpha: 0.10 + rnd.nextDouble() * 0.20),
       );
-      for (var d = 0; d < o.dotN; d++) {
-        final angle = (t * o.speed * math.pi * 2) + (d * math.pi * 2 / o.dotN);
-        final dx = cx + math.cos(angle) * orbitR;
-        final dy = cy + math.sin(angle) * orbitR * 0.52;
-        canvas.drawCircle(
-          Offset(dx, dy), o.dotR,
-          Paint()..color = color.withValues(alpha: 0.70 - i * 0.14),
-        );
-      }
     }
 
-    // Shield shape (classic heraldic)
-    final shW = size.width * 0.40;
-    final shH = shW * 1.20;
+    // Shield geometry.
+    final shW = size.width * 0.42;
+    final shH = shW * 1.22;
     final shX = cx - shW / 2;
-    final shY = cy - shH * 0.54;
-
+    final shY = cy - shH * 0.52;
     final shield = Path()
       ..moveTo(cx, shY)
-      ..lineTo(shX + shW, shY + shH * 0.14)
+      ..lineTo(shX + shW, shY + shH * 0.15)
       ..lineTo(shX + shW, shY + shH * 0.56)
       ..quadraticBezierTo(shX + shW, shY + shH * 0.90, cx, shY + shH)
       ..quadraticBezierTo(shX, shY + shH * 0.90, shX, shY + shH * 0.56)
-      ..lineTo(shX, shY + shH * 0.14)
+      ..lineTo(shX, shY + shH * 0.15)
       ..close();
 
-    // Soft blur glow behind shield
+    // Drop glow.
     canvas.drawPath(shield, Paint()
-      ..color = color.withValues(alpha: 0.25)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
-    // Fill
-    canvas.drawPath(shield, Paint()..color = color.withValues(alpha: 0.13));
-    // Stroke
+      ..color = color.withValues(alpha: 0.30)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 22));
+
+    // Glass fill — vertical gradient (light top → deep bottom).
+    canvas.drawPath(shield, Paint()
+      ..shader = ui.Gradient.linear(
+        Offset(cx, shY), Offset(cx, shY + shH),
+        [
+          Color.lerp(color, Colors.white, 0.34)!,
+          color,
+          Color.lerp(color, const Color(0xFF0A0A0F), 0.40)!,
+        ],
+        [0.0, 0.5, 1.0],
+      ));
+
+    // Glossy highlight on the upper half.
+    canvas.save();
+    canvas.clipPath(shield);
+    canvas.drawRect(
+      Rect.fromLTWH(shX, shY, shW, shH * 0.46),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          Offset(cx, shY), Offset(cx, shY + shH * 0.46),
+          [Colors.white.withValues(alpha: 0.30), Colors.white.withValues(alpha: 0.0)],
+        ),
+    );
+    canvas.restore();
+
+    // Rim light.
     canvas.drawPath(shield, Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.8
-      ..color = color.withValues(alpha: 0.90));
+      ..strokeWidth = 2.2
+      ..color = Colors.white.withValues(alpha: 0.55));
 
-    // ── Padlock, centred in the shield ──────────────────────────────────────
-    final lock = Paint()..color = Colors.white.withValues(alpha: 0.92);
-    final lockW = shW * 0.46;          // body width
+    // ── Padlock ────────────────────────────────────────────────────────────
+    final lockW = shW * 0.42;
     final bodyH = lockW * 0.82;
     final lCx = cx;
-    final bodyTop = cy + shH * 0.04;   // body sits a touch below shield centre
-
-    // Shackle — a semicircle ABOVE the body (top half: left → up → right).
+    final bodyTop = cy + shH * 0.02;
     final shackleR = lockW * 0.30;
-    final shackleCy = bodyTop - shackleR * 0.18;
     canvas.drawArc(
-      Rect.fromCircle(center: Offset(lCx, shackleCy), radius: shackleR),
+      Rect.fromCircle(center: Offset(lCx, bodyTop - shackleR * 0.16), radius: shackleR),
       math.pi, math.pi, false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = shackleR * 0.42
-        ..color = Colors.white.withValues(alpha: 0.92),
+        ..strokeWidth = shackleR * 0.40
+        ..color = Colors.white.withValues(alpha: 0.95),
     );
-
-    // Body — rounded rectangle.
+    final bodyRect = Rect.fromLTWH(lCx - lockW / 2, bodyTop, lockW, bodyH);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(lCx - lockW / 2, bodyTop, lockW, bodyH),
-        Radius.circular(lockW * 0.18),
-      ),
-      lock,
+      RRect.fromRectAndRadius(bodyRect, Radius.circular(lockW * 0.20)),
+      Paint()
+        ..shader = ui.Gradient.linear(
+          bodyRect.topCenter, bodyRect.bottomCenter,
+          [Colors.white, const Color(0xFFE6E6F0)],
+        ),
     );
-
-    // Keyhole — circle + stem, punched out in the brand colour.
     final khR = lockW * 0.12;
     final khCy = bodyTop + bodyH * 0.40;
     canvas.drawCircle(Offset(lCx, khCy), khR, Paint()..color = color);
@@ -764,259 +767,168 @@ class _SlidePainter extends CustomPainter {
     );
   }
 
-  // ── Slide 1: globe with speed lines and lightning ──────────────────────────
+  // ── Slide 1: connected globe (access) ──────────────────────────────────────
   void _paintGlobe(Canvas canvas, Size size) {
     final cx = size.width / 2;
     final cy = size.height * 0.50;
     final gr = size.width * 0.30;
 
-    _radialGlow(canvas, Offset(cx, cy), size.width * 0.54, color, 0.26);
+    _radialGlow(canvas, Offset(cx, cy), size.width * 0.56, color, 0.30);
 
-    // Stars in background
+    // Faint stars.
     final rnd = math.Random(42);
-    for (var i = 0; i < 28; i++) {
-      final sx = rnd.nextDouble() * size.width;
-      final sy = rnd.nextDouble() * size.height;
-      final sr = 0.8 + rnd.nextDouble() * 1.4;
+    for (var i = 0; i < 26; i++) {
       canvas.drawCircle(
-        Offset(sx, sy), sr,
+        Offset(rnd.nextDouble() * size.width, rnd.nextDouble() * size.height),
+        0.8 + rnd.nextDouble() * 1.3,
         Paint()..color = Colors.white.withValues(alpha: 0.04 + rnd.nextDouble() * 0.10),
       );
     }
 
-    // Globe fill + outline
-    canvas.drawCircle(Offset(cx, cy), gr, Paint()..color = color.withValues(alpha: 0.09));
+    // Sphere — soft halo, radial gradient body (top-left highlight → dark rim).
+    canvas.drawCircle(Offset(cx, cy), gr * 1.12, Paint()
+      ..color = color.withValues(alpha: 0.22)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24));
+    canvas.drawCircle(Offset(cx, cy), gr, Paint()
+      ..shader = ui.Gradient.radial(
+        Offset(cx - gr * 0.35, cy - gr * 0.40), gr * 1.5,
+        [
+          Color.lerp(color, Colors.white, 0.30)!.withValues(alpha: 0.55),
+          color.withValues(alpha: 0.30),
+          color.withValues(alpha: 0.06),
+        ],
+        [0.0, 0.55, 1.0],
+      ));
     canvas.drawCircle(Offset(cx, cy), gr, Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
-      ..color = color.withValues(alpha: 0.80));
+      ..strokeWidth = 2.0
+      ..color = color.withValues(alpha: 0.85));
 
-    // Latitude ovals (3) — clipped to globe
+    // Grid (clipped) — latitudes + gently rotating longitudes.
     canvas.save();
     canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: gr)));
     for (var i = -1; i <= 1; i++) {
-      final latH = gr * 0.58 * i;
+      final latH = gr * 0.55 * i;
       final latR = math.sqrt(math.max(0.0, gr * gr - latH * latH));
       canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx, cy + latH), width: latR * 2, height: latR * 0.38),
+        Rect.fromCenter(center: Offset(cx, cy + latH), width: latR * 2, height: latR * 0.36),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..color = color.withValues(alpha: 0.42),
+          ..strokeWidth = 1.0
+          ..color = color.withValues(alpha: 0.32),
       );
     }
-    // Longitude ovals (2 rotating)
     canvas.save();
     canvas.translate(cx, cy);
-    for (var li = 0; li < 2; li++) {
+    for (var li = 0; li < 3; li++) {
       canvas.save();
-      canvas.rotate(t * math.pi * 2 * (li == 0 ? 0.12 : -0.08) + li * math.pi / 2.5);
+      canvas.rotate(t * math.pi * 2 * 0.1 + li * math.pi / 3);
       canvas.drawOval(
-        Rect.fromCenter(center: Offset.zero, width: gr * 0.54, height: gr * 2),
+        Rect.fromCenter(center: Offset.zero, width: gr * (0.5 + li * 0.5), height: gr * 2),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..color = color.withValues(alpha: 0.38 - li * 0.06),
+          ..strokeWidth = 1.0
+          ..color = color.withValues(alpha: 0.26),
       );
       canvas.restore();
     }
     canvas.restore();
     canvas.restore();
 
-    // Radiating speed lines (8 directions)
-    for (var i = 0; i < 8; i++) {
-      final angle = (i / 8) * math.pi * 2;
-      final phase = (t * 1.6 + i / 8) % 1.0;
-      final r0 = gr + 10 + phase * 46;
-      final r1 = r0 + 20 + (i % 3) * 10;
-      canvas.drawLine(
-        Offset(cx + math.cos(angle) * r0, cy + math.sin(angle) * r0),
-        Offset(cx + math.cos(angle) * r1, cy + math.sin(angle) * r1),
-        Paint()
-          ..strokeWidth = 1.8
-          ..strokeCap = StrokeCap.round
-          ..color = color.withValues(alpha: (1 - phase) * 0.65),
-      );
-    }
-
-    // Three connection nodes on globe surface with an arc between two of them
-    final nodes = [
-      Offset(cx + gr * 0.58, cy - gr * 0.48),
-      Offset(cx - gr * 0.62, cy + gr * 0.28),
-      Offset(cx + gr * 0.28, cy + gr * 0.68),
+    // Connection pins + gold routes between them.
+    final pins = [
+      Offset(cx + gr * 0.55, cy - gr * 0.50),
+      Offset(cx - gr * 0.60, cy + gr * 0.20),
+      Offset(cx + gr * 0.20, cy + gr * 0.66),
     ];
-    for (final pt in nodes) {
-      canvas.drawCircle(pt, 5.5, Paint()..color = Colors.white.withValues(alpha: 0.75));
-      canvas.drawCircle(pt, 5.5, Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = color.withValues(alpha: 0.85));
-    }
-    // Curved arc between node 0 and 2
-    final ctrl = Offset(
-      (nodes[0].dx + nodes[2].dx) / 2 - 28,
-      (nodes[0].dy + nodes[2].dy) / 2 - 54,
-    );
-    canvas.drawPath(
-      Path()..moveTo(nodes[0].dx, nodes[0].dy)
-            ..quadraticBezierTo(ctrl.dx, ctrl.dy, nodes[2].dx, nodes[2].dy),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = color.withValues(alpha: 0.50),
-    );
-
-    // Central lightning bolt (gold)
-    const bW = 26.0;
-    const bH = 46.0;
-    final bX = cx - bW / 2;
-    final bY = cy - bH / 2;
-    final bolt = Path()
-      ..moveTo(bX + bW * 0.65, bY)
-      ..lineTo(bX,            bY + bH * 0.52)
-      ..lineTo(bX + bW * 0.48, bY + bH * 0.52)
-      ..lineTo(bX + bW * 0.35, bY + bH)
-      ..lineTo(bX + bW,        bY + bH * 0.48)
-      ..lineTo(bX + bW * 0.52, bY + bH * 0.48)
-      ..close();
-    canvas.drawPath(bolt, Paint()
-      ..color = _gold.withValues(alpha: 0.30)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-    canvas.drawPath(bolt, Paint()..color = _gold);
-  }
-
-  // ── Slide 2: large VPN toggle with server list preview ────────────────────
-  void _paintToggle(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height * 0.40;
-
-    _radialGlow(canvas, Offset(cx, cy), size.width * 0.52, color, 0.28);
-
-    // Expanding pulse rings from toggle center
-    for (var i = 0; i < 3; i++) {
-      final phase = (t * 0.85 + i * 0.33) % 1.0;
-      canvas.drawCircle(
-        Offset(cx, cy),
-        size.width * 0.14 + phase * size.width * 0.30,
+    void route(Offset a, Offset b, double lift) {
+      final c = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2 - lift);
+      canvas.drawPath(
+        Path()..moveTo(a.dx, a.dy)..quadraticBezierTo(c.dx, c.dy, b.dx, b.dy),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2
-          ..color = color.withValues(alpha: (1 - phase) * 0.48),
+          ..strokeWidth = 1.6
+          ..color = _gold.withValues(alpha: 0.55),
       );
     }
+    route(pins[0], pins[1], 50);
+    route(pins[1], pins[2], 46);
+    for (final p in pins) {
+      canvas.drawCircle(p, 9, Paint()..color = _gold.withValues(alpha: 0.22));
+      canvas.drawCircle(p, 5, Paint()..color = Colors.white);
+      canvas.drawCircle(p, 5, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = _gold);
+    }
+  }
 
-    // Toggle pill (horizontal, large — mirrors the app's VPN button feel)
-    const pillW = 148.0;
-    const pillH = 60.0;
-    final pillRect = RRect.fromRectAndRadius(
-      Rect.fromCenter(center: Offset(cx, cy), width: pillW, height: pillH),
-      const Radius.circular(30),
-    );
-    // Outer glow
-    canvas.drawRRect(pillRect.inflate(8), Paint()
-      ..color = color.withValues(alpha: 0.20)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10));
-    // Fill — active gradient
-    canvas.drawRRect(pillRect, Paint()
-      ..shader = ui.Gradient.linear(
-        Offset(cx - pillW / 2, cy),
-        Offset(cx + pillW / 2, cy),
-        [color.withValues(alpha: 0.70), color],
-      ));
+  // ── Slide 2: one-tap power button (simplicity) ─────────────────────────────
+  void _paintToggle(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height * 0.50;
+    final br = size.width * 0.17;
 
-    // Thumb — positioned right (ON)
-    final thumbX = cx + pillW / 2 - 30 - 4;
-    canvas.drawCircle(Offset(thumbX, cy), 23, Paint()..color = Colors.white);
-    // Checkmark on thumb
-    final chk = Path()
-      ..moveTo(thumbX - 7, cy + 1)
-      ..lineTo(thumbX - 1, cy + 7)
-      ..lineTo(thumbX + 9, cy - 7);
-    canvas.drawPath(chk, Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..color = color);
+    _radialGlow(canvas, Offset(cx, cy), size.width * 0.52, color, 0.30);
 
-    // "OFF" label on the left of pill (faint white)
-    // Represented as two short horizontal lines (UX affordance)
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(cx - pillW / 2 + 18, cy - 5, 22, 4),
-        const Radius.circular(2),
-      ),
-      Paint()..color = Colors.white.withValues(alpha: 0.30),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(cx - pillW / 2 + 18, cy + 5, 16, 4),
-        const Radius.circular(2),
-      ),
-      Paint()..color = Colors.white.withValues(alpha: 0.20),
-    );
-
-    // Decorative server rows below toggle
-    final rowBase = cy + pillH / 2 + 30;
+    // Expanding tap ripples.
     for (var i = 0; i < 3; i++) {
-      final ry = rowBase + i * 44.0;
-      final rw = size.width * 0.68;
-      final rx = cx - rw / 2;
-      final isActive = i == 0;
-
-      // Row background
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(Rect.fromLTWH(rx, ry, rw, 36), const Radius.circular(10)),
-        Paint()..color = isActive
-            ? color.withValues(alpha: 0.16)
-            : Colors.white.withValues(alpha: 0.05),
-      );
-      if (isActive) {
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(Rect.fromLTWH(rx, ry, rw, 36), const Radius.circular(10)),
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.5
-            ..color = color.withValues(alpha: 0.60),
-        );
-      }
-      // Flag circle
+      final phase = (t * 0.9 + i * 0.33) % 1.0;
       canvas.drawCircle(
-        Offset(rx + 24, ry + 18), 9,
-        Paint()..color = isActive
-            ? color.withValues(alpha: 0.65)
-            : Colors.white.withValues(alpha: 0.12),
-      );
-      // Name line
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(rx + 42, ry + 9, rw * (0.40 - i * 0.06), 8),
-          const Radius.circular(4),
-        ),
-        Paint()..color = isActive
-            ? Colors.white.withValues(alpha: 0.82)
-            : Colors.white.withValues(alpha: 0.22),
-      );
-      // Sub-label line
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(rx + 42, ry + 21, rw * 0.24, 5),
-          const Radius.circular(3),
-        ),
-        Paint()..color = Colors.white.withValues(alpha: 0.12),
-      );
-      // Ping indicator (right side)
-      final pingW = 28.0 - i * 4;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(rx + rw - 40, ry + 13, pingW, 9),
-          const Radius.circular(5),
-        ),
-        Paint()..color = isActive
-            ? color.withValues(alpha: 0.55)
-            : Colors.white.withValues(alpha: 0.10),
+        Offset(cx, cy), br * 1.1 + phase * size.width * 0.26,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..color = color.withValues(alpha: (1 - phase) * 0.45),
       );
     }
+
+    // Outer glow.
+    canvas.drawCircle(Offset(cx, cy), br * 1.2, Paint()
+      ..color = color.withValues(alpha: 0.30)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 26));
+
+    // Button — glossy radial-gradient disc.
+    canvas.drawCircle(Offset(cx, cy), br, Paint()
+      ..shader = ui.Gradient.radial(
+        Offset(cx - br * 0.35, cy - br * 0.42), br * 1.5,
+        [
+          Color.lerp(color, Colors.white, 0.32)!,
+          color,
+          Color.lerp(color, const Color(0xFF0A0A0F), 0.30)!,
+        ],
+        [0.0, 0.55, 1.0],
+      ));
+    // Top gloss.
+    canvas.save();
+    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: br)));
+    canvas.drawCircle(Offset(cx, cy - br * 0.5), br * 0.8, Paint()
+      ..shader = ui.Gradient.radial(
+        Offset(cx, cy - br * 0.55), br * 0.9,
+        [Colors.white.withValues(alpha: 0.40), Colors.white.withValues(alpha: 0.0)],
+      ));
+    canvas.restore();
+    // Rim.
+    canvas.drawCircle(Offset(cx, cy), br, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4
+      ..color = Colors.white.withValues(alpha: 0.30));
+
+    // Power glyph (ring with a top gap + vertical bar).
+    final gr2 = br * 0.44;
+    final gp = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = br * 0.12
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.white;
+    const gap = 0.55; // half-gap (radians) at the top
+    canvas.drawArc(
+      Rect.fromCircle(center: Offset(cx, cy), radius: gr2),
+      -math.pi / 2 + gap, math.pi * 2 - gap * 2, false, gp,
+    );
+    canvas.drawLine(
+      Offset(cx, cy - gr2 * 1.25), Offset(cx, cy + gr2 * 0.05), gp,
+    );
   }
 
   @override
