@@ -4,12 +4,12 @@ import 'dart:math' show max;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart' show DS;
 import '../models/me_response.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
+import 'payment_webview_page.dart';
 
 // ── Дизайн-токены (синхронизированы с premium_page) ─────────────────────────
 const _surf = Color(0xFF111124);   // поверхность карточки
@@ -76,6 +76,8 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
   Timer? _pollTimer;
   int _pollAttempt = 0;
   bool _pollingForPayment = false;
+  // Pre-checkout expiry snapshot — renewal is confirmed only when it advances.
+  DateTime? _payBaselineExpiry;
 
   static const int _maxPollAttempts = 30;
   static const Duration _pollInterval = Duration(seconds: 4);
@@ -267,7 +269,14 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
       return;
     }
     final sub = meNotifier.value?.subscription;
-    final confirmed = sub != null && sub.isActive && !sub.isTrial;
+    final active = sub != null && sub.isActive && !sub.isTrial;
+    // Renewal confirmed only when the expiry actually advanced past the
+    // pre-checkout baseline (the user already has an active sub here, so
+    // "active" alone is not proof of payment).
+    final confirmed = active &&
+        (_payBaselineExpiry == null ||
+            sub.expireDate == null ||
+            sub.expireDate!.isAfter(_payBaselineExpiry!));
     if (confirmed || _pollAttempt >= _maxPollAttempts) {
       timer.cancel();
       _pollTimer = null;
@@ -286,22 +295,18 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
   }
 
   Future<void> _openPaymentUrl(String url) async {
-    try {
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (mounted) {
-          _snack(
-              'Страница оплаты открыта. После оплаты вернитесь в приложение.',
-              ok: true);
-          _pendingPaymentPoll = true;
-        }
-      } else {
-        if (mounted) _snack('Не удалось открыть страницу оплаты');
-      }
-    } catch (_) {
-      if (mounted) _snack('Ошибка при открытии оплаты');
-    }
+    if (!mounted) return;
+    // Snapshot expiry so polling can tell a real renewal from a cancel.
+    _payBaselineExpiry = meNotifier.value?.subscription?.expireDate;
+    // Embedded in-app payment window (own top bar, no browser UI); poll the
+    // backend for the result once it closes.
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => PaymentWebViewPage(url: url),
+      fullscreenDialog: true,
+    ));
+    if (!mounted) return;
+    _snack('Проверяем оплату…', ok: true);
+    _startPaymentPolling();
   }
 
   // ── Actions ────────────────────────────────────────────────────────────────────

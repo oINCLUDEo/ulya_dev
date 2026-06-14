@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart' show DS;
 
@@ -13,6 +12,7 @@ import '../services/subscription_api_service.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 import 'change_tariff_page.dart';
+import 'payment_webview_page.dart';
 import 'renew_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1133,16 +1133,17 @@ class _TopupSheetState extends State<_TopupSheet> {
       _snack('Ошибка соединения с сервером', isError: true);
     } else if (result.requiresPayment && result.paymentUrl != null) {
       Navigator.pop(context);
-      final uri = Uri.parse(result.paymentUrl!);
-      try {
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        } else {
-          _snack('Не удалось открыть страницу оплаты', isError: true);
-        }
-      } catch (_) {
-        _snack('Ошибка при открытии оплаты', isError: true);
-      }
+      if (!mounted) return;
+      // In-app payment window instead of an external browser.
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PaymentWebViewPage(url: result.paymentUrl!),
+        fullscreenDialog: true,
+      ));
+      if (!mounted) return;
+      // Balance is credited server-side after payment — refresh to reflect it.
+      await MeService.refresh();
+      globalRefreshNotifier.value++;
+      _snack('Проверяем оплату… баланс обновится автоматически', isError: false);
     } else {
       _snack(result.message ?? 'Ошибка пополнения', isError: true);
     }
