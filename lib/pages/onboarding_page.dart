@@ -682,20 +682,25 @@ class _GlobeIllustrationState extends State<_GlobeIllustration> {
   void initState() {
     super.initState();
     _controller = FlutterEarthGlobeController(
-      surface: const AssetImage('assets/image/earth.jpg'),
       rotationSpeed: 0.06,
-      isRotating: true,
       isZoomEnabled: false,
       isBackgroundFollowingSphereRotation: false,
     );
-    for (var i = 0; i < _points.length; i++) {
-      _controller.addPoint(Point(
-        id: 'srv$i',
-        coordinates: GlobeCoordinates(_points[i][0], _points[i][1]),
-        isLabelVisible: false,
-        style: const PointStyle(color: Color(0xFFD4A84B), size: 5),
-      ));
-    }
+    // Load the texture + markers after the first frame, once the widget (and
+    // its ticker) are attached — loading in the constructor can paint nothing.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _controller.loadSurface(const AssetImage('assets/image/earth.jpg'));
+      for (var i = 0; i < _points.length; i++) {
+        _controller.addPoint(Point(
+          id: 'srv$i',
+          coordinates: GlobeCoordinates(_points[i][0], _points[i][1]),
+          isLabelVisible: false,
+          style: const PointStyle(color: Color(0xFFD4A84B), size: 5),
+        ));
+      }
+      _controller.startRotation();
+    });
   }
 
   @override
