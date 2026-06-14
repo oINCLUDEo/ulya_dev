@@ -29,6 +29,7 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   sentry_flutter: ^9.0.0
   webview_flutter: ^4.10.0
+  flutter_earth_globe: ^2.2.1
 
 dev_dependencies:
   flutter_test:
@@ -43,6 +44,7 @@ flutter:
     - assets/anim/loading.json
     - assets/icon/logo.svg
     - assets/image/app_icon.png
+    - assets/image/earth.jpg
 
 flutter_native_splash:
   color: "#0F0F1A"

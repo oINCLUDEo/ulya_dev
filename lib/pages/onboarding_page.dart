@@ -4,6 +4,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
+import 'package:flutter_earth_globe/flutter_earth_globe.dart';
+import 'package:flutter_earth_globe/flutter_earth_globe_controller.dart';
+import 'package:flutter_earth_globe/globe_coordinates.dart';
+import 'package:flutter_earth_globe/point.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -537,7 +541,9 @@ class _FeatureSlide extends StatelessWidget {
                 ),
               );
             },
-            child: _SlideIllustration(index: index, color: slide.color),
+            child: index == 1
+                ? const _GlobeIllustration()
+                : _SlideIllustration(index: index, color: slide.color),
           ),
         ),
         Expanded(
@@ -643,6 +649,71 @@ class _SlideIllustrationState extends State<_SlideIllustration>
           t: _ctrl.value,
         ),
         size: Size.infinite,
+      ),
+    );
+  }
+}
+
+// ── Slide 1: real textured Earth (flutter_earth_globe) ──────────────────────
+// Auto-rotating globe with the connection points anchored to real lat/lon, so
+// they spin with the surface. Wrapped in IgnorePointer so it never steals the
+// PageView swipe.
+class _GlobeIllustration extends StatefulWidget {
+  const _GlobeIllustration();
+
+  @override
+  State<_GlobeIllustration> createState() => _GlobeIllustrationState();
+}
+
+class _GlobeIllustrationState extends State<_GlobeIllustration> {
+  late final FlutterEarthGlobeController _controller;
+
+  // A few server cities — gold markers that rotate with the globe.
+  static const _points = <List<double>>[
+    [55.75, 37.61],   // Москва
+    [52.52, 13.40],   // Берлин
+    [51.50, -0.12],   // Лондон
+    [40.71, -74.0],   // Нью-Йорк
+    [1.35, 103.82],   // Сингапур
+    [35.68, 139.69],  // Токио
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = FlutterEarthGlobeController(
+      surface: const AssetImage('assets/image/earth.jpg'),
+      rotationSpeed: 0.06,
+      isRotating: true,
+      isZoomEnabled: false,
+      isBackgroundFollowingSphereRotation: false,
+    );
+    for (var i = 0; i < _points.length; i++) {
+      _controller.addPoint(Point(
+        id: 'srv$i',
+        coordinates: GlobeCoordinates(_points[i][0], _points[i][1]),
+        isLabelVisible: false,
+        style: const PointStyle(color: Color(0xFFD4A84B), size: 5),
+      ));
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final r = math.min(c.maxWidth, c.maxHeight) * 0.40;
+          return Center(
+            child: FlutterEarthGlobe(controller: _controller, radius: r),
+          );
+        },
       ),
     );
   }
