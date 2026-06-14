@@ -1,13 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' show Ticker;
-import 'package:flutter_earth_globe/flutter_earth_globe.dart';
-import 'package:flutter_earth_globe/flutter_earth_globe_controller.dart';
-import 'package:flutter_earth_globe/globe_coordinates.dart';
-import 'package:flutter_earth_globe/point.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -542,7 +540,7 @@ class _FeatureSlide extends StatelessWidget {
               );
             },
             child: index == 1
-                ? const _GlobeIllustration()
+                ? _GlobeIllustration(color: slide.color)
                 : _SlideIllustration(index: index, color: slide.color),
           ),
         ),
@@ -654,76 +652,178 @@ class _SlideIllustrationState extends State<_SlideIllustration>
   }
 }
 
-// ── Slide 1: real textured Earth (flutter_earth_globe) ──────────────────────
-// Auto-rotating globe with the connection points anchored to real lat/lon, so
-// they spin with the surface. Wrapped in IgnorePointer so it never steals the
-// PageView swipe.
+// ── Slide 1: line-art wireframe globe (real coastlines) ─────────────────────
+// Real Natural Earth coastlines projected orthographically and drawn as thin
+// lines in the brand colour, with a graticule and gold server pins — a clean,
+// stylised globe (not a heavy photo texture).
+
+// Parsed coastline cache: list of polylines, each a list of [lon, lat].
+List<List<List<double>>>? _coastlineCache;
+Future<List<List<List<double>>>> _loadCoastline() async {
+  if (_coastlineCache != null) return _coastlineCache!;
+  final raw = await rootBundle.loadString('assets/geo/coastline.geojson');
+  final data = jsonDecode(raw) as Map<String, dynamic>;
+  final out = <List<List<double>>>[];
+  List<double> pt(dynamic p) =>
+      [(p[0] as num).toDouble(), (p[1] as num).toDouble()];
+  for (final f in (data['features'] as List)) {
+    final geom = f['geometry'];
+    if (geom == null) continue;
+    final coords = geom['coordinates'];
+    switch (geom['type']) {
+      case 'LineString':
+        out.add([for (final p in coords) pt(p)]);
+      case 'MultiLineString':
+        for (final line in coords) {
+          out.add([for (final p in line) pt(p)]);
+        }
+    }
+  }
+  _coastlineCache = out;
+  return out;
+}
+
 class _GlobeIllustration extends StatefulWidget {
-  const _GlobeIllustration();
+  const _GlobeIllustration({required this.color});
+  final Color color;
 
   @override
   State<_GlobeIllustration> createState() => _GlobeIllustrationState();
 }
 
-class _GlobeIllustrationState extends State<_GlobeIllustration> {
-  late final FlutterEarthGlobeController _controller;
-
-  // A few server cities — gold markers that rotate with the globe.
-  static const _points = <List<double>>[
-    [55.75, 37.61],   // Москва
-    [52.52, 13.40],   // Берлин
-    [51.50, -0.12],   // Лондон
-    [40.71, -74.0],   // Нью-Йорк
-    [1.35, 103.82],   // Сингапур
-    [35.68, 139.69],  // Токио
-  ];
+class _GlobeIllustrationState extends State<_GlobeIllustration>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  List<List<List<double>>>? _coast;
 
   @override
   void initState() {
     super.initState();
-    _controller = FlutterEarthGlobeController(
-      rotationSpeed: 0.06,
-      isRotating: true,
-      isZoomEnabled: false,
-      isBackgroundFollowingSphereRotation: false,
-      surface: const AssetImage('assets/image/earth.jpg'),
-    );
-    for (var i = 0; i < _points.length; i++) {
-      _controller.addPoint(Point(
-        id: 'srv$i',
-        coordinates: GlobeCoordinates(_points[i][0], _points[i][1]),
-        isLabelVisible: false,
-        style: const PointStyle(color: Color(0xFFD4A84B), size: 5),
-      ));
-    }
+    _ctrl = AnimationController(vsync: this, duration: const Duration(seconds: 26))
+      ..repeat();
+    _loadCoastline().then((c) {
+      if (mounted) setState(() => _coast = c);
+    });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _ctrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // The globe widget must get TIGHT constraints (the package fills the box and
-    // centres a sphere of `radius` inside it). Loose constraints (e.g. Center)
-    // collapse it to nothing — hence the earlier blank slide.
-    return IgnorePointer(
-      child: LayoutBuilder(
-        builder: (context, c) {
-          final w = c.maxWidth.isFinite ? c.maxWidth : 320.0;
-          final h = c.maxHeight.isFinite ? c.maxHeight : 320.0;
-          final r = math.min(w, h) * 0.42;
-          return SizedBox(
-            width: w,
-            height: h,
-            child: FlutterEarthGlobe(controller: _controller, radius: r),
-          );
-        },
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, child) => CustomPaint(
+        painter: _LineGlobePainter(t: _ctrl.value, color: widget.color, coast: _coast),
+        size: Size.infinite,
       ),
     );
   }
+}
+
+class _LineGlobePainter extends CustomPainter {
+  _LineGlobePainter({required this.t, required this.color, required this.coast});
+  final double t;
+  final Color color;
+  final List<List<List<double>>>? coast;
+
+  static const _gold = Color(0xFFD4A84B);
+  static const _pins = <List<double>>[
+    [55.75, 37.61], [52.52, 13.40], [40.71, -74.0],
+    [1.35, 103.82], [35.68, 139.69],
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height * 0.5;
+    final gr = math.min(size.width, size.height) * 0.36;
+
+    // Soft glow + faint disc.
+    canvas.drawCircle(Offset(cx, cy), gr * 1.55, Paint()
+      ..shader = ui.Gradient.radial(Offset(cx, cy), gr * 1.55,
+          [color.withValues(alpha: 0.22), color.withValues(alpha: 0)]));
+    canvas.drawCircle(Offset(cx, cy), gr, Paint()
+      ..color = color.withValues(alpha: 0.05));
+
+    final lon0 = t * 360.0;          // continuous spin
+    const tilt = 18.0;               // viewing tilt
+    final tr = tilt * math.pi / 180;
+    final cosT = math.cos(tr), sinT = math.sin(tr);
+
+    (double, double, bool) proj(double lonDeg, double latDeg) {
+      final lon = (lonDeg - lon0) * math.pi / 180;
+      final lat = latDeg * math.pi / 180;
+      final cl = math.cos(lat), sl = math.sin(lat), clon = math.cos(lon);
+      final cosc = sinT * sl + cosT * cl * clon;
+      final x = cl * math.sin(lon);
+      final y = cosT * sl - sinT * cl * clon;
+      return (cx + x * gr, cy - y * gr, cosc >= 0);
+    }
+
+    void drawLines(List<List<List<double>>> lines, Paint paint) {
+      for (final line in lines) {
+        final path = Path();
+        var pen = false;
+        for (final p in line) {
+          final (sx, sy, front) = proj(p[0], p[1]);
+          if (front) {
+            if (!pen) { path.moveTo(sx, sy); pen = true; } else { path.lineTo(sx, sy); }
+          } else {
+            pen = false;
+          }
+        }
+        canvas.drawPath(path, paint);
+      }
+    }
+
+    // Graticule (meridians + parallels), faint.
+    final grat = <List<List<double>>>[];
+    for (var lo = -150; lo <= 180; lo += 30) {
+      grat.add([for (double la = -80; la <= 80; la += 5) [lo.toDouble(), la]]);
+    }
+    for (var la = -60; la <= 60; la += 30) {
+      grat.add([for (double lo = -180; lo <= 180; lo += 5) [lo.toDouble(), la.toDouble()]]);
+    }
+    drawLines(grat, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8
+      ..color = color.withValues(alpha: 0.16));
+
+    // Coastlines.
+    if (coast != null) {
+      drawLines(coast!, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..strokeJoin = StrokeJoin.round
+        ..color = color.withValues(alpha: 0.92));
+    }
+
+    // Rim.
+    canvas.drawCircle(Offset(cx, cy), gr, Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..color = color.withValues(alpha: 0.55));
+
+    // Gold server pins (front-facing only).
+    for (final pn in _pins) {
+      final (sx, sy, front) = proj(pn[0], pn[1]);
+      if (!front) continue;
+      canvas.drawCircle(Offset(sx, sy), 8, Paint()..color = _gold.withValues(alpha: 0.22));
+      canvas.drawCircle(Offset(sx, sy), 4, Paint()..color = Colors.white);
+      canvas.drawCircle(Offset(sx, sy), 4, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = _gold);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LineGlobePainter old) =>
+      old.t != t || old.coast != coast || old.color != color;
 }
 
 class _SlidePainter extends CustomPainter {
