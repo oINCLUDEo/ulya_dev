@@ -732,8 +732,15 @@ class _LineGlobePainter extends CustomPainter {
 
   static const _gold = Color(0xFFD4A84B);
   static const _pins = <List<double>>[
-    [55.75, 37.61], [52.52, 13.40], [40.71, -74.0],
-    [1.35, 103.82], [35.68, 139.69],
+    [55.75, 37.61],   // 0 Москва
+    [52.52, 13.40],   // 1 Берлин
+    [40.71, -74.0],   // 2 Нью-Йорк
+    [1.35, 103.82],   // 3 Сингапур
+    [35.68, 139.69],  // 4 Токио
+  ];
+  // Server-to-server routes (indices into _pins).
+  static const _links = <List<int>>[
+    [1, 2], [0, 1], [3, 4], [0, 3], [2, 4],
   ];
 
   @override
@@ -808,10 +815,47 @@ class _LineGlobePainter extends CustomPainter {
       ..strokeWidth = 1.6
       ..color = color.withValues(alpha: 0.55));
 
-    // Gold server pins (front-facing only).
-    for (final pn in _pins) {
-      final (sx, sy, front) = proj(pn[0], pn[1]);
+    // Routes between servers — great-circle arcs hugging the surface, with a
+    // bright packet travelling along each one.
+    for (var li = 0; li < _links.length; li++) {
+      final a = _pins[_links[li][0]];
+      final b = _pins[_links[li][1]];
+      final path = Path();
+      var pen = false;
+      for (var s = 0; s <= 24; s++) {
+        final g = _gcInterp(a, b, s / 24);
+        final (sx, sy, front) = proj(g[0], g[1]); // g = [lon, lat]
+        if (front) {
+          if (!pen) { path.moveTo(sx, sy); pen = true; } else { path.lineTo(sx, sy); }
+        } else {
+          pen = false;
+        }
+      }
+      canvas.drawPath(path, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..strokeCap = StrokeCap.round
+        ..color = _gold.withValues(alpha: 0.50));
+
+      // Travelling packet.
+      final f = (t * 5 + li * 0.27) % 1.0;
+      final gp = _gcInterp(a, b, f);
+      final (px, py, pf) = proj(gp[0], gp[1]);
+      if (pf) {
+        canvas.drawCircle(Offset(px, py), 7, Paint()..color = _gold.withValues(alpha: 0.30));
+        canvas.drawCircle(Offset(px, py), 2.6, Paint()..color = Colors.white);
+      }
+    }
+
+    // Server pins with a radar pulse (front-facing only).
+    for (var pi = 0; pi < _pins.length; pi++) {
+      final (sx, sy, front) = proj(_pins[pi][1], _pins[pi][0]); // (lon, lat)
       if (!front) continue;
+      final phase = (t * 3 + pi * 0.2) % 1.0;
+      canvas.drawCircle(Offset(sx, sy), 4 + phase * 16, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..color = _gold.withValues(alpha: (1 - phase) * 0.5));
       canvas.drawCircle(Offset(sx, sy), 8, Paint()..color = _gold.withValues(alpha: 0.22));
       canvas.drawCircle(Offset(sx, sy), 4, Paint()..color = Colors.white);
       canvas.drawCircle(Offset(sx, sy), 4, Paint()
@@ -819,6 +863,27 @@ class _LineGlobePainter extends CustomPainter {
         ..strokeWidth = 1.5
         ..color = _gold);
     }
+  }
+
+  /// Great-circle interpolation between two [lat, lon] points; returns the
+  /// sample at fraction [f] as [lon, lat] (ready for the projector).
+  static List<double> _gcInterp(List<double> a, List<double> b, double f) {
+    final latA = a[0] * math.pi / 180, lonA = a[1] * math.pi / 180;
+    final latB = b[0] * math.pi / 180, lonB = b[1] * math.pi / 180;
+    final ax = math.cos(latA) * math.cos(lonA),
+        ay = math.cos(latA) * math.sin(lonA),
+        az = math.sin(latA);
+    final bx = math.cos(latB) * math.cos(lonB),
+        by = math.cos(latB) * math.sin(lonB),
+        bz = math.sin(latB);
+    final dot = (ax * bx + ay * by + az * bz).clamp(-1.0, 1.0);
+    final om = math.acos(dot);
+    if (om < 1e-6) return [a[1], a[0]];
+    final s = math.sin(om);
+    final k1 = math.sin((1 - f) * om) / s, k2 = math.sin(f * om) / s;
+    final x = k1 * ax + k2 * bx, y = k1 * ay + k2 * by, z = k1 * az + k2 * bz;
+    final lat = math.asin(z.clamp(-1.0, 1.0)), lon = math.atan2(y, x);
+    return [lon * 180 / math.pi, lat * 180 / math.pi];
   }
 
   @override
