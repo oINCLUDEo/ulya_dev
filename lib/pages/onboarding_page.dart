@@ -73,6 +73,34 @@ const _kSlides = <_SlideData>[
 // feature slides + 1 auth slide
 const _kTotalPages = 4;
 
+// Simplified continent outlines as [lon, lat] vertices (degrees), used by the
+// onboarding globe. Rough silhouettes — enough to read as Earth, cheap to draw.
+const _kContinents = <List<List<double>>>[
+  // North America
+  [[-158, 71], [-130, 70], [-95, 72], [-82, 62], [-64, 60], [-56, 50],
+   [-66, 44], [-70, 41], [-81, 31], [-97, 26], [-107, 23], [-110, 30],
+   [-117, 33], [-125, 40], [-124, 48], [-135, 58], [-150, 60], [-165, 64]],
+  // South America
+  [[-80, 8], [-72, 10], [-60, 5], [-50, 0], [-44, -3], [-35, -8], [-38, -15],
+   [-48, -25], [-58, -35], [-66, -45], [-70, -52], [-74, -50], [-72, -38],
+   [-70, -25], [-76, -15], [-81, -5]],
+  // Africa
+  [[-16, 15], [-5, 20], [10, 32], [24, 32], [33, 30], [43, 12], [51, 12],
+   [42, 0], [40, -10], [33, -26], [25, -34], [18, -34], [12, -18], [8, 4],
+   [-8, 5]],
+  // Europe
+  [[-9, 44], [-2, 49], [2, 51], [8, 54], [12, 55], [20, 55], [28, 58],
+   [30, 52], [38, 48], [28, 41], [20, 40], [12, 44], [3, 43]],
+  // Asia
+  [[33, 48], [45, 55], [60, 60], [80, 68], [100, 72], [130, 73], [160, 68],
+   [170, 66], [160, 60], [140, 52], [135, 45], [122, 40], [120, 30],
+   [108, 22], [97, 16], [90, 22], [78, 8], [72, 20], [60, 25], [50, 40],
+   [40, 45]],
+  // Australia
+  [[114, -22], [122, -18], [130, -12], [137, -12], [142, -13], [146, -18],
+   [150, -25], [148, -38], [140, -38], [130, -32], [120, -34], [114, -30]],
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth step state machine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -804,68 +832,76 @@ class _SlidePainter extends CustomPainter {
       ..strokeWidth = 2.0
       ..color = color.withValues(alpha: 0.85));
 
-    // Continents — stylized land masses that scroll to fake the globe spinning.
+    // ── Rotating Earth: real continent outlines projected orthographically ──
     canvas.save();
     canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: gr)));
-    final land = Color.lerp(color, const Color(0xFF1F9E7A), 0.55)!;
-    final landPaint = Paint()..color = land.withValues(alpha: 0.85);
-    final landEdge = Paint()
+
+    final lon0 = t * 360.0;            // one full spin per animation loop
+    const lat0 = 16.0;                 // slight top-down viewing tilt
+    final lat0r = lat0 * math.pi / 180;
+    final cosLat0 = math.cos(lat0r), sinLat0 = math.sin(lat0r);
+
+    // Orthographic projection → unit-sphere screen coords (right/up positive)
+    // plus a front-hemisphere flag. Hidden points are clamped to the limb so
+    // partially-visible continents fold against the edge instead of spiking.
+    (double, double, bool) project(double lonDeg, double latDeg) {
+      final lon = (lonDeg - lon0) * math.pi / 180;
+      final lat = latDeg * math.pi / 180;
+      final cosLat = math.cos(lat), sinLat = math.sin(lat), cosLon = math.cos(lon);
+      final cosc = sinLat0 * sinLat + cosLat0 * cosLat * cosLon;
+      var x = cosLat * math.sin(lon);
+      var y = cosLat0 * sinLat - sinLat0 * cosLat * cosLon;
+      final front = cosc >= 0;
+      if (!front) {
+        final r = math.sqrt(x * x + y * y);
+        if (r > 1e-6) { x /= r; y /= r; }
+      }
+      return (x, y, front);
+    }
+
+    // Continents (filled land).
+    final land = Color.lerp(color, const Color(0xFF24A36B), 0.62)!;
+    final landPaint = Paint()..color = land.withValues(alpha: 0.92);
+    for (final poly in _kContinents) {
+      var anyFront = false;
+      final path = Path();
+      for (var i = 0; i < poly.length; i++) {
+        final (x, y, front) = project(poly[i][0], poly[i][1]);
+        if (front) anyFront = true;
+        final sx = cx + x * gr, sy = cy - y * gr;
+        if (i == 0) { path.moveTo(sx, sy); } else { path.lineTo(sx, sy); }
+      }
+      path.close();
+      if (anyFront) canvas.drawPath(path, landPaint);
+    }
+
+    // Graticule: static latitude rings + rotating front-facing meridians.
+    final gridPaint = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0
-      ..color = Color.lerp(land, Colors.white, 0.2)!.withValues(alpha: 0.35);
-    void blob(double dx, double nx, double ny, double w, double hh) {
-      final r = Rect.fromCenter(
-        center: Offset(cx + dx + nx * gr, cy + ny * gr),
-        width: w * gr, height: hh * gr,
-      );
-      canvas.drawOval(r, landPaint);
-      canvas.drawOval(r, landEdge);
-    }
-    void continents(double dx) {
-      // Americas
-      blob(dx, -0.52, -0.05, 0.30, 0.55);
-      blob(dx, -0.40, 0.42, 0.26, 0.42);
-      // Africa / Europe
-      blob(dx, 0.04, 0.05, 0.34, 0.62);
-      blob(dx, -0.02, -0.42, 0.24, 0.30);
-      // Asia
-      blob(dx, 0.52, -0.22, 0.46, 0.42);
-      blob(dx, 0.66, 0.34, 0.26, 0.28);
-    }
-    final scroll = (t % 1.0) * 2 * gr;
-    continents(-scroll);
-    continents(-scroll + 2 * gr);
-    canvas.restore();
-
-    // Grid (clipped) — latitudes + gently rotating longitudes.
-    canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: gr)));
-    for (var i = -1; i <= 1; i++) {
-      final latH = gr * 0.55 * i;
+      ..color = color.withValues(alpha: 0.20);
+    for (var i = -2; i <= 2; i++) {
+      final latH = gr * 0.42 * i;
       final latR = math.sqrt(math.max(0.0, gr * gr - latH * latH));
       canvas.drawOval(
-        Rect.fromCenter(center: Offset(cx, cy + latH), width: latR * 2, height: latR * 0.36),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0
-          ..color = color.withValues(alpha: 0.32),
+        Rect.fromCenter(center: Offset(cx, cy + latH), width: latR * 2, height: latR * 0.34),
+        gridPaint,
       );
     }
-    canvas.save();
-    canvas.translate(cx, cy);
-    for (var li = 0; li < 3; li++) {
-      canvas.save();
-      canvas.rotate(t * math.pi * 2 * 0.1 + li * math.pi / 3);
-      canvas.drawOval(
-        Rect.fromCenter(center: Offset.zero, width: gr * (0.5 + li * 0.5), height: gr * 2),
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0
-          ..color = color.withValues(alpha: 0.26),
-      );
-      canvas.restore();
+    for (var m = 0; m < 6; m++) {
+      final mp = Path();
+      var started = false;
+      for (double lat = -85; lat <= 85; lat += 6) {
+        final (x, y, front) = project(m * 30.0, lat);
+        if (front) {
+          final sx = cx + x * gr, sy = cy - y * gr;
+          if (!started) { mp.moveTo(sx, sy); started = true; } else { mp.lineTo(sx, sy); }
+        } else {
+          started = false;
+        }
+      }
+      canvas.drawPath(mp, gridPaint);
     }
-    canvas.restore();
     canvas.restore();
 
     // Connection pins + gold routes between them.
