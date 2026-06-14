@@ -268,16 +268,22 @@ class _ReferralPageState extends State<ReferralPage> {
                           letterSpacing: 1.4,
                         )),
                     const SizedBox(height: 4),
-                    Text(
-                      info.referralCode.isEmpty ? '—' : info.referralCode,
-                      style: const TextStyle(
-                        color: DS.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 2,
-                        fontFeatures: [FontFeature.tabularFigures()],
+                    // Scale the code down to fit instead of truncating with an
+                    // ellipsis, so the full code is always readable.
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        info.referralCode.isEmpty ? '—' : info.referralCode,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          color: DS.textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.5,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),

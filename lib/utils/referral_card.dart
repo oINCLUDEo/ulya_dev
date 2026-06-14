@@ -24,7 +24,7 @@ Future<ui.Image?> _loadAssetImage(String path) async {
 /// Renders a shareable referral invite card as a PNG (1080×1350, 4:5 — the
 /// sweet spot for messengers and stories).
 ///
-/// Visual language mirrors the app: deep #0A0A0F background, violet/cyan
+/// Visual language mirrors the app: deep #0A0A0F background, violet/indigo
 /// aurora glows, a white glass QR card and the referral code in a gold pill.
 /// Everything is drawn directly on a [Canvas] — no widget tree, no
 /// BuildContext, safe to call from anywhere.
@@ -36,12 +36,16 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   const w = 1080.0;
   const h = 1350.0;
 
+  // Cohesive deep-violet / indigo palette with a single warm gold accent —
+  // no clashing cyan, smoother and more premium.
   const bg = Color(0xFF0A0A0F);
+  const bgTop = Color(0xFF17122E);     // violet-tinted dark for the top wash
   const violet = Color(0xFF7C6BFF);
-  const cyan = Color(0xFF22D3EE);
+  const indigo = Color(0xFF5B4FE6);
+  const magenta = Color(0xFF9B5CF6);
   const gold = Color(0xFFD4A84B);
   const textPrimary = Colors.white;
-  const textSecondary = Color(0xFFA8A8B8);
+  const textSecondary = Color(0xFFB6B4C8);
 
   final link = info.botReferralLink.isNotEmpty
       ? info.botReferralLink
@@ -54,7 +58,16 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
   final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, w, h));
 
   // ── Background ─────────────────────────────────────────────────────────────
-  canvas.drawRect(const Rect.fromLTWH(0, 0, w, h), Paint()..color = bg);
+  // Vertical wash: subtly violet-tinted at the top, fading to near-black.
+  canvas.drawRect(
+    const Rect.fromLTWH(0, 0, w, h),
+    Paint()
+      ..shader = ui.Gradient.linear(
+        const Offset(0, 0), const Offset(0, h),
+        [bgTop, bg, bg],
+        [0.0, 0.55, 1.0],
+      ),
+  );
 
   void glow(Offset center, double radius, Color color, double alpha) {
     canvas.drawCircle(
@@ -68,10 +81,11 @@ Future<Uint8List?> renderReferralCardPng(ReferralInfo info) async {
     );
   }
 
-  glow(const Offset(170, 180), 480, violet, 0.45);
-  glow(const Offset(950, 360), 420, cyan, 0.22);
-  glow(const Offset(540, 1290), 520, violet, 0.30);
-  glow(const Offset(120, 1080), 300, gold, 0.10);
+  // Harmonised purple-family glows + one warm gold accent under the code.
+  glow(const Offset(150, 170), 540, violet, 0.42);
+  glow(const Offset(960, 330), 460, indigo, 0.30);
+  glow(const Offset(540, 1210), 560, magenta, 0.26);
+  glow(const Offset(560, 1140), 360, gold, 0.12);
 
   // Sprinkle of tiny stars.
   final rnd = math.Random(7);

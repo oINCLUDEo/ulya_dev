@@ -739,7 +739,7 @@ class _SlidePainter extends CustomPainter {
     final lockW = shW * 0.42;
     final bodyH = lockW * 0.82;
     final lCx = cx;
-    final bodyTop = cy + shH * 0.02;
+    final bodyTop = cy - shH * 0.08;   // sits in the upper-middle of the shield
     final shackleR = lockW * 0.30;
     canvas.drawArc(
       Rect.fromCircle(center: Offset(lCx, bodyTop - shackleR * 0.16), radius: shackleR),
@@ -803,6 +803,39 @@ class _SlidePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.0
       ..color = color.withValues(alpha: 0.85));
+
+    // Continents — stylized land masses that scroll to fake the globe spinning.
+    canvas.save();
+    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: gr)));
+    final land = Color.lerp(color, const Color(0xFF1F9E7A), 0.55)!;
+    final landPaint = Paint()..color = land.withValues(alpha: 0.85);
+    final landEdge = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0
+      ..color = Color.lerp(land, Colors.white, 0.2)!.withValues(alpha: 0.35);
+    void blob(double dx, double nx, double ny, double w, double hh) {
+      final r = Rect.fromCenter(
+        center: Offset(cx + dx + nx * gr, cy + ny * gr),
+        width: w * gr, height: hh * gr,
+      );
+      canvas.drawOval(r, landPaint);
+      canvas.drawOval(r, landEdge);
+    }
+    void continents(double dx) {
+      // Americas
+      blob(dx, -0.52, -0.05, 0.30, 0.55);
+      blob(dx, -0.40, 0.42, 0.26, 0.42);
+      // Africa / Europe
+      blob(dx, 0.04, 0.05, 0.34, 0.62);
+      blob(dx, -0.02, -0.42, 0.24, 0.30);
+      // Asia
+      blob(dx, 0.52, -0.22, 0.46, 0.42);
+      blob(dx, 0.66, 0.34, 0.26, 0.28);
+    }
+    final scroll = (t % 1.0) * 2 * gr;
+    continents(-scroll);
+    continents(-scroll + 2 * gr);
+    canvas.restore();
 
     // Grid (clipped) — latitudes + gently rotating longitudes.
     canvas.save();
