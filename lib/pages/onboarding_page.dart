@@ -683,24 +683,19 @@ class _GlobeIllustrationState extends State<_GlobeIllustration> {
     super.initState();
     _controller = FlutterEarthGlobeController(
       rotationSpeed: 0.06,
+      isRotating: true,
       isZoomEnabled: false,
       isBackgroundFollowingSphereRotation: false,
+      surface: const AssetImage('assets/image/earth.jpg'),
     );
-    // Load the texture + markers after the first frame, once the widget (and
-    // its ticker) are attached — loading in the constructor can paint nothing.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _controller.loadSurface(const AssetImage('assets/image/earth.jpg'));
-      for (var i = 0; i < _points.length; i++) {
-        _controller.addPoint(Point(
-          id: 'srv$i',
-          coordinates: GlobeCoordinates(_points[i][0], _points[i][1]),
-          isLabelVisible: false,
-          style: const PointStyle(color: Color(0xFFD4A84B), size: 5),
-        ));
-      }
-      _controller.startRotation();
-    });
+    for (var i = 0; i < _points.length; i++) {
+      _controller.addPoint(Point(
+        id: 'srv$i',
+        coordinates: GlobeCoordinates(_points[i][0], _points[i][1]),
+        isLabelVisible: false,
+        style: const PointStyle(color: Color(0xFFD4A84B), size: 5),
+      ));
+    }
   }
 
   @override
@@ -711,11 +706,18 @@ class _GlobeIllustrationState extends State<_GlobeIllustration> {
 
   @override
   Widget build(BuildContext context) {
+    // The globe widget must get TIGHT constraints (the package fills the box and
+    // centres a sphere of `radius` inside it). Loose constraints (e.g. Center)
+    // collapse it to nothing — hence the earlier blank slide.
     return IgnorePointer(
       child: LayoutBuilder(
         builder: (context, c) {
-          final r = math.min(c.maxWidth, c.maxHeight) * 0.40;
-          return Center(
+          final w = c.maxWidth.isFinite ? c.maxWidth : 320.0;
+          final h = c.maxHeight.isFinite ? c.maxHeight : 320.0;
+          final r = math.min(w, h) * 0.42;
+          return SizedBox(
+            width: w,
+            height: h,
             child: FlutterEarthGlobe(controller: _controller, radius: r),
           );
         },
