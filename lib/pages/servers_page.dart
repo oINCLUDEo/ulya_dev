@@ -18,6 +18,7 @@ import '../services/network_monitor.dart';
 import '../services/ping_state.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
+import '../services/subscription_api_service.dart';
 import '../utils/server_icon.dart';
 import '../utils/signal_quality.dart';
 import '../widgets/skeleton.dart';
@@ -1553,6 +1554,12 @@ class _NotesStatusView extends StatelessWidget {
     final title = textLines.isNotEmpty ? textLines.first : 'Подписка недоступна';
     final body = textLines.length > 1 ? textLines.sublist(1) : const <String>[];
 
+    // HWID-limit notes → offer to manage devices in-app instead of just a link.
+    final isHwid = notes.any((n) {
+      final s = n.toLowerCase();
+      return s.contains('устройств') || s.contains('device') || s.contains('hwid');
+    });
+
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(28, 24, 28, 48),
@@ -1591,7 +1598,17 @@ class _NotesStatusView extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 26),
-            if (link != null)
+            if (isHwid)
+              _StatusCta(
+                label: 'Управлять устройствами',
+                color: DS.violet,
+                icon: PhosphorIconsBold.devices,
+                onTap: () async {
+                  await showDeviceManager(context);
+                  await onRefresh();
+                },
+              )
+            else if (link != null)
               _StatusCta(
                 label: 'Открыть $link',
                 color: DS.violet,
@@ -1621,7 +1638,8 @@ class _StatusCta extends StatelessWidget {
   final String label;
   final Color color;
   final VoidCallback onTap;
-  const _StatusCta({required this.label, required this.color, required this.onTap});
+  final IconData? icon;
+  const _StatusCta({required this.label, required this.color, required this.onTap, this.icon});
 
   @override
   Widget build(BuildContext context) {
@@ -1639,12 +1657,224 @@ class _StatusCta extends StatelessWidget {
               BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 18, offset: const Offset(0, 6)),
             ],
           ),
-          child: Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+              ],
+              Flexible(
+                child: Text(label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// In-app device manager (resolve HWID limit without leaving the app)
+// ─────────────────────────────────────────────────────────────────────────────
+
+Future<void> showDeviceManager(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => const _DeviceManagerSheet(),
+  );
+}
+
+class _DeviceManagerSheet extends StatefulWidget {
+  const _DeviceManagerSheet();
+
+  @override
+  State<_DeviceManagerSheet> createState() => _DeviceManagerSheetState();
+}
+
+class _DeviceManagerSheetState extends State<_DeviceManagerSheet> {
+  DevicesResult? _data;
+  bool _loading = true;
+  bool _failed = false;
+  String? _currentHwid;
+  final Set<String> _deleting = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loading = true; _failed = false; });
+    final hwid = await RemnawaveService.getOrCreateHwid();
+    final r = await SubscriptionApiService.listDevices();
+    if (!mounted) return;
+    setState(() {
+      _currentHwid = hwid;
+      _data = r;
+      _loading = false;
+      _failed = r == null;
+    });
+  }
+
+  Future<void> _delete(String hwid) async {
+    setState(() => _deleting.add(hwid));
+    HapticFeedback.selectionClick();
+    final ok = await SubscriptionApiService.deleteDevice(hwid: hwid);
+    if (!mounted) return;
+    if (ok) {
+      await _load();
+      if (mounted) HapticFeedback.mediumImpact();
+    }
+    if (mounted) setState(() => _deleting.remove(hwid));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = _data;
+    final bottom = MediaQuery.of(context).padding.bottom;
+    return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+      decoration: const BoxDecoration(
+        color: DS.surface2,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        border: Border(top: BorderSide(color: DS.border)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 10),
+          Container(width: 40, height: 4, decoration: BoxDecoration(
+              color: DS.border, borderRadius: BorderRadius.circular(2))),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+            child: Row(children: [
+              const Icon(PhosphorIconsFill.devices, color: DS.violet, size: 22),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('Мои устройства',
+                  style: TextStyle(color: DS.textPrimary, fontSize: 18, fontWeight: FontWeight.w800))),
+              if (data != null)
+                Text('${data.count}/${data.deviceLimit}',
+                    style: const TextStyle(color: DS.textSecondary, fontSize: 14, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Удалите лишние устройства, чтобы снова подключаться.',
+                  style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.4)),
+            ),
+          ),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.all(40),
+              child: CircularProgressIndicator(color: DS.violet),
+            )
+          else if (_failed || data == null)
+            Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(children: [
+                const Text('Не удалось загрузить устройства',
+                    style: TextStyle(color: DS.textSecondary, fontSize: 14)),
+                const SizedBox(height: 14),
+                TextButton(onPressed: _load, child: const Text('Повторить')),
+              ]),
+            )
+          else
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 16 + bottom),
+                itemCount: data.devices.length,
+                separatorBuilder: (_, i) => const SizedBox(height: 8),
+                itemBuilder: (_, i) => _DeviceRow(
+                  device: data.devices[i],
+                  isCurrent: data.devices[i].hwid == _currentHwid,
+                  deleting: _deleting.contains(data.devices[i].hwid),
+                  onDelete: () => _delete(data.devices[i].hwid),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeviceRow extends StatelessWidget {
+  final DeviceItem device;
+  final bool isCurrent;
+  final bool deleting;
+  final VoidCallback onDelete;
+  const _DeviceRow({
+    required this.device,
+    required this.isCurrent,
+    required this.deleting,
+    required this.onDelete,
+  });
+
+  IconData get _platformIcon {
+    final p = device.platformName.toLowerCase();
+    if (p.contains('iphone') || p.contains('ipad') || p.contains('ios') || p.contains('mac')) {
+      return PhosphorIconsFill.appleLogo;
+    }
+    if (p.contains('android')) return PhosphorIconsFill.androidLogo;
+    if (p.contains('windows')) return PhosphorIconsFill.windowsLogo;
+    if (p.contains('linux')) return PhosphorIconsFill.linuxLogo;
+    return PhosphorIconsFill.deviceMobile;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final title = [device.clientName, device.deviceModel ?? device.platformName]
+        .where((s) => s.isNotEmpty)
+        .join(' · ');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: DS.surface1,
+        borderRadius: BorderRadius.circular(DS.radiusSm),
+        border: Border.all(color: isCurrent ? DS.violet.withValues(alpha: 0.5) : DS.border),
+      ),
+      child: Row(children: [
+        Icon(_platformIcon, color: DS.textSecondary, size: 22),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title.isEmpty ? 'Устройство' : title,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 2),
+              Text(isCurrent ? 'Это устройство' : device.platformName,
+                  style: TextStyle(
+                      color: isCurrent ? DS.violet : DS.textMuted, fontSize: 12)),
+            ],
+          ),
+        ),
+        if (isCurrent)
+          const Padding(
+            padding: EdgeInsets.only(left: 8),
+            child: Icon(PhosphorIconsFill.checkCircle, color: DS.violet, size: 20),
+          )
+        else if (deleting)
+          const SizedBox(width: 22, height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2, color: DS.rose))
+        else
+          IconButton(
+            onPressed: onDelete,
+            icon: const Icon(PhosphorIconsBold.trash, color: DS.rose, size: 18),
+          ),
+      ]),
     );
   }
 }
