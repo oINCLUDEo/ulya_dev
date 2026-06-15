@@ -58,6 +58,29 @@ class RemnawaveService {
   /// Whether the most recent [fetchNodes] call returned cached data.
   static bool get lastFetchWasFromCache => _lastFetchWasFromCache;
 
+  static List<String> _lastNotes = const [];
+
+  /// Admin status notes from the most recent [fetchNodes] call — the texts
+  /// Remnawave returns (as 0.0.0.0 sentinel entries) when the subscription is
+  /// blocked (HWID limit, expired, limited, disabled, no hosts). Empty when the
+  /// subscription is healthy.
+  static List<String> get lastNotes => _lastNotes;
+
+  /// Extracts the note text from a sentinel subscription line (host 0.0.0.0).
+  /// Returns null for real server links.
+  static String? _noteFromLink(String line) {
+    line = line.trim();
+    if (!line.contains('@0.0.0.0')) return null;
+    try {
+      final uri = Uri.parse(line);
+      if (uri.host != '0.0.0.0') return null;
+      final f = uri.fragment.trim();
+      return f.isEmpty ? null : f;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── Subscription URL storage ─────────────────────────────────────────────
 
   static Future<String> getSubscriptionUrl() async {
@@ -178,6 +201,13 @@ class RemnawaveService {
       _lastSubscriptionInfo = _parseSubscriptionInfo(response.headers);
 
       final lines = _parseSubscriptionBody(response.body);
+      // Blocked states (HWID limit, expired, limited, disabled, no hosts) come
+      // back as sentinel entries pointing at 0.0.0.0, with the admin's note
+      // text (placeholders already resolved) in the fragment. Pull those out
+      // as status notes and keep them out of the real server list.
+      _lastNotes = [
+        for (final line in lines) ?_noteFromLink(line),
+      ];
       final jsonConfigs = lines
           .map(_tryDecodeJsonConfig)
           .whereType<Map<String, dynamic>>()
@@ -186,8 +216,9 @@ class RemnawaveService {
       final nodes = lines
           .map((line) => _parseConfigLink(line, proxyOutboundsByUuid))
           .whereType<ServerNode>()
+          .where((n) => n.address != '0.0.0.0')
           .toList();
-      debugPrint('RemnawaveService: loaded ${nodes.length} nodes');
+      debugPrint('RemnawaveService: loaded ${nodes.length} nodes, ${_lastNotes.length} notes');
 
       // Persist to cache for offline use.
       await _saveToCache(nodes, _lastSubscriptionInfo);

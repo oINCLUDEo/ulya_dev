@@ -441,7 +441,14 @@ class _ServersPageState extends State<ServersPage>
     // tiles. Detect the state from the structured /me status and show a proper
     // status screen instead.
     final sub = meNotifier.value?.subscription;
-    final blocked = (!_isPublicCatalog && sub != null && authStateNotifier.value.isLoggedIn)
+    final loggedIn = authStateNotifier.value.isLoggedIn;
+    // Prefer the admin's exact note texts (with placeholders already resolved)
+    // that Remnawave returns for blocked states; fall back to the structured
+    // /me status if notes are unavailable.
+    final notes = (!_isPublicCatalog && loggedIn)
+        ? RemnawaveService.lastNotes
+        : const <String>[];
+    final blocked = (notes.isEmpty && !_isPublicCatalog && sub != null && loggedIn)
         ? _SubBlock.fromStatus(sub.status)
         : null;
     return Scaffold(
@@ -482,6 +489,12 @@ class _ServersPageState extends State<ServersPage>
                   ),
                 ),
               )
+            else if (notes.isNotEmpty)
+              SliverFillRemaining(child: _NotesStatusView(
+                notes: notes,
+                onPremium: widget.onGoToPremium,
+                onRefresh: _loadNodes,
+              ))
             else if (blocked != null)
               SliverFillRemaining(child: _SubStatusView(
                 block: blocked,
@@ -507,10 +520,11 @@ class _ServersPageState extends State<ServersPage>
   Widget _buildHeader() {
     final count = _nodes.length;
     final sub = meNotifier.value?.subscription;
+    final loggedIn = authStateNotifier.value.isLoggedIn;
     final blocked = !_isPublicCatalog &&
-        sub != null &&
-        authStateNotifier.value.isLoggedIn &&
-        _SubBlock.fromStatus(sub.status) != null;
+        loggedIn &&
+        (RemnawaveService.lastNotes.isNotEmpty ||
+            (sub != null && _SubBlock.fromStatus(sub.status) != null));
     final subtitle = (!_loading && count > 0 && !blocked)
         ? _isPublicCatalog
         ? '$count ${_pluralServers(count)} (каталог)'
@@ -1490,6 +1504,145 @@ class _SubStatusView extends StatelessWidget {
                   style: TextStyle(color: DS.textMuted, fontSize: 13)),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Status screen built from the admin's exact note texts (Remnawave sentinel
+/// entries). Renders the lines as-is (their emoji read as icons), turns a
+/// note that contains a link into an "open" button.
+class _NotesStatusView extends StatelessWidget {
+  final List<String> notes;
+  final Future<void> Function() onRefresh;
+  final VoidCallback? onPremium;
+
+  const _NotesStatusView({
+    required this.notes,
+    required this.onRefresh,
+    this.onPremium,
+  });
+
+  static final RegExp _urlRe = RegExp(
+    r'((?:https?://)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?)',
+    caseSensitive: false,
+  );
+
+  Future<void> _open(String raw) async {
+    var u = raw.trim();
+    if (!u.startsWith('http')) u = 'https://$u';
+    final uri = Uri.tryParse(u);
+    if (uri != null && await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String? link;
+    final textLines = <String>[];
+    for (final n in notes) {
+      final m = _urlRe.firstMatch(n);
+      if (m != null && link == null) {
+        link = m.group(1);
+      } else {
+        textLines.add(n);
+      }
+    }
+    final title = textLines.isNotEmpty ? textLines.first : 'Подписка недоступна';
+    final body = textLines.length > 1 ? textLines.sublist(1) : const <String>[];
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 48),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 92,
+              height: 92,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: DS.amber.withValues(alpha: 0.12),
+                border: Border.all(color: DS.amber.withValues(alpha: 0.3), width: 1.5),
+                boxShadow: [BoxShadow(color: DS.amber.withValues(alpha: 0.16), blurRadius: 34)],
+              ),
+              child: const Icon(PhosphorIconsFill.warningCircle, color: DS.amber, size: 42),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: DS.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+                height: 1.25,
+                letterSpacing: -0.2,
+              ),
+            ),
+            for (final l in body) ...[
+              const SizedBox(height: 8),
+              Text(
+                l,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: DS.textSecondary, fontSize: 14, height: 1.45),
+              ),
+            ],
+            const SizedBox(height: 26),
+            if (link != null)
+              _StatusCta(
+                label: 'Открыть $link',
+                color: DS.violet,
+                onTap: () => _open(link!),
+              )
+            else if (onPremium != null)
+              _StatusCta(
+                label: 'Перейти к подписке',
+                color: DS.violet,
+                onTap: onPremium!,
+              ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: onRefresh,
+              child: const Text('Обновить',
+                  style: TextStyle(color: DS.textMuted, fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shared primary CTA button for status screens.
+class _StatusCta extends StatelessWidget {
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _StatusCta({required this.label, required this.color, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 15),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            boxShadow: [
+              BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 18, offset: const Offset(0, 6)),
+            ],
+          ),
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
         ),
       ),
     );
