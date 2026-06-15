@@ -7,7 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../models/me_response.dart';
 import '../models/server_node.dart';
 import '../services/auth_state.dart';
 import '../services/favorites_state.dart';
@@ -151,7 +153,14 @@ class _ServersPageState extends State<ServersPage>
   void _onAuthChanged() => _loadNodes();
   void _onMeChanged() {
     final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
-    if (url != _lastKnownSubUrl) { _lastKnownSubUrl = url; _loadNodes(); }
+    if (url != _lastKnownSubUrl) {
+      _lastKnownSubUrl = url;
+      _loadNodes();
+    } else if (mounted) {
+      // Status may have changed (active ↔ expired/limited/disabled) without the
+      // URL changing — rebuild so the status screen appears/disappears.
+      setState(() {});
+    }
   }
 
   // ── Data ───────────────────────────────────────────────────────────────────
@@ -427,6 +436,14 @@ class _ServersPageState extends State<ServersPage>
   @override
   Widget build(BuildContext context) {
     final top = MediaQuery.of(context).padding.top;
+    // Blocked subscription states (expired / limited / disabled) come back from
+    // Remnawave as "note" entries that would otherwise render as fake server
+    // tiles. Detect the state from the structured /me status and show a proper
+    // status screen instead.
+    final sub = meNotifier.value?.subscription;
+    final blocked = (!_isPublicCatalog && sub != null && authStateNotifier.value.isLoggedIn)
+        ? _SubBlock.fromStatus(sub.status)
+        : null;
     return Scaffold(
       backgroundColor: DS.surface0,
       body: RefreshIndicator(
@@ -465,6 +482,13 @@ class _ServersPageState extends State<ServersPage>
                   ),
                 ),
               )
+            else if (blocked != null)
+              SliverFillRemaining(child: _SubStatusView(
+                block: blocked,
+                sub: sub!,
+                onPremium: widget.onGoToPremium,
+                onRefresh: _loadNodes,
+              ))
             else if (_nodes.isEmpty)
               SliverFillRemaining(child: _EmptyState(
                 onRetry: _loadNodes,
@@ -482,7 +506,12 @@ class _ServersPageState extends State<ServersPage>
 
   Widget _buildHeader() {
     final count = _nodes.length;
-    final subtitle = !_loading && count > 0
+    final sub = meNotifier.value?.subscription;
+    final blocked = !_isPublicCatalog &&
+        sub != null &&
+        authStateNotifier.value.isLoggedIn &&
+        _SubBlock.fromStatus(sub.status) != null;
+    final subtitle = (!_loading && count > 0 && !blocked)
         ? _isPublicCatalog
         ? '$count ${_pluralServers(count)} (каталог)'
         : '$count ${_pluralServers(count)} в подписке'
@@ -1289,6 +1318,182 @@ class _ManualDivider extends StatelessWidget {
     ),
     Expanded(child: Container(height: 1, color: DS.border)),
   ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Subscription status block (expired / limited / disabled)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum _SubBlock {
+  expired,
+  limited,
+  disabled;
+
+  static _SubBlock? fromStatus(String s) {
+    switch (s.toLowerCase()) {
+      case 'expired':
+        return _SubBlock.expired;
+      case 'limited':
+        return _SubBlock.limited;
+      case 'disabled':
+      case 'blocked':
+      case 'banned':
+        return _SubBlock.disabled;
+      default:
+        return null;
+    }
+  }
+}
+
+/// Full-screen status shown on the Servers page when the subscription is not
+/// active — replaces the fake "note" tiles Remnawave returns in these states
+/// with a clear message + the right call to action.
+class _SubStatusView extends StatelessWidget {
+  final _SubBlock block;
+  final MeSubscription sub;
+  final VoidCallback? onPremium;
+  final Future<void> Function() onRefresh;
+
+  const _SubStatusView({
+    required this.block,
+    required this.sub,
+    required this.onRefresh,
+    this.onPremium,
+  });
+
+  static const _supportUrl = 'https://t.me/ulya_tech';
+
+  Future<void> _openSupport() async {
+    final uri = Uri.parse(_supportUrl);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final IconData icon;
+    final Color color;
+    final String title;
+    final List<String> lines;
+    final String ctaLabel;
+    final bool ctaIsSupport;
+
+    switch (block) {
+      case _SubBlock.expired:
+        icon = PhosphorIconsFill.hourglassMedium;
+        color = DS.amber;
+        title = 'Подписка истекла';
+        lines = [
+          'Срок действия закончился ${sub.formattedExpiry}.',
+          'Продлите подписку, чтобы снова подключаться к серверам.',
+        ];
+        ctaLabel = 'Продлить подписку';
+        ctaIsSupport = false;
+      case _SubBlock.limited:
+        final total = sub.trafficLimitGb > 0 ? '${sub.trafficLimitGb} ГБ' : '∞';
+        icon = PhosphorIconsFill.gauge;
+        color = DS.violet;
+        title = 'Лимит трафика исчерпан';
+        lines = [
+          'Использовано ${sub.trafficUsedGb.toStringAsFixed(1)} из $total.',
+          'Смените тариф или продлите — и доступ вернётся.',
+        ];
+        ctaLabel = 'Сменить тариф';
+        ctaIsSupport = false;
+      case _SubBlock.disabled:
+        icon = PhosphorIconsFill.prohibit;
+        color = DS.rose;
+        title = 'Подписка приостановлена';
+        lines = [
+          'Доступ временно ограничен.',
+          'Напишите в поддержку — мы поможем разобраться.',
+        ];
+        ctaLabel = 'Связаться с поддержкой';
+        ctaIsSupport = true;
+    }
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(28, 24, 28, 48),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: color.withValues(alpha: 0.12),
+                border: Border.all(color: color.withValues(alpha: 0.3), width: 1.5),
+                boxShadow: [
+                  BoxShadow(color: color.withValues(alpha: 0.18), blurRadius: 36),
+                ],
+              ),
+              child: Icon(icon, color: color, size: 44),
+            ),
+            const SizedBox(height: 26),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: DS.textPrimary,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
+              ),
+            ),
+            const SizedBox(height: 12),
+            for (final l in lines)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  l,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: DS.textSecondary,
+                    fontSize: 14,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: GestureDetector(
+                onTap: ctaIsSupport ? _openSupport : onPremium,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(DS.radiusSm),
+                    boxShadow: [
+                      BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 18, offset: const Offset(0, 6)),
+                    ],
+                  ),
+                  child: Text(
+                    ctaLabel,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: onRefresh,
+              child: const Text('Обновить',
+                  style: TextStyle(color: DS.textMuted, fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
