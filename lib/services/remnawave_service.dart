@@ -77,8 +77,16 @@ class RemnawaveService {
     try {
       final uri = Uri.parse(line);
       if (uri.host != '0.0.0.0') return null;
-      final f = uri.fragment.trim();
-      return f.isEmpty ? null : f;
+      final raw = uri.fragment.trim();
+      if (raw.isEmpty) return null;
+      // Uri.fragment is the raw, still percent-encoded string — decode it,
+      // same as VlessServer.fromUri does for display names. Without this the
+      // admin's note text renders as literal "%D0%..." gibberish.
+      try {
+        return Uri.decodeComponent(raw);
+      } catch (_) {
+        return raw;
+      }
     } catch (_) {
       return null;
     }

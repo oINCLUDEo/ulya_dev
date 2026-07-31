@@ -456,7 +456,12 @@ class _ServersPageState extends State<ServersPage>
                   ),
                 ),
               )
-            else if (notes.isNotEmpty)
+            // Notes only take over the whole screen when there's nothing else
+            // to show — e.g. during reserve-squad grace the subscription can
+            // carry a "device limit reached" note AND a real, connectable
+            // server at the same time. Hiding the server behind the note
+            // would defeat the entire point of grace access.
+            else if (notes.isNotEmpty && _nodes.isEmpty)
               SliverFillRemaining(child: _NotesStatusView(
                 notes: notes,
                 onPremium: widget.onGoToPremium,
@@ -475,8 +480,17 @@ class _ServersPageState extends State<ServersPage>
                 onSettings: widget.onGoToSettings,
                 isPublic: _isPublicCatalog,
               ))
-            else
+            else ...[
+              if (notes.isNotEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  sliver: SliverToBoxAdapter(child: VpnInfoBanner(
+                    color: DS.amber,
+                    text: notes.join('\n'),
+                  )),
+                ),
               ..._buildSections(),
+            ],
             const SliverPadding(padding: EdgeInsets.only(bottom: 110)),
           ],
         ),
@@ -490,7 +504,7 @@ class _ServersPageState extends State<ServersPage>
     final loggedIn = authStateNotifier.value.isLoggedIn;
     final blocked = !_isPublicCatalog &&
         loggedIn &&
-        (RemnawaveService.lastNotes.isNotEmpty ||
+        ((RemnawaveService.lastNotes.isNotEmpty && count == 0) ||
             (sub != null && _SubBlock.fromStatus(sub.status) != null));
     final subtitle = (!_loading && count > 0 && !blocked)
         ? _isPublicCatalog
