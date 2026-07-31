@@ -1210,3 +1210,102 @@ class _PollingCard extends StatelessWidget {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Reserve-squad grace card — subscription genuinely expired, but we've left
+//  a small, temporary window open while the user decides to renew. Warm/
+//  reassuring tone on purpose: this is a courtesy, not a punishment — the
+//  copy should read like "we've got you covered for now", not an error.
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _GraceCard extends StatelessWidget {
+  final MeSubscription sub;
+  const _GraceCard({required this.sub});
+
+  @override
+  Widget build(BuildContext context) {
+    final expDate = sub.expireDate;
+    final now = DateTime.now();
+    final hoursLeft = expDate?.difference(now).inHours;
+    final daysLeft = expDate?.difference(now).inDays;
+
+    final String timeLeftLabel;
+    if (hoursLeft == null || hoursLeft <= 0) {
+      timeLeftLabel = 'вот-вот закончится';
+    } else if (daysLeft != null && daysLeft >= 1) {
+      timeLeftLabel = 'ещё $daysLeft ${_pluralDays(daysLeft)}';
+    } else {
+      timeLeftLabel = 'ещё около $hoursLeft ч';
+    }
+
+    return Container(
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(_r16),
+        gradient: const LinearGradient(
+          colors: [_cg1, _cg2],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(color: DS.gold.withValues(alpha: 0.32), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: DS.gold.withValues(alpha: 0.14),
+            blurRadius: 28,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 42, height: 42,
+              decoration: BoxDecoration(
+                color: DS.gold.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Center(
+                child: PhosphorIcon(
+                  PhosphorIconsFill.lifebuoy,
+                  color: DS.gold, size: 20,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Мы оставили вам немного доступа',
+                    style: TextStyle(
+                      color: _t0, fontSize: 15, fontWeight: FontWeight.w700, height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    'Подписка закончилась, но пока вы решаете — '
+                    'мы включили небольшой запасной доступ ($timeLeftLabel). '
+                    'Продлите, чтобы вернуть полный тариф.',
+                    style: const TextStyle(color: _t1, fontSize: 13, height: 1.5),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _pluralDays(int n) {
+    final m10 = n % 10, m100 = n % 100;
+    if (m100 >= 11 && m100 <= 19) return 'дней';
+    if (m10 == 1) return 'день';
+    if (m10 >= 2 && m10 <= 4) return 'дня';
+    return 'дней';
+  }
+}
+

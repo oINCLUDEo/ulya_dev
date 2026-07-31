@@ -806,7 +806,9 @@ class _SubBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     Color color; String label; IconData icon;
-    if (sub.isActive) {
+    if (sub.isReserveGrace) {
+      color = DS.amber; label = 'Временный доступ'; icon = Icons.hourglass_bottom_rounded;
+    } else if (sub.isActive) {
       if (sub.isTrial) {
         color = DS.amber; label = 'Пробный'; icon = Icons.hourglass_top_rounded;
       } else {

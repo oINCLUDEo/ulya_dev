@@ -1575,11 +1575,15 @@ class _PremiumPageState extends State<PremiumPage>
     final sub     = meNotifier.value?.subscription;
     final expDate        = sub?.expireDate;
     final isDateExpired  = expDate != null && expDate.isBefore(DateTime.now());
+    final isReserveGrace = sub?.isReserveGrace ?? false;
     final hasActivePaidSub =
         sub != null && sub.isActive && !sub.isTrial && !isDateExpired;
 
-    // Expired: has a subscription (non-trial) that is no longer active
-    final hasExpiredSub = sub != null && !sub.isTrial && !hasActivePaidSub;
+    // Expired: has a subscription (non-trial) that is no longer active.
+    // Reserve-squad grace is its own state (handled separately below) even
+    // though sub.isActive/isExpired already fold it in — we want the warm,
+    // specific "temporary access" card here, not the generic expired one.
+    final hasExpiredSub = sub != null && !sub.isTrial && !hasActivePaidSub && !isReserveGrace;
 
     // ── Tariff helpers ─────────────────────────────────────────────────────
     final tariffs      = _tariffs;
@@ -1689,9 +1693,14 @@ class _PremiumPageState extends State<PremiumPage>
                         ),
                       ],
 
-                    // ── Expired subscriber ────────────────────────────────
-                    ] else if (hasExpiredSub) ...[
-                      _ExpiredCard(sub: sub),
+                    // ── Expired subscriber (or on temporary reserve-squad
+                    // grace, which reuses the same renew/tariff flow below —
+                    // only the top card differs) ──────────────────────────
+                    ] else if (hasExpiredSub || isReserveGrace) ...[
+                      if (isReserveGrace)
+                        _GraceCard(sub: sub!)
+                      else
+                        _ExpiredCard(sub: sub!),
                       const SizedBox(height: 12),
                       _PlanContextStrip(
                         sub: sub,
