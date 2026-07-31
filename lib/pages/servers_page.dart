@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -13,6 +12,7 @@ import '../models/me_response.dart';
 import '../models/server_node.dart';
 import '../services/auth_state.dart';
 import '../services/favorites_state.dart';
+import '../services/launch_action_service.dart';
 import '../services/me_service.dart';
 import '../services/network_monitor.dart';
 import '../services/ping_state.dart';
@@ -20,7 +20,7 @@ import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../services/subscription_api_service.dart';
 import '../utils/server_icon.dart';
-import '../utils/signal_quality.dart';
+import '../widgets/quality_bars.dart';
 import '../widgets/skeleton.dart';
 import 'auth_bottom_sheet.dart';
 import 'home_page.dart' show VpnIconBtn, VpnInfoBanner;
@@ -251,48 +251,10 @@ class _ServersPageState extends State<ServersPage>
       hay.contains('unlimited');
 
   // ── Ping ───────────────────────────────────────────────────────────────────
-  /// One-shot TCP RTT (no warm-up). Used internally only.
-  Future<int?> _tcpPingRaw(String host, int port) async {
-    final sw = Stopwatch()..start();
-    try {
-      final s = await Socket.connect(host, port, timeout: const Duration(seconds: 2));
-      sw.stop(); s.destroy(); return sw.elapsedMilliseconds;
-    } catch (_) { return null; }
-  }
-
-  /// Warm-up connect + min of two follow-up measurements. See
-  /// _accurateTcpRtt in home_page.dart for the rationale — same approach.
-  Future<int?> _tcpPingAccurate(String host, int port) async {
-    try {
-      final s = await Socket.connect(host, port, timeout: const Duration(seconds: 2));
-      s.destroy();
-    } catch (_) {
-      return null;
-    }
-    final m1 = await _tcpPingRaw(host, port);
-    if (m1 == null) return null;
-    final m2 = await _tcpPingRaw(host, port);
-    if (m2 == null) return m1;
-    return m1 < m2 ? m1 : m2;
-  }
-
-  Future<void> _tcpPingNode(ServerNode node) async {
-    // Virtual/balanced hosts have no single address to ping.
-    if (node.protocol == 'auto') return;
-    if (node.link == null) return;
-    final host = node.address;
-    if (host.isEmpty) return;
-    final port = node.serverPort > 0 ? node.serverPort : 443;
-    // Silent refresh: when we already have a valid cached reading for this
-    // node, don't flip the badge into the "scanning" state — replace it in
-    // place once the new value arrives. Only the first-ever probe (or one
-    // that follows a previous failure) shows the scan animation.
-    final cached = PingState.get(node.uuid);
-    final hasValid = cached != null && cached >= 0;
-    if (!hasValid) PingState.markInFlight(node.uuid);
-    final ms = await _tcpPingAccurate(host, port);
-    if (mounted) PingState.set(node.uuid, ms ?? -1);
-  }
+  /// Thin wrapper — the actual measurement lives in [PingState.probeNode] so
+  /// every screen that probes a server (this page, the Home server picker)
+  /// runs the exact same algorithm and writes to the same cache.
+  Future<void> _tcpPingNode(ServerNode node) => PingState.probeNode(node);
 
   /// Probes every node. [silent] skips the mass "scanning" markers AND the
   /// header-button progress state, so a background refresh replaces readings
@@ -344,6 +306,10 @@ class _ServersPageState extends State<ServersPage>
       selectedServerNotifier.value = node;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('selected_node_uuid', node.uuid);
+      // HomePage owns the actual VPN connection and stays alive in the
+      // bottom-nav IndexedStack, so it can pick this up immediately — the
+      // same pending-action bridge the QS tile uses for its "toggle" action.
+      LaunchActionService.pending.value = 'connect_selected';
       widget.onGoToHome();
     }
 
@@ -905,7 +871,17 @@ class _NodeTileState extends State<_NodeTile>
               const SizedBox(width: 8),
               // Trailing
               if (isSelected)
-                Icon(PhosphorIconsFill.checkCircle, color: accentColor, size: 20)
+                // Selected-but-idle only gets a checkmark; a live tunnel to
+                // this exact node (tracked globally via vpnConnectedNotifier,
+                // set by HomePage — the only place that owns the VPN
+                // connection) gets the stronger "Подключено" badge instead.
+                ValueListenableBuilder<bool>(
+                  valueListenable: vpnConnectedNotifier,
+                  builder: (_, connected, _) => connected
+                      ? _ConnectedBadge(color: accentColor)
+                      : Icon(PhosphorIconsFill.checkCircle,
+                          color: accentColor, size: 20),
+                )
               else if (widget.isPublicCatalog)
                 Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -916,9 +892,9 @@ class _NodeTileState extends State<_NodeTile>
                 // Auto-routed host: no single address to probe, so just paint
                 // a healthy indigo bars badge — visually consistent with
                 // every other server, plus a tooltip clarifying it's "Авто".
-                const _AutoQualityBars()
+                const AutoQualityBars()
               else
-                _QualityBars(
+                QualityBars(
                   ping: ping,
                   isAvailable: node.isAvailable,
                   noLink: node.link == null,
@@ -990,288 +966,30 @@ class _NodeTileState extends State<_NodeTile>
 
 }
 
-// ─── Auto-routed node indicator ──────────────────────────────────────────────
-// Pinged-bar lookalike showing four full indigo bars — same dimensions as
-// _QualityBars so auto and manual rows line up perfectly in the trailing slot.
-// No interaction (auto hosts have no single address to probe), just a tooltip
-// hinting it's a balanced/auto host.
-class _AutoQualityBars extends StatelessWidget {
-  const _AutoQualityBars();
+// ─── "Connected" badge — live tunnel indicator for the selected row ─────────
+class _ConnectedBadge extends StatelessWidget {
+  final Color color;
+  const _ConnectedBadge({required this.color});
 
   @override
-  Widget build(BuildContext context) {
-    const heights = [5.0, 7.5, 10.0, 12.5];
-    return Tooltip(
-      message: 'Авто-балансировка',
-      preferBelow: false,
-      child: Container(
-        width: 34, height: 24,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: DS.indigoLight.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(DS.radiusXs),
-          border: Border.all(color: DS.indigoLight.withValues(alpha: 0.28)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (int i = 0; i < 4; i++) ...[
-              Container(
-                width: 2.5,
-                height: heights[i],
-                decoration: BoxDecoration(
-                  color: DS.indigoLight,
-                  borderRadius: BorderRadius.circular(1.5),
-                ),
-              ),
-              if (i < 3) const SizedBox(width: 2),
-            ],
-          ],
-        ),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: DS.emerald.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: DS.emerald.withValues(alpha: 0.4)),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 6, height: 6,
+        decoration: const BoxDecoration(color: DS.emerald, shape: BoxShape.circle),
       ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// _QualityBars — 4-bar Wi-Fi style indicator for the servers list.
-//
-// Quality buckets:
-//   noLink / !isAvailable → 0 bars, rose (server unreachable)
-//   ping == -2            → animated amber scan (measuring)
-//   ping ∈ (-∞, 0)        → 1 rose bar (probe failed)
-//   ping == null          → all bars dim violet (never measured; tap to probe)
-//   ping <  80            → 4 emerald
-//   ping < 180            → 3 emerald
-//   ping < 320            → 2 amber
-//   ping ≥ 320            → 1 rose
-//
-// Interaction:
-//   tap        → run / re-run probe.
-//   long-press → snackbar with the raw "Пинг: N мс" (parent supplies handler).
-//   tooltip    → same number on hover/long-touch.
-// ─────────────────────────────────────────────────────────────────────────────
-class _QualityBars extends StatefulWidget {
-  final int? ping;
-  final bool isAvailable;
-  final bool noLink;
-  /// Run a fresh TCP probe for this server. Triggered by long-press, and by
-  /// tap when the badge has no value to peek at yet.
-  final VoidCallback onProbe;
-
-  const _QualityBars({
-    required this.ping,
-    required this.isAvailable,
-    required this.noLink,
-    required this.onProbe,
-  });
-
-  @override
-  State<_QualityBars> createState() => _QualityBarsState();
-}
-
-class _QualityBarsState extends State<_QualityBars>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _scanCtrl;
-  // Tap-to-peek: while true, the badge renders the raw "120 мс" text instead
-  // of the bars. Auto-reverts after [_peekDuration].
-  bool _showMs = false;
-  Timer? _peekTimer;
-  static const Duration _peekDuration = Duration(seconds: 3);
-
-  @override
-  void initState() {
-    super.initState();
-    _scanCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
-    if (widget.ping == -2) _scanCtrl.repeat();
-  }
-
-  @override
-  void didUpdateWidget(covariant _QualityBars old) {
-    super.didUpdateWidget(old);
-    final wasScanning = old.ping == -2;
-    final isScanning = widget.ping == -2;
-    if (isScanning && !wasScanning) {
-      _scanCtrl.repeat();
-      // A new probe is in flight — bail out of "show ms" mode so the user
-      // can see the scan animation, otherwise it'd stay on the stale value.
-      if (_showMs) {
-        _peekTimer?.cancel();
-        _showMs = false;
-      }
-    } else if (!isScanning && wasScanning) {
-      _scanCtrl..stop()..reset();
-    }
-  }
-
-  @override
-  void dispose() {
-    _scanCtrl.dispose();
-    _peekTimer?.cancel();
-    super.dispose();
-  }
-
-  /// Single-tap handler. If there's a real ping number to show → flip the
-  /// badge into "ms text" mode for [_peekDuration]. Otherwise — re-probe.
-  void _onTap() {
-    final p = widget.ping;
-    final hasValue = p != null && p >= 0;
-    if (!hasValue) {
-      widget.onProbe();
-      return;
-    }
-    HapticFeedback.selectionClick();
-    _peekTimer?.cancel();
-    setState(() => _showMs = !_showMs);
-    if (_showMs) {
-      _peekTimer = Timer(_peekDuration, () {
-        if (mounted) setState(() => _showMs = false);
-      });
-    }
-  }
-
-  // Quality bucketing is shared with the home connection card via
-  // lib/utils/signal_quality.dart — both screens MUST resolve the same
-  // (bars, colour) for the same ping value.
-  ({int active, Color color, String tooltip, bool loading, bool offline})
-      _state() {
-    final p = widget.ping;
-    if (widget.noLink || !widget.isAvailable) {
-      return (active: 0, color: DS.rose, tooltip: 'Сервер недоступен',
-          loading: false, offline: true);
-    }
-    if (p == -2) {
-      return (active: 0, color: DS.amber, tooltip: 'Проверяем…',
-          loading: true, offline: false);
-    }
-    if (p == null) {
-      return (active: 0, color: DS.violet, tooltip: 'Нажмите, чтобы проверить',
-          loading: false, offline: false);
-    }
-    if (p < 0) {
-      // Probe failed — render an explicit "offline" badge instead of a
-      // single red bar, which read as "weak signal" rather than "dead".
-      return (active: 0, color: DS.rose,
-          tooltip: 'Нет связи. Нажмите, чтобы повторить.',
-          loading: false, offline: true);
-    }
-    final q = signalQualityFromPing(p);
-    return (active: q.activeBars, color: q.color, tooltip: '$p мс',
-        loading: false, offline: false);
-  }
-
-  static const _heights = [5.0, 7.5, 10.0, 12.5];
-
-  Widget _scanBars() {
-    return AnimatedBuilder(
-      animation: _scanCtrl,
-      builder: (_, child) {
-        final t = _scanCtrl.value * 4;
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (int i = 0; i < 4; i++) ...[
-              Container(
-                width: 2.5,
-                height: _heights[i],
-                decoration: BoxDecoration(
-                  color: DS.amber.withValues(alpha: _scanAlpha(i, t)),
-                  borderRadius: BorderRadius.circular(1.5),
-                ),
-              ),
-              if (i < 3) const SizedBox(width: 2),
-            ],
-          ],
-        );
-      },
-    );
-  }
-
-  double _scanAlpha(int i, double t) {
-    final d = (i - t).abs();
-    final wrapped = math.min(d, 4 - d);
-    final n = (1 - wrapped / 2).clamp(0.0, 1.0);
-    return 0.18 + 0.67 * n;
-  }
-
-  Widget _staticBars(int active, Color color) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (int i = 0; i < 4; i++) ...[
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 240),
-            width: 2.5,
-            height: _heights[i],
-            decoration: BoxDecoration(
-              color: i < active ? color : DS.textMuted.withValues(alpha: 0.25),
-              borderRadius: BorderRadius.circular(1.5),
-            ),
-          ),
-          if (i < 3) const SizedBox(width: 2),
-        ],
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final s = _state();
-    final p = widget.ping;
-    final showMsText = _showMs && p != null && p >= 0 && !s.loading;
-    return Tooltip(
-      message: showMsText ? 'Удерживайте, чтобы обновить' : s.tooltip,
-      preferBelow: false,
-      child: GestureDetector(
-        onTap: _onTap,
-        onLongPress: widget.onProbe,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          // Slightly wider when the number is on screen so "120 мс" doesn't
-          // get cut. Bar mode keeps its compact 34px footprint.
-          width: showMsText ? 48 : 34,
-          height: 24,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: s.color.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(DS.radiusXs),
-            border: Border.all(color: s.color.withValues(alpha: 0.28)),
-          ),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            transitionBuilder: (child, anim) => FadeTransition(
-              opacity: anim,
-              child: ScaleTransition(scale: anim, child: child),
-            ),
-            child: showMsText
-                ? Text('$p мс',
-                    key: const ValueKey('ms'),
-                    style: TextStyle(
-                      color: s.color,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ))
-                : s.offline
-                    ? const Icon(PhosphorIconsBold.wifiSlash,
-                        key: ValueKey('offline'), size: 13, color: DS.rose)
-                    : KeyedSubtree(
-                        key: const ValueKey('bars'),
-                        child: s.loading
-                            ? _scanBars()
-                            : _staticBars(s.active, s.color),
-                      ),
-          ),
-        ),
-      ),
-    );
-  }
+      const SizedBox(width: 5),
+      const Text('Подключено',
+          style: TextStyle(
+              color: DS.emerald, fontSize: 10, fontWeight: FontWeight.w700)),
+    ]),
+  );
 }
 
 class _ProtoBadge extends StatelessWidget {

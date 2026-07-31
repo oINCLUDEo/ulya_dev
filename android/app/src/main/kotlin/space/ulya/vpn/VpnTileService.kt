@@ -3,6 +3,7 @@ package space.ulya.vpn
 import android.app.PendingIntent
 import android.content.Intent
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.service.quicksettings.Tile
@@ -19,9 +20,37 @@ import android.service.quicksettings.TileService
  */
 class VpnTileService : TileService() {
 
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     override fun onStartListening() {
         super.onStartListening()
         updateState()
+        // Keep the tile in sync while the panel stays open — onStartListening
+        // alone only samples the state once, so toggling the VPN from
+        // elsewhere while the shade is pulled down left the tile stale.
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        connectivityManager = cm
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = updateState()
+            override fun onLost(network: Network) = updateState()
+            override fun onCapabilitiesChanged(
+                network: Network,
+                capabilities: NetworkCapabilities,
+            ) = updateState()
+        }
+        networkCallback = cb
+        cm.registerNetworkCallback(
+            android.net.NetworkRequest.Builder().build(),
+            cb,
+        )
+    }
+
+    override fun onStopListening() {
+        networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
+        networkCallback = null
+        connectivityManager = null
+        super.onStopListening()
     }
 
     private fun updateState() {

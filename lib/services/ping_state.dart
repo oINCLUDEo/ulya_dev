@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Socket;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../models/server_node.dart';
 
 /// Process-wide cache of measured TCP round-trip times for server nodes,
 /// keyed by ServerNode.uuid.
@@ -117,5 +120,70 @@ class PingState {
     if (notifier.value.isEmpty) return;
     notifier.value = <String, int?>{};
     _schedulePersist();
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Canonical probe — the ONE measurement implementation.
+  //
+  // HomePage (connect card + server picker) and ServersPage each used to
+  // carry their own copy of this warm-up-then-measure algorithm. Two
+  // independent implementations probing the same node at different moments
+  // is exactly what made the same server show different ping numbers
+  // depending which screen you were looking at — not a bug in either copy,
+  // just two clocks that were never the same clock. Routing every caller
+  // through this single function removes that class of discrepancy.
+  // ───────────────────────────────────────────────────────────────────────
+
+  /// Probes [node] and publishes the result via [set]. No-ops for
+  /// auto-routed hosts (no single address to test) or nodes with no link.
+  ///
+  /// [markInFlight] controls whether a still-unmeasured node is flagged with
+  /// the `-2` "scanning" sentinel before the probe starts — the two list UIs
+  /// (ServersPage, the Home server picker) want that so [QualityBars] can
+  /// show its scan animation; HomePage's own connect-card loop tracks its
+  /// "measuring" state locally instead, so it passes `false` to avoid
+  /// publishing a value that isn't the real measurement.
+  static Future<void> probeNode(ServerNode node, {bool markInFlight = true}) async {
+    if (node.protocol == 'auto') return; // no single address to ping
+    if (node.link == null) return;
+    final host = node.address.trim();
+    if (host.isEmpty) return;
+    final port = node.serverPort > 0 ? node.serverPort : 443;
+    final cached = get(node.uuid);
+    final hasValid = cached != null && cached >= 0;
+    if (!hasValid && markInFlight) PingState.markInFlight(node.uuid);
+    final ms = await _accurateTcpRtt(host, port);
+    set(node.uuid, ms ?? -1);
+  }
+
+  /// Warm-up connect (discarded — pays for DNS/ARP/route discovery/TCP
+  /// slow-start) followed by two real measurements, keeping the minimum to
+  /// filter out an occasional retransmit or scheduler hiccup.
+  static Future<int?> _accurateTcpRtt(String host, int port,
+      {Duration timeout = const Duration(seconds: 2)}) async {
+    try {
+      final s = await Socket.connect(host, port, timeout: timeout);
+      s.destroy();
+    } catch (_) {
+      return null; // unreachable from this network
+    }
+    final m1 = await _singleConnect(host, port, timeout);
+    if (m1 == null) return null;
+    final m2 = await _singleConnect(host, port, timeout);
+    if (m2 == null) return m1;
+    return m1 < m2 ? m1 : m2;
+  }
+
+  static Future<int?> _singleConnect(
+      String host, int port, Duration timeout) async {
+    final sw = Stopwatch()..start();
+    try {
+      final s = await Socket.connect(host, port, timeout: timeout);
+      sw.stop();
+      s.destroy();
+      return sw.elapsedMilliseconds;
+    } catch (_) {
+      return null;
+    }
   }
 }

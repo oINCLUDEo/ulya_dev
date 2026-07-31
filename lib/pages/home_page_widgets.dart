@@ -4,6 +4,34 @@
 // Local widgets
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── "Connected" pill — live tunnel indicator for the home server picker ──────
+// Mirrors _ConnectedBadge in servers_page.dart so the two server lists read
+// identically; kept separate since the two files are different libraries.
+class _ConnectedPill extends StatelessWidget {
+  final Color accent;
+  const _ConnectedPill({required this.accent});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(
+      color: DS.emerald.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: DS.emerald.withValues(alpha: 0.4)),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 6, height: 6,
+        decoration: const BoxDecoration(color: DS.emerald, shape: BoxShape.circle),
+      ),
+      const SizedBox(width: 5),
+      const Text('Подключено',
+          style: TextStyle(
+              color: DS.emerald, fontSize: 10, fontWeight: FontWeight.w700)),
+    ]),
+  );
+}
+
 // ── Круглая кнопка подключения ────────────────────────────────────────────────
 
 class _ConnectButton extends StatefulWidget {

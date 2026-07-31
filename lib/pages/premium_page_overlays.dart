@@ -149,6 +149,38 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
     super.dispose();
   }
 
+  // Fetches the user's referral code fresh (rather than trusting a possibly
+  // stale global cache) — this overlay is the highest-attention moment right
+  // after a purchase, so it's worth the extra round-trip to get it right.
+  Future<void> _onInviteTap() async {
+    HapticFeedback.selectionClick();
+    try {
+      final info = await ReferralService.getInfo();
+      if (info == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Реферальная программа сейчас недоступна'),
+            backgroundColor: DS.surface2,
+          ));
+        }
+        return;
+      }
+      final png = await renderReferralCardPng(info);
+      if (png != null) {
+        await SharePlus.instance.share(ShareParams(
+          files: [
+            XFile.fromData(png, mimeType: 'image/png', name: 'ulya_invite.png'),
+          ],
+          text: info.shareText,
+        ));
+        return;
+      }
+      await SharePlus.instance.share(ShareParams(text: info.shareText));
+    } catch (e) {
+      appLogger.error('SuccessOverlay', 'invite share failed: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) => GestureDetector(
     onTap: widget.onDismiss,
@@ -247,6 +279,39 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                               ? 'Изменения применены'
                               : 'Добро пожаловать',
                           style: const TextStyle(color: _t1, fontSize: 16),
+                        ),
+                        const SizedBox(height: 26),
+                        // Invite nudge — this is the highest-attention moment
+                        // right after a purchase, so it's the best place to
+                        // surface the referral programme.
+                        GestureDetector(
+                          onTap: _onInviteTap,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 18, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: DS.violet.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(50),
+                              border: Border.all(
+                                  color: DS.violet.withValues(alpha: 0.4)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(PhosphorIconsFill.gift,
+                                    size: 16, color: DS.violet),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Пригласить друга — получить бонус',
+                                  style: TextStyle(
+                                    color: _t0,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ]),
                     ),
