@@ -8,12 +8,12 @@ import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../config/app_config.dart';
 import '../services/app_logger.dart';
 import '../services/apps_repository.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
+import '../services/remote_config_service.dart';
 import '../utils/core_info_parser.dart';
 import '../services/remnawave_service.dart';
 import '../main.dart' show DS;
@@ -127,7 +127,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _blockedApps = Set<String>.from(jsonDecode(blockedRaw) as List);
       } catch (_) {}
     } else {
-      _blockedApps = Set<String>.from(AppConfig.defaultBlockedApps);
+      _blockedApps = Set<String>.from(RemoteConfigService.blockedAppsDefault);
       await p.setString(_kBlockedApps, jsonEncode(_blockedApps.toList()));
     }
     if (mounted) setState(() => _loading = false);

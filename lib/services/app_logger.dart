@@ -121,9 +121,9 @@ class AppLogger {
       message: message,
     );
 
-    final current = List<AppLogEntry>.from(logsNotifier.value)..add(entry);
+    var current = List<AppLogEntry>.from(logsNotifier.value)..add(entry);
     if (current.length > _kMaxEntries) {
-      current.removeRange(0, current.length - _kMaxEntries);
+      current = _trim(current);
     }
     logsNotifier.value = current;
     // For error/warning we cannot afford the persist to lose the race with a
@@ -135,6 +135,33 @@ class AppLogger {
       _persist();
     }
     debugPrint('[${level.label}][$source] $message');
+  }
+
+  /// Trims [entries] down to [_kMaxEntries], preferring to evict the oldest
+  /// debug/info noise first (e.g. once-a-second VPN traffic ticks) so a
+  /// warning/error logged minutes ago — like a failed payment or a balance
+  /// that didn't credit — survives long enough for the user to actually open
+  /// a support ticket, instead of scrolling off the ring buffer.
+  List<AppLogEntry> _trim(List<AppLogEntry> entries) {
+    final excess = entries.length - _kMaxEntries;
+    if (excess <= 0) return entries;
+
+    final kept = <AppLogEntry>[];
+    var toDrop = excess;
+    for (final e in entries) {
+      final isNoise = e.level == AppLogLevel.debug || e.level == AppLogLevel.info;
+      if (toDrop > 0 && isNoise) {
+        toDrop--;
+        continue;
+      }
+      kept.add(e);
+    }
+    // Buffer was already all warning/error — fall back to a hard cap so it
+    // still can't grow unbounded.
+    if (kept.length > _kMaxEntries) {
+      return kept.sublist(kept.length - _kMaxEntries);
+    }
+    return kept;
   }
 
   /// Awaitable flush — write the current buffer to disk and resolve when

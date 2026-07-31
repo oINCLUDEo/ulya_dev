@@ -4,6 +4,7 @@ import '../main.dart' show DS;
 
 import '../models/me_response.dart';
 import '../models/subscription_info.dart';
+import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
@@ -254,7 +255,8 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     try {
       await SubscriptionApiService.setAutopay(enabled: value);
       await MeService.refresh();
-    } catch (_) {
+    } catch (e) {
+      appLogger.error('Payment', 'autopay toggle: exception: $e');
       if (mounted) setState(() => _autopayEnabled = !value);
     }
     if (mounted) setState(() => _autopayLoading = false);
@@ -1125,11 +1127,16 @@ class _TopupSheetState extends State<_TopupSheet> {
       return;
     }
     setState(() => _loading = true);
+    final balanceBeforeKopeks = meNotifier.value?.balanceKopeks;
+    appLogger.info('Payment',
+        'balance topup: user requested amountKopeks=${amount * 100} '
+        'balanceBefore=$balanceBeforeKopeks');
     final result =
         await SubscriptionApiService.topupBalance(amountKopeks: amount * 100);
     if (!mounted) return;
 
     if (result == null) {
+      appLogger.error('Payment', 'balance topup: no response from server');
       _snack('Ошибка соединения с сервером', isError: true);
     } else if (result.requiresPayment && result.paymentUrl != null) {
       Navigator.pop(context);
@@ -1143,8 +1150,24 @@ class _TopupSheetState extends State<_TopupSheet> {
       // Balance is credited server-side after payment — refresh to reflect it.
       await MeService.refresh();
       globalRefreshNotifier.value++;
+      final balanceAfterKopeks = meNotifier.value?.balanceKopeks;
+      // This check is not conclusive (crediting can lag behind the webhook by
+      // more than one refresh), but a mismatch here is exactly the "paid but
+      // balance didn't move" symptom support needs to see in the log export.
+      if (balanceAfterKopeks == balanceBeforeKopeks) {
+        appLogger.warning('Payment',
+            'balance topup: webview closed but balance unchanged '
+            '(before=$balanceBeforeKopeks after=$balanceAfterKopeks) — '
+            'may still be processing on the backend');
+      } else {
+        appLogger.info('Payment',
+            'balance topup: balance changed after checkout '
+            '(before=$balanceBeforeKopeks after=$balanceAfterKopeks)');
+      }
       _snack('Проверяем оплату… баланс обновится автоматически', isError: false);
     } else {
+      appLogger.error('Payment',
+          'balance topup: request rejected: ${result.message}');
       _snack(result.message ?? 'Ошибка пополнения', isError: true);
     }
     if (mounted) setState(() => _loading = false);

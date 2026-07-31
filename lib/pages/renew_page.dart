@@ -7,6 +7,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../main.dart' show DS;
 import '../models/me_response.dart';
+import '../services/app_logger.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
 import 'payment_webview_page.dart';
@@ -280,6 +281,8 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
     if (confirmed || _pollAttempt >= _maxPollAttempts) {
       timer.cancel();
       _pollTimer = null;
+      appLogger.info('Payment',
+          'renew poll: finished attempt=$_pollAttempt confirmed=$confirmed');
       if (!mounted) return;
       setState(() => _pollingForPayment = false);
       if (confirmed) {
@@ -288,6 +291,8 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
         await Future.delayed(const Duration(milliseconds: 900));
         if (mounted) Navigator.of(context).pop();
       } else {
+        appLogger.warning('Payment',
+            'renew poll: gave up after $_maxPollAttempts attempts without confirmation');
         _snack('Платёж ещё не подтверждён. Проверьте статус позже.',
             ok: true);
       }
@@ -360,6 +365,7 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
         _snack(r.message ?? 'Ошибка при продлении');
       }
     } catch (e) {
+      appLogger.error('Payment', 'renew: exception: $e');
       if (mounted) _snack('Ошибка: $e');
     }
     if (mounted) setState(() => _purchasing = false);

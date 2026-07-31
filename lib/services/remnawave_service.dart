@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +13,7 @@ import '../config/app_config.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 import '../models/vless_server.dart';
+import 'apps_service.dart';
 
 /// Service that fetches and parses the user's personal subscription URL.
 ///
@@ -107,22 +110,88 @@ class RemnawaveService {
 
   // ── Device HWID ───────────────────────────────────────────────────────────
 
+  /// Secure storage used to recover the HWID across an app uninstall on iOS
+  /// (Keychain items survive app deletion, unlike SharedPreferences/UserDefaults).
+  static const FlutterSecureStorage _hwidStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+  static const String _secureHwidKey = 'device_hwid_keychain';
+
   /// Returns the stable hardware ID for this device installation.
   ///
-  /// On first call a random UUID-v4-like string is generated and persisted in
-  /// SharedPreferences.  Subsequent calls return the same value so the
-  /// subscription server sees a consistent device identity.
+  /// Cached in SharedPreferences once resolved — existing installs keep
+  /// whatever value they already have (no disruption on app update). Only a
+  /// genuinely empty cache (first install, or after a reinstall) triggers
+  /// [_resolveStableHwid], which tries to recover/derive a HWID that survives
+  /// reinstall instead of generating a fresh random one every time.
   static Future<String> getOrCreateHwid() async {
     final prefs = await SharedPreferences.getInstance();
     final existing = prefs.getString(_prefHwid);
     if (existing != null && existing.isNotEmpty) return existing;
 
-    final hwid = _generateUuid();
+    final hwid = await _resolveStableHwid();
     await prefs.setString(_prefHwid, hwid);
     return hwid;
   }
 
-  /// Generates a random UUID v4 string without external dependencies.
+  /// Resolves a HWID that ideally survives an app uninstall/reinstall, so the
+  /// same physical device doesn't consume a fresh slot against the account's
+  /// device limit every time the user reinstalls the app.
+  ///
+  ///  * Android: derived deterministically from `Settings.Secure.ANDROID_ID`
+  ///    — stable per (device, user, app signing key), survives reinstall.
+  ///    Changes only on factory reset or a different signing certificate.
+  ///  * iOS: there's no OS-level identifier that survives a *full* uninstall
+  ///    (Apple resets `identifierForVendor` once every app from the vendor is
+  ///    gone — and this is a single-app vendor). Instead we persist the HWID
+  ///    itself in the Keychain, which — unlike UserDefaults — is NOT wiped on
+  ///    uninstall, so a reinstall recovers the previous value.
+  ///  * Any failure (unsupported platform, plugin error, first run with
+  ///    nothing to recover) falls back to a random UUID, same as before.
+  static Future<String> _resolveStableHwid() async {
+    try {
+      if (Platform.isAndroid) {
+        final androidId = await AppsService.getAndroidId();
+        if (androidId != null && androidId.isNotEmpty) {
+          return _deriveUuidFrom('android:$androidId');
+        }
+      } else if (Platform.isIOS) {
+        final recovered = await _hwidStorage.read(key: _secureHwidKey);
+        if (recovered != null && recovered.isNotEmpty) return recovered;
+      }
+    } catch (e) {
+      debugPrint('RemnawaveService: stable hwid derivation failed: $e');
+    }
+
+    final hwid = _generateUuid();
+    if (Platform.isIOS) {
+      // Stash it in the Keychain so a future reinstall can recover it.
+      try {
+        await _hwidStorage.write(key: _secureHwidKey, value: hwid);
+      } catch (_) {}
+    }
+    return hwid;
+  }
+
+  /// Deterministic UUID-v4-shaped string derived from [seed] — the same seed
+  /// always produces the same output (unlike [_generateUuid]'s random bytes),
+  /// so re-deriving from the same ANDROID_ID after a reinstall yields the
+  /// identical HWID.
+  static String _deriveUuidFrom(String seed) {
+    final digest = sha256.convert(utf8.encode('ulya-vpn-hwid-v1:$seed'));
+    final bytes = digest.bytes.sublist(0, 16);
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    String h(int b) => b.toRadixString(16).padLeft(2, '0');
+    return '${bytes.sublist(0, 4).map(h).join()}'
+        '-${bytes.sublist(4, 6).map(h).join()}'
+        '-${bytes.sublist(6, 8).map(h).join()}'
+        '-${bytes.sublist(8, 10).map(h).join()}'
+        '-${bytes.sublist(10, 16).map(h).join()}';
+  }
+
+  /// Generates a random UUID v4 string without external dependencies — the
+  /// fallback when no stable device anchor is available.
   static String _generateUuid() {
     final bytes = List<int>.generate(16, (_) => _rng.nextInt(256));
     // Set version bits (v4) and variant bits per RFC 4122.

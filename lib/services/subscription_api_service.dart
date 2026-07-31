@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
 import '../config/app_config.dart';
+import 'app_logger.dart';
 import 'cabinet_http.dart';
 import 'auth_state.dart';
 
@@ -625,10 +626,10 @@ class SubscriptionApiService {
         optionsNotifier.value = opts;
         return opts;
       }
-      debugPrint('SubscriptionApiService.getOptions: ${resp.statusCode}');
+      appLogger.warning('Payment', 'getOptions: HTTP ${resp.statusCode}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.getOptions error: $e');
+      appLogger.error('Payment', 'getOptions: exception: $e');
       return null;
     }
   }
@@ -664,7 +665,7 @@ class SubscriptionApiService {
       optionsNotifier.value = opts;
       return opts;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService._getOptionsCabinet error: $e');
+      appLogger.error('Payment', '_getOptionsCabinet: exception: $e');
       return null;
     }
   }
@@ -692,10 +693,11 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.calcPrice: ${resp.statusCode} ${resp.body}');
+      appLogger.warning('Payment',
+          'calcPrice: periodId=$periodId HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.calcPrice error: $e');
+      appLogger.error('Payment', 'calcPrice: periodId=$periodId exception: $e');
       return null;
     }
   }
@@ -707,6 +709,8 @@ class SubscriptionApiService {
     int? devices,
     List<String>? servers,
   }) async {
+    appLogger.info('Payment',
+        'buySubscription: start periodId=$periodId traffic=$trafficValue devices=$devices');
     try {
       final body = <String, dynamic>{'period_id': periodId};
       if (trafficValue != null) body['traffic_value'] = trafficValue;
@@ -718,11 +722,17 @@ class SubscriptionApiService {
         jsonEncode(body),
       );
       if (resp.statusCode == 200) {
-        return BuyResult.fromJson(
+        final result = BuyResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'buySubscription: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.buySubscription: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'buySubscription: periodId=$periodId HTTP ${resp.statusCode} ${resp.body}');
       // Try to extract error detail
       try {
         final errBody = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -733,7 +743,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return BuyResult(status: 'error', message: 'Ошибка покупки подписки');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.buySubscription error: $e');
+      appLogger.error('Payment', 'buySubscription: periodId=$periodId exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -745,6 +755,8 @@ class SubscriptionApiService {
     int? devicesAdd,
     List<String>? servers,
   }) async {
+    appLogger.info('Payment',
+        'upgradeSubscription: start periodId=$periodId trafficAdd=$trafficAdd devicesAdd=$devicesAdd');
     try {
       final body = <String, dynamic>{};
       if (periodId != null) body['period_id'] = periodId;
@@ -758,15 +770,21 @@ class SubscriptionApiService {
       );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        return BuyResult(
+        final result = BuyResult(
           status: json['status'] as String? ?? 'error',
           message: json['message'] as String?,
           paymentUrl: json['payment_url'] as String?,
           amountKopeks: (json['amount_kopeks'] as num?)?.toInt(),
           subscription: json['subscription'] as Map<String, dynamic>?,
         );
+        appLogger.info('Payment',
+            'upgradeSubscription: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.upgradeSubscription: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'upgradeSubscription: HTTP ${resp.statusCode} ${resp.body}');
       try {
         final errBody = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = errBody['detail'] as String?;
@@ -776,7 +794,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return BuyResult(status: 'error', message: 'Ошибка улучшения подписки');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.upgradeSubscription error: $e');
+      appLogger.error('Payment', 'upgradeSubscription: exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -805,10 +823,11 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.calcUpgradePrice: ${resp.statusCode} ${resp.body}');
+      appLogger.warning('Payment',
+          'calcUpgradePrice: HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.calcUpgradePrice error: $e');
+      appLogger.error('Payment', 'calcUpgradePrice: exception: $e');
       return null;
     }
   }
@@ -822,27 +841,34 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.getBalance: ${resp.statusCode}');
+      appLogger.warning('Payment', 'getBalance: HTTP ${resp.statusCode}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.getBalance error: $e');
+      appLogger.error('Payment', 'getBalance: exception: $e');
       return null;
     }
   }
 
   /// POST /mobile/v1/balance/topup
   static Future<TopupResult?> topupBalance({required int amountKopeks}) async {
+    appLogger.info('Payment', 'topupBalance: start amountKopeks=$amountKopeks');
     try {
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/balance/topup'),
         jsonEncode({'amount_kopeks': amountKopeks}),
       );
       if (resp.statusCode == 200) {
-        return TopupResult.fromJson(
+        final result = TopupResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'topupBalance: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.topupBalance: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'topupBalance: amountKopeks=$amountKopeks HTTP ${resp.statusCode} ${resp.body}');
       try {
         final errBody = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = errBody['detail'] as String?;
@@ -850,7 +876,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return const TopupResult(status: 'error', message: 'Ошибка пополнения баланса');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.topupBalance error: $e');
+      appLogger.error('Payment', 'topupBalance: amountKopeks=$amountKopeks exception: $e');
       return TopupResult(status: 'error', message: e.toString());
     }
   }
@@ -863,8 +889,6 @@ class SubscriptionApiService {
     }
     try {
       final resp = await _get(Uri.parse('$_base/mobile/v1/tariffs'));
-      debugPrint('SubscriptionApiService.getTariffs: status=${resp.statusCode}');
-      debugPrint('SubscriptionApiService.getTariffs: body=${resp.body}');
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
         final raw = json['tariffs'] as List<dynamic>? ?? [];
@@ -872,13 +896,13 @@ class SubscriptionApiService {
             .whereType<Map<String, dynamic>>()
             .map(TariffInfo.fromJson)
             .toList();
-        debugPrint('SubscriptionApiService.getTariffs: parsed ${result.length} tariffs');
         tarifsNotifier.value = result;
         return result;
       }
+      appLogger.warning('Payment', 'getTariffs: HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.getTariffs error: $e');
+      appLogger.error('Payment', 'getTariffs: exception: $e');
       return null;
     }
   }
@@ -896,11 +920,10 @@ class SubscriptionApiService {
           .whereType<Map<String, dynamic>>()
           .map(TariffInfo.fromJson)
           .toList();
-      debugPrint('SubscriptionApiService._getTariffsCabinet: parsed ${result.length} tariffs');
       tarifsNotifier.value = result;
       return result;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService._getTariffsCabinet error: $e');
+      appLogger.error('Payment', '_getTariffsCabinet: exception: $e');
       return null;
     }
   }
@@ -917,16 +940,17 @@ class SubscriptionApiService {
       if (resp.statusCode == 200) {
         return jsonDecode(resp.body) as Map<String, dynamic>;
       }
-      debugPrint('SubscriptionApiService.getTrialInfo: ${resp.statusCode}');
+      appLogger.warning('Payment', 'getTrialInfo: HTTP ${resp.statusCode}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.getTrialInfo error: $e');
+      appLogger.error('Payment', 'getTrialInfo: exception: $e');
       return null;
     }
   }
 
   /// POST /mobile/v1/subscription/trial — activate free trial.
   static Future<BuyResult?> activateTrial() async {
+    appLogger.info('Payment', 'activateTrial: start');
     try {
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/trial'),
@@ -935,13 +959,14 @@ class SubscriptionApiService {
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
         final success = json['success'] as bool? ?? false;
+        appLogger.info('Payment', 'activateTrial: result success=$success');
         return BuyResult(
           status: success ? 'success' : 'error',
           message: json['message'] as String?,
           subscription: json['subscription'] as Map<String, dynamic>?,
         );
       }
-      debugPrint('SubscriptionApiService.activateTrial: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment', 'activateTrial: HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = err['detail'];
@@ -949,7 +974,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return const BuyResult(status: 'error', message: 'Ошибка активации пробного периода');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.activateTrial error: $e');
+      appLogger.error('Payment', 'activateTrial: exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -966,12 +991,15 @@ class SubscriptionApiService {
     final path = isSwitch
         ? '/cabinet/subscription/tariff/switch'
         : '/cabinet/subscription/purchase-tariff';
+    appLogger.info('Payment',
+        '_purchaseTariffCabinet: start path=$path tariffId=$tariffId periodDays=$periodDays');
     try {
       final resp = await CabinetHttp.post(
         path,
         body: {'tariff_id': tariffId, 'period_days': periodDays},
       );
       if (resp == null) {
+        appLogger.error('Payment', '_purchaseTariffCabinet: no cabinet JWT available');
         return const BuyResult(status: 'error', message: 'Не авторизован');
       }
 
@@ -979,6 +1007,7 @@ class SubscriptionApiService {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
         // Cabinet returns {success, message, subscription, ...}
         final success = json['success'] as bool? ?? false;
+        appLogger.info('Payment', '_purchaseTariffCabinet: result success=$success');
         return BuyResult(
           status: success ? 'success' : 'error',
           message: json['message'] as String?,
@@ -986,7 +1015,8 @@ class SubscriptionApiService {
         );
       }
 
-      debugPrint('SubscriptionApiService._purchaseTariffCabinet: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          '_purchaseTariffCabinet: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = err['detail'];
@@ -994,6 +1024,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return BuyResult(status: 'error', message: 'Ошибка сервера (${resp.statusCode})');
     } on Exception catch (e) {
+      appLogger.error('Payment', '_purchaseTariffCabinet: tariffId=$tariffId exception: $e');
       return BuyResult(status: 'error', message: 'Ошибка соединения: $e');
     }
   }
@@ -1003,17 +1034,20 @@ class SubscriptionApiService {
   /// The Cabinet endpoint returns a full SubscriptionData object on success,
   /// including `subscription_url` so the app can update its state immediately.
   static Future<BuyResult?> activateCabinetTrial() async {
+    appLogger.info('Payment', 'activateCabinetTrial: start');
     try {
       final resp = await CabinetHttp.post(
         '/cabinet/subscription/trial',
         timeout: const Duration(seconds: 15),
       );
       if (resp == null) {
+        appLogger.error('Payment', 'activateCabinetTrial: no cabinet JWT available');
         return const BuyResult(status: 'error', message: 'Не авторизован');
       }
 
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        appLogger.info('Payment', 'activateCabinetTrial: result success');
         // Cabinet returns SubscriptionData directly (subscription_url is at root)
         return BuyResult(
           status: 'success',
@@ -1022,7 +1056,8 @@ class SubscriptionApiService {
         );
       }
 
-      debugPrint('SubscriptionApiService.activateCabinetTrial: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'activateCabinetTrial: HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = err['detail'];
@@ -1030,7 +1065,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return const BuyResult(status: 'error', message: 'Ошибка активации пробного периода');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.activateCabinetTrial error: $e');
+      appLogger.error('Payment', 'activateCabinetTrial: exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -1041,6 +1076,8 @@ class SubscriptionApiService {
     required int tariffId,
     required int periodDays,
   }) async {
+    appLogger.info('Payment',
+        'buyTariff: start tariffId=$tariffId periodDays=$periodDays');
     if (authStateNotifier.value.isEmailAuth) {
       return _purchaseTariffCabinet(
           tariffId: tariffId, periodDays: periodDays, isSwitch: false);
@@ -1052,11 +1089,17 @@ class SubscriptionApiService {
         jsonEncode(body),
       );
       if (resp.statusCode == 200) {
-        return BuyResult.fromJson(
+        final result = BuyResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'buyTariff: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.buyTariff: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'buyTariff: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         // detail can be a string or a dict (insufficient_funds case)
@@ -1071,7 +1114,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return BuyResult(status: 'error', message: 'Ошибка покупки тарифа');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.buyTariff error: $e');
+      appLogger.error('Payment', 'buyTariff: tariffId=$tariffId exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -1095,11 +1138,11 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint(
-          'SubscriptionApiService.calcChangeTariffPrice: ${resp.statusCode} ${resp.body}');
+      appLogger.warning('Payment',
+          'calcChangeTariffPrice: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.calcChangeTariffPrice error: $e');
+      appLogger.error('Payment', 'calcChangeTariffPrice: tariffId=$tariffId exception: $e');
       return null;
     }
   }
@@ -1111,6 +1154,8 @@ class SubscriptionApiService {
     required int tariffId,
     required int periodDays,
   }) async {
+    appLogger.info('Payment',
+        'changeTariff: start tariffId=$tariffId periodDays=$periodDays');
     if (authStateNotifier.value.isEmailAuth) {
       return _purchaseTariffCabinet(
           tariffId: tariffId, periodDays: periodDays, isSwitch: true);
@@ -1122,12 +1167,15 @@ class SubscriptionApiService {
         jsonEncode(body),
       );
       if (resp.statusCode == 200) {
-        return BuyResult.fromJson(
+        final result = BuyResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'changeTariff: result status=${result.status} amountKopeks=${result.amountKopeks}');
+        return result;
       }
-      debugPrint(
-          'SubscriptionApiService.changeTariff: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'changeTariff: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = err['detail'];
@@ -1141,7 +1189,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.changeTariff error: $e');
+      appLogger.error('Payment', 'changeTariff: tariffId=$tariffId exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -1169,10 +1217,11 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.previewTariffSwitch: ${resp.statusCode} ${resp.body}');
+      appLogger.warning('Payment',
+          'previewTariffSwitch: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.previewTariffSwitch error: $e');
+      appLogger.error('Payment', 'previewTariffSwitch: tariffId=$tariffId exception: $e');
       return null;
     }
   }
@@ -1183,6 +1232,7 @@ class SubscriptionApiService {
     required int tariffId,
     int? devices,
   }) async {
+    appLogger.info('Payment', 'switchTariff: start tariffId=$tariffId devices=$devices');
     try {
       final body = <String, dynamic>{'tariff_id': tariffId};
       if (devices != null) body['devices'] = devices;
@@ -1195,6 +1245,8 @@ class SubscriptionApiService {
         // Backend returns {success, charged_kopeks, new_tariff_name, ...}
         // Map to BuyResult for uniform handling in the UI.
         final success = json['success'] as bool? ?? false;
+        appLogger.info('Payment',
+            'switchTariff: result success=$success chargedKopeks=${json['charged_kopeks']}');
         return BuyResult(
           status: success ? 'success' : 'error',
           message: json['message'] as String?,
@@ -1202,7 +1254,8 @@ class SubscriptionApiService {
           subscription: json['subscription'] as Map<String, dynamic>?,
         );
       }
-      debugPrint('SubscriptionApiService.switchTariff: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'switchTariff: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = err['detail'];
@@ -1216,13 +1269,14 @@ class SubscriptionApiService {
       } catch (_) {}
       return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.switchTariff error: $e');
+      appLogger.error('Payment', 'switchTariff: tariffId=$tariffId exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
 
   /// PUT /mobile/v1/subscription/autopay
   static Future<bool?> setAutopay({required bool enabled}) async {
+    appLogger.info('Payment', 'setAutopay: start enabled=$enabled');
     try {
       final resp = await _put(
         Uri.parse('$_base/mobile/v1/subscription/autopay'),
@@ -1230,12 +1284,15 @@ class SubscriptionApiService {
       );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        return json['autopay_enabled'] as bool? ?? enabled;
+        final result = json['autopay_enabled'] as bool? ?? enabled;
+        appLogger.info('Payment', 'setAutopay: result autopayEnabled=$result');
+        return result;
       }
-      debugPrint('SubscriptionApiService.setAutopay: ${resp.statusCode}');
+      appLogger.error('Payment',
+          'setAutopay: enabled=$enabled HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.setAutopay error: $e');
+      appLogger.error('Payment', 'setAutopay: enabled=$enabled exception: $e');
       return null;
     }
   }
@@ -1257,10 +1314,10 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.listDevices: ${resp.statusCode}');
+      appLogger.warning('Payment', 'listDevices: HTTP ${resp.statusCode}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.listDevices error: $e');
+      appLogger.error('Payment', 'listDevices: exception: $e');
       return null;
     }
   }
@@ -1277,29 +1334,33 @@ class SubscriptionApiService {
       normalized['count'] = json['total'] ?? json['count'] ?? 0;
       return DevicesResult.fromJson(normalized);
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService._listDevicesCabinet error: $e');
+      appLogger.error('Payment', '_listDevicesCabinet: exception: $e');
       return null;
     }
   }
 
   /// DELETE /mobile/v1/devices — сбросить все устройства
   static Future<bool> resetDevices() async {
+    appLogger.info('Payment', 'resetDevices: start');
     try {
       final resp = await _delete(Uri.parse('$_base/mobile/v1/devices'));
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        return json['success'] as bool? ?? false;
+        final ok = json['success'] as bool? ?? false;
+        appLogger.info('Payment', 'resetDevices: result success=$ok');
+        return ok;
       }
-      debugPrint('SubscriptionApiService.resetDevices: ${resp.statusCode}');
+      appLogger.error('Payment', 'resetDevices: HTTP ${resp.statusCode}');
       return false;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.resetDevices error: $e');
+      appLogger.error('Payment', 'resetDevices: exception: $e');
       return false;
     }
   }
 
   /// POST /mobile/v1/devices/delete — удалить одно устройство по hwid
   static Future<bool> deleteDevice({required String hwid}) async {
+    appLogger.info('Payment', 'deleteDevice: start hwid=$hwid');
     try {
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/devices/delete'),
@@ -1308,12 +1369,14 @@ class SubscriptionApiService {
       );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        return json['success'] as bool? ?? false;
+        final ok = json['success'] as bool? ?? false;
+        appLogger.info('Payment', 'deleteDevice: result success=$ok hwid=$hwid');
+        return ok;
       }
-      debugPrint('SubscriptionApiService.deleteDevice: ${resp.statusCode}');
+      appLogger.error('Payment', 'deleteDevice: hwid=$hwid HTTP ${resp.statusCode}');
       return false;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.deleteDevice error: $e');
+      appLogger.error('Payment', 'deleteDevice: hwid=$hwid exception: $e');
       return false;
     }
   }

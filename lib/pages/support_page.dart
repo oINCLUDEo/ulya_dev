@@ -619,7 +619,7 @@ class _CreateTicketPageState extends State<_CreateTicketPage> {
   final _titleCtrl = TextEditingController();
   final _msgCtrl   = TextEditingController();
   bool _sending    = false;
-  bool _attachDiag = false;
+  bool _attachDiag = true;
   String _diagPreview = '';
 
   @override

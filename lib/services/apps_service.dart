@@ -10,6 +10,17 @@ class AppsService {
         .toList();
   }
 
+  /// Android-only: `Settings.Secure.ANDROID_ID` — stable per (device, user,
+  /// app signing key), survives app uninstall/reinstall. Null on any failure
+  /// (unsupported platform, plugin missing) — callers must fall back.
+  static Future<String?> getAndroidId() async {
+    try {
+      return await _channel.invokeMethod<String>('getAndroidId');
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<Uint8List?> getAppIcon(String packageName) async {
     final bytes = await _channel.invokeMethod(
       'getAppIcon',

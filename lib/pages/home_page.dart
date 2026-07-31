@@ -1,6 +1,5 @@
 ﻿import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -8,6 +7,7 @@ import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData, HapticFeedback;
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:share_plus/share_plus.dart';
@@ -15,7 +15,6 @@ import 'package:share_plus/share_plus.dart';
 import '../models/me_response.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
-import '../config/app_config.dart';
 import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
@@ -24,12 +23,14 @@ import '../services/me_service.dart';
 import '../services/network_monitor.dart';
 import '../services/ping_state.dart';
 import '../services/referral_service.dart';
+import '../services/remote_config_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
 import '../utils/referral_card.dart';
 import '../utils/server_icon.dart';
 import '../utils/signal_quality.dart';
 import '../utils/speed_calculator.dart';
+import '../widgets/quality_bars.dart';
 import 'auth_bottom_sheet.dart';
 import 'referral_page.dart';
 import 'subscription_page.dart';
@@ -60,7 +61,6 @@ class _HomePageState extends State<HomePage>
   static const List<List<String>> _bypassKeywordCombos = [
     ['yt', 'tg'],
   ];
-  static const int _defaultServerPort = 443;
 
   // ── V2ray ──────────────────────────────────────────────────────────────────
   late final FlutterV2ray _v2ray;
@@ -85,6 +85,14 @@ class _HomePageState extends State<HomePage>
   late final SpeedCalculator _speedCalc;
   bool _initialized = false;
   bool _isConnecting = false;
+
+  // ── Stability telemetry (Sentry performance) ────────────────────────────────
+  // Measures wall-clock time from "user asked to connect" to the CONNECTED
+  // status event, and flags disconnects that weren't requested via the
+  // connect button (i.e. the tunnel dropped on its own). No-ops when Sentry
+  // has no DSN configured (see AppConfig.sentryDsn).
+  ISentrySpan? _connectSpan;
+  bool _userInitiatedDisconnect = false;
 
   // ── Signal / ping ─────────────────────────────────────────────────────────
   // Probe state lives in the shared PingState service so the home connection
@@ -159,6 +167,32 @@ class _HomePageState extends State<HomePage>
     }
   }
 
+  // ── Stability telemetry helpers ─────────────────────────────────────────────
+
+  /// Starts a Sentry performance transaction covering "tap connect" → either
+  /// CONNECTED or a give-up point. Safe to call even when Sentry has no DSN
+  /// (the SDK's no-op hub just returns a dummy span).
+  void _beginConnectSpan(String reason) {
+    // A previous attempt never resolved (e.g. user backgrounded the app) —
+    // don't leak it silently, close it as cancelled first.
+    _finishConnectSpan(const SpanStatus.cancelled());
+    _connectSpan = Sentry.startTransaction(
+      'vpn.connect',
+      'connection',
+      description: reason,
+      // Safety net so a connect that never reports CONNECTED (stuck tunnel)
+      // still shows up in Sentry instead of leaking the span forever.
+      autoFinishAfter: const Duration(seconds: 30),
+    );
+  }
+
+  void _finishConnectSpan(SpanStatus status) {
+    final span = _connectSpan;
+    _connectSpan = null;
+    if (span == null || span.finished) return;
+    unawaited(span.finish(status: status));
+  }
+
   void _resubscribeVpnStatus() {
     // Cancel the old subscription and re-attach so the plugin sends the
     // current real state immediately rather than waiting for the next change.
@@ -174,7 +208,21 @@ class _HomePageState extends State<HomePage>
         _pushSpark(_uploadHist, _speedCalc.uploadSpeed);
         // Haptic when VPN just connected
         if (!wasConnected) HapticFeedback.mediumImpact();
+        if (!wasConnected) _finishConnectSpan(const SpanStatus.ok());
       } else {
+        if (wasConnected && !_userInitiatedDisconnect) {
+          // The tunnel dropped without the user tapping disconnect — a
+          // stability signal worth surfacing distinctly from a normal
+          // disconnect (e.g. network loss, server killed the session).
+          appLogger.warning('HomePage', 'unexpected VPN drop (server=${_selectedNode?.name})');
+          unawaited(Sentry.addBreadcrumb(Breadcrumb(
+            message: 'unexpected VPN drop',
+            category: 'vpn.stability',
+            level: SentryLevel.warning,
+            data: {'server': _selectedNode?.name ?? 'unknown'},
+          )));
+        }
+        _userInitiatedDisconnect = false;
         _speedCalc.reset();
         _downloadHist.clear();
         _uploadHist.clear();
@@ -317,58 +365,24 @@ class _HomePageState extends State<HomePage>
     _pingInFlight = true;
     // Surface the measuring state to the UI only when we have nothing to show
     // yet — otherwise the bars would flicker through "measuring" on every
-    // background poll, which is noisy.
+    // background poll, which is noisy. (markInFlight: false — we track
+    // "measuring" locally via _pingMeasuring instead of the -2 sentinel.)
     if (_pingMs == null && mounted) {
       setState(() => _pingMeasuring = true);
     }
-    final host = node.address.trim();
-    final port = node.serverPort > 0 ? node.serverPort : _defaultServerPort;
-    final newPing = await _accurateTcpRtt(host, port);
+    await PingState.probeNode(node, markInFlight: false);
     _pingInFlight = false;
-    PingState.set(node.uuid, newPing);
     if (!mounted) return;
     setState(() => _pingMeasuring = false);
   }
 
-  /// Measures TCP RTT with a throwaway warm-up connect first, then takes the
-  /// minimum of two follow-up measurements.
-  ///
-  /// Why: the first connect to a host pays for DNS, ARP, route discovery and
-  /// TCP slow-start — that inflates the reading by hundreds of ms. The
-  /// warm-up burns it. Taking min(probe1, probe2) on the hot path filters
-  /// out the occasional retransmit / scheduler hiccup, leaving a number
-  /// very close to true round-trip.
-  ///
-  /// Returns null if the warm-up fails (host unreachable / timeout).
-  static Future<int?> _accurateTcpRtt(String host, int port,
-      {Duration timeout = const Duration(seconds: 2)}) async {
-    // Warm-up — discarded.
-    try {
-      final s = await Socket.connect(host, port, timeout: timeout);
-      s.destroy();
-    } catch (_) {
-      return null; // unreachable from this network
-    }
-    // Two real measurements; take the minimum.
-    final m1 = await _singleConnect(host, port, timeout);
-    if (m1 == null) return null;
-    final m2 = await _singleConnect(host, port, timeout);
-    if (m2 == null) return m1;
-    return m1 < m2 ? m1 : m2;
-  }
-
-  static Future<int?> _singleConnect(
-      String host, int port, Duration timeout) async {
-    final sw = Stopwatch()..start();
-    try {
-      final s = await Socket.connect(host, port, timeout: timeout);
-      sw.stop();
-      s.destroy();
-      return sw.elapsedMilliseconds;
-    } catch (_) {
-      return null;
-    }
-  }
+  /// Probes an arbitrary [node] from the server-picker sheet. Unlike
+  /// [_measurePing] (which only ever tracks [_selectedNode] on a timer), this
+  /// lets the user compare any server's signal manually, before selecting or
+  /// connecting to it. Routes through the same [PingState.probeNode] that
+  /// ServersPage uses, so the two lists never show a different number for
+  /// the same server just because they measured it independently.
+  Future<void> _probeNodeForPicker(ServerNode node) => PingState.probeNode(node);
 
   @override
   void dispose() {
@@ -382,6 +396,7 @@ class _HomePageState extends State<HomePage>
     LaunchActionService.pending.removeListener(_onLaunchAction);
     _statusSub?.cancel();
     _pingTimer?.cancel();
+    _finishConnectSpan(const SpanStatus.cancelled());
     super.dispose();
   }
 
@@ -403,7 +418,10 @@ class _HomePageState extends State<HomePage>
 
   // ── Launch actions (QS tile / launcher shortcut) ──────────────────────────
 
-  void _onLaunchAction() => _maybeHandleToggleAction();
+  void _onLaunchAction() {
+    _maybeHandleToggleAction();
+    _maybeHandleConnectSelectedAction();
+  }
 
   /// Runs the pending "toggle" action once the page is actually able to
   /// connect: v2ray initialised, nodes loaded, a server selected. Called from
@@ -416,6 +434,18 @@ class _HomePageState extends State<HomePage>
     LaunchActionService.consume('toggle');
     appLogger.info('HomePage', 'launch action: toggle connection');
     _toggleConnection();
+  }
+
+  /// Runs the pending "connect_selected" action — fired by ServersPage when
+  /// the user taps a server in the full list, so tapping a server there
+  /// connects immediately instead of only changing the selection.
+  void _maybeHandleConnectSelectedAction() {
+    if (LaunchActionService.pending.value != 'connect_selected') return;
+    if (!_initialized || _isTransitioning) return;
+    if (selectedServerNotifier.value == null) return; // retried once selection settles
+    LaunchActionService.consume('connect_selected');
+    appLogger.info('HomePage', 'launch action: connect to selected server');
+    _connectToSelectedNode();
   }
 
   void _onMeChanged() {
@@ -553,7 +583,7 @@ class _HomePageState extends State<HomePage>
         appLogger.error('HomePage', 'blocked apps load error: $e');
       }
     }
-    return List<String>.from(AppConfig.defaultBlockedApps);
+    return List<String>.from(RemoteConfigService.blockedAppsDefault);
   }
 
   static bool _isBypassDescription(String? description) {
@@ -627,11 +657,21 @@ class _HomePageState extends State<HomePage>
     HapticFeedback.heavyImpact();
     if (_isConnected) {
       appLogger.info('HomePage', 'disconnecting from ${_selectedNode?.name ?? "unknown"}');
+      _userInitiatedDisconnect = true;
       await _v2ray.stopVless();
       return;
     }
     final node = _selectedNode;
     if (node == null) { _snack('Сначала выберите сервер'); return; }
+    await _connectToNode(node);
+  }
+
+  /// Connects to [node] regardless of the current connection state. The
+  /// native side tears down any existing tunnel before establishing the new
+  /// one (see XrayVPNService.handleStartCommand's `cleanup()`), so this is
+  /// also the right entry point for *switching* servers while connected —
+  /// no explicit stop-then-start dance needed on the Dart side.
+  Future<void> _connectToNode(ServerNode node) async {
     if (node.isDisabled || node.link == null) {
       if (authStateNotifier.value.isLoggedIn) {
         appLogger.info('HomePage', 'blocked server tapped — redirecting to premium');
@@ -660,7 +700,12 @@ class _HomePageState extends State<HomePage>
       }
       if (!mounted) return;
     }
-    if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
+    _beginConnectSpan('${node.countryCode}/${node.name}');
+    if (!await _v2ray.requestPermission()) {
+      _finishConnectSpan(const SpanStatus.permissionDenied());
+      _snack('Нет разрешения VPN');
+      return;
+    }
     setState(() => _isConnecting = true);
     appLogger.info('HomePage', 'connecting to ${node.name} (${node.countryCode})');
     try {
@@ -686,10 +731,23 @@ class _HomePageState extends State<HomePage>
       );
     } catch (e) {
       appLogger.error('HomePage', 'connection error: $e');
+      _finishConnectSpan(const SpanStatus.internalError());
       _snack('Ошибка подключения: $e');
     } finally {
       if (mounted) setState(() => _isConnecting = false);
     }
+  }
+
+  /// Connects to whatever node [selectedServerNotifier] currently points at
+  /// — used when the user taps a server in the full ServersPage list, which
+  /// should connect immediately rather than just changing the selection.
+  /// A no-op if we're already connected to that exact node.
+  Future<void> _connectToSelectedNode() async {
+    final node = selectedServerNotifier.value;
+    if (node == null) return;
+    if (_isConnected && _selectedNode?.uuid == node.uuid) return;
+    HapticFeedback.heavyImpact();
+    await _connectToNode(node);
   }
 
   // ── Server picker helpers ──────────────────────────────────────────────────
@@ -816,6 +874,11 @@ class _HomePageState extends State<HomePage>
                   final p = await SharedPreferences.getInstance();
                   await p.setString('selected_node_uuid', node.uuid);
                   if (ctx.mounted) Navigator.pop(ctx);
+                  // Tapping a server here should connect to it immediately,
+                  // same as tapping one in the full ServersPage list — not
+                  // just change the selection and wait for a separate tap on
+                  // the big connect button.
+                  await _connectToSelectedNode();
                 },
                 splashColor: accent.withValues(alpha: 0.10),
                 highlightColor: accent.withValues(alpha: 0.05),
@@ -894,17 +957,23 @@ class _HomePageState extends State<HomePage>
                       ],
                     )),
                     const SizedBox(width: 8),
-                    // Trailing — selected → check pill; bypass-blocked →
+                    // Trailing — selected → check pill (or "Подключено" if a
+                    // live tunnel to this exact node is up); bypass-blocked →
                     // "Недоступно" badge; locked → lock; else empty.
                     if (isSel)
-                      Container(
-                        width: 26, height: 26,
-                        decoration: BoxDecoration(
-                          color: accent,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(PhosphorIconsBold.check,
-                            color: Colors.white, size: 14),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: vpnConnectedNotifier,
+                        builder: (_, connected, _) => connected
+                            ? _ConnectedPill(accent: accent)
+                            : Container(
+                                width: 26, height: 26,
+                                decoration: BoxDecoration(
+                                  color: accent,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(PhosphorIconsBold.check,
+                                    color: Colors.white, size: 14),
+                              ),
                       )
                     else if (bypassBlockedNow)
                       Container(
@@ -927,7 +996,25 @@ class _HomePageState extends State<HomePage>
                       )
                     else if (locked)
                       Icon(PhosphorIconsBold.lock,
-                          size: 16, color: DS.textMuted),
+                          size: 16, color: DS.textMuted)
+                    else if (isAutoNode)
+                      // No single address to probe — same static indicator
+                      // ServersPage shows for auto-routed hosts.
+                      const AutoQualityBars()
+                    else
+                      // Ping/signal quality, visible without connecting —
+                      // lets the user pick the best server manually, same as
+                      // the full ServersPage list.
+                      QualityBars(
+                        ping: pings[node.uuid],
+                        isAvailable: node.isAvailable,
+                        noLink: node.link == null,
+                        onProbe: () {
+                          if (node.link == null) return;
+                          HapticFeedback.selectionClick();
+                          _probeNodeForPicker(node);
+                        },
+                      ),
                   ]),
                 ),
               ),

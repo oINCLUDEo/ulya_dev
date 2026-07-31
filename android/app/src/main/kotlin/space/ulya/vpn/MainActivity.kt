@@ -11,6 +11,7 @@ import android.net.Network
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -150,6 +151,18 @@ class MainActivity: FlutterActivity() {
                     "getLaunchAction" -> {
                         result.success(launchAction)
                         launchAction = null // consume-once
+                    }
+
+                    // Stable per-device id (survives app uninstall/reinstall as long
+                    // as the signing key and device don't change) — used by
+                    // RemnawaveService to derive a HWID that doesn't burn a fresh
+                    // device slot on every reinstall. Resets on factory reset.
+                    "getAndroidId" -> {
+                        val id = Settings.Secure.getString(
+                            contentResolver,
+                            Settings.Secure.ANDROID_ID
+                        )
+                        result.success(id)
                     }
 
                     "getInstalledApps" -> appsExecutor.execute {

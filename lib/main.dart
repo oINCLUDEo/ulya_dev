@@ -3,8 +3,10 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'config/app_config.dart';
 import 'pages/home_page.dart';
@@ -20,6 +22,7 @@ import 'services/me_service.dart';
 import 'services/network_monitor.dart';
 import 'services/notification_service.dart';
 import 'services/ping_state.dart';
+import 'services/remote_config_service.dart';
 import 'widgets/notification_banner.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,12 +77,21 @@ void main() async {
   // SDK is never initialised and the app boots exactly as before.
   if (AppConfig.sentryDsn.isNotEmpty) {
     await SentryFlutter.init(
-      (options) {
+      (options) async {
         options.dsn = AppConfig.sentryDsn;
         // VPN app: never attach user IPs or PII to crash events.
         options.sendDefaultPii = false;
         options.tracesSampleRate = 0.1;
         options.attachScreenshot = false;
+        // Release Health (crash-free sessions/users) is broken down by
+        // `release` — tag it with the actual installed build so a bad
+        // version shows up distinctly from previous ones.
+        try {
+          final info = await PackageInfo.fromPlatform();
+          options.release = 'ulya-vpn@${info.version}+${info.buildNumber}';
+        } catch (_) {
+          // Release tagging is a nice-to-have — never block Sentry init on it.
+        }
       },
       appRunner: _boot,
     );
@@ -92,6 +104,62 @@ void main() async {
 void _reportCrash(Object error, StackTrace? stack) {
   if (AppConfig.sentryDsn.isEmpty) return;
   unawaited(Sentry.captureException(error, stackTrace: stack));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AppLogger → Sentry breadcrumb bridge
+//
+// Forwards every info/warning/error entry (debug is too chatty — VPN traffic
+// ticks alone would be one per second) into Sentry as a breadcrumb. When a
+// crash or a captured error happens, the report then carries the preceding
+// Payment/HomePage/etc. trail for free — e.g. "buyTariff: start … HTTP 500"
+// right before the exception that triggered the report.
+// ─────────────────────────────────────────────────────────────────────────────
+
+int _sentryBridgeLastIndex = 0;
+
+void _bridgeLogsToSentry() {
+  final logs = appLogger.logsNotifier.value;
+  if (_sentryBridgeLastIndex > logs.length) _sentryBridgeLastIndex = 0; // cleared
+  for (var i = _sentryBridgeLastIndex; i < logs.length; i++) {
+    final e = logs[i];
+    if (e.level == AppLogLevel.debug) continue;
+    unawaited(Sentry.addBreadcrumb(Breadcrumb(
+      message: e.message,
+      category: e.source,
+      level: _sentryLevelFor(e.level),
+      timestamp: e.timestamp.toUtc(),
+    )));
+  }
+  _sentryBridgeLastIndex = logs.length;
+}
+
+SentryLevel _sentryLevelFor(AppLogLevel level) {
+  switch (level) {
+    case AppLogLevel.debug:   return SentryLevel.debug;
+    case AppLogLevel.info:    return SentryLevel.info;
+    case AppLogLevel.warning: return SentryLevel.warning;
+    case AppLogLevel.error:   return SentryLevel.error;
+  }
+}
+
+const String _kMaintenanceNotifId = 'remote_maintenance';
+
+/// Mirrors the remote maintenance flag into the existing in-app notification
+/// pipeline — reuses the persistent-banner UI instead of a bespoke screen.
+void _syncMaintenanceBanner() {
+  final cfg = RemoteConfigService.notifier.value;
+  if (cfg != null && cfg.maintenanceEnabled) {
+    notificationService.post(InAppNotification(
+      id: _kMaintenanceNotifId,
+      title: 'Технические работы',
+      body: cfg.maintenanceMessage,
+      type: InAppNotifType.persistent,
+      severity: InAppNotifSeverity.warning,
+    ));
+  } else {
+    notificationService.dismiss(_kMaintenanceNotifId);
+  }
 }
 
 Future<void> _boot() async {
@@ -112,6 +180,13 @@ Future<void> _boot() async {
       appLogger.info('App', 'notifications: ok');
     } catch (e, st) {
       appLogger.error('App', 'notifications init failed: $e\n$st');
+    }
+
+    // Wire the log→breadcrumb bridge before anything else logs, so no early
+    // boot events (auth, cache loads) are missed. No-op cost when Sentry was
+    // never initialised (empty DSN).
+    if (AppConfig.sentryDsn.isNotEmpty) {
+      appLogger.logsNotifier.addListener(_bridgeLogsToSentry);
     }
 
     try {
@@ -145,6 +220,12 @@ Future<void> _boot() async {
     } catch (e, st) {
       appLogger.error('App', 'MeService.loadFromCache failed: $e\n$st');
     }
+
+    // Remote config (min version / force update / maintenance / default
+    // blocked-apps list) — cache read is instant, the network refresh runs in
+    // the background so it never delays first paint.
+    RemoteConfigService.notifier.addListener(_syncMaintenanceBanner);
+    unawaited(RemoteConfigService.load());
 
     // Watch for Wi-Fi ↔ LTE switches so pages can re-probe immediately.
     NetworkMonitor.start();
@@ -188,9 +269,11 @@ class UlyaVpnApp extends StatelessWidget {
       title: 'Ulya VPN',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
-      home: showOnboarding
-          ? const OnboardingPage()
-          : const InAppNotificationOverlay(child: MainShell()),
+      home: _ForceUpdateGate(
+        child: showOnboarding
+            ? const OnboardingPage()
+            : const InAppNotificationOverlay(child: MainShell()),
+      ),
     );
   }
 
@@ -590,6 +673,114 @@ class _NavItemState extends State<_NavItem>
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Forced-update gate — blocks the whole app when the admin has raised
+// RemoteConfig.minSupportedBuild above the running build number and enabled
+// force_update. Fails open (shows [child]) whenever config isn't loaded yet,
+// the fetch failed, or PackageInfo can't be read — a broken remote config
+// must never lock users out of a VPN app.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ForceUpdateGate extends StatefulWidget {
+  final Widget child;
+  const _ForceUpdateGate({required this.child});
+
+  @override
+  State<_ForceUpdateGate> createState() => _ForceUpdateGateState();
+}
+
+class _ForceUpdateGateState extends State<_ForceUpdateGate> {
+  bool _blocked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    RemoteConfigService.notifier.addListener(_recheck);
+    _recheck();
+  }
+
+  @override
+  void dispose() {
+    RemoteConfigService.notifier.removeListener(_recheck);
+    super.dispose();
+  }
+
+  Future<void> _recheck() async {
+    final blocked = await RemoteConfigService.needsForceUpdate();
+    if (mounted && blocked != _blocked) setState(() => _blocked = blocked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_blocked) return widget.child;
+    return _ForceUpdateScreen(
+      updateUrl: RemoteConfigService.notifier.value?.updateUrl,
+    );
+  }
+}
+
+class _ForceUpdateScreen extends StatelessWidget {
+  final String? updateUrl;
+  const _ForceUpdateScreen({this.updateUrl});
+
+  Future<void> _openStore() async {
+    final url = updateUrl;
+    if (url == null || url.isEmpty) return;
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: DS.surface0,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72, height: 72,
+                  decoration: BoxDecoration(
+                    color: DS.violet.withValues(alpha: 0.14),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.system_update_rounded,
+                      color: DS.violet, size: 34),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Нужно обновление',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: DS.textPrimary, fontSize: 20, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Вышла новая версия приложения. Обновите его, чтобы продолжить пользоваться VPN.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: DS.textSecondary, fontSize: 14, height: 1.5),
+                ),
+                const SizedBox(height: 28),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 52),
+                    backgroundColor: DS.violet,
+                  ),
+                  onPressed: (updateUrl == null || updateUrl!.isEmpty) ? null : _openStore,
+                  child: const Text('Обновить'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

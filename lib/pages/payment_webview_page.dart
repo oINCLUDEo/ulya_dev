@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../main.dart' show DS;
+import '../services/app_logger.dart';
 
 /// In-app payment window: loads the checkout [url] in an embedded WebView with
 /// our own top bar (title + close) instead of a Chrome Custom Tab, so the user
@@ -27,10 +28,24 @@ class _PaymentWebViewPageState extends State<PaymentWebViewPage> {
   late final WebViewController _controller;
   int _progress = 0;
   bool _failed = false;
+  String? _lastHost;
+
+  /// Host only — payment gateway URLs commonly carry order/session tokens in
+  /// the query string, which must never end up in logs a user can share via
+  /// a support ticket.
+  static String _hostOf(String url) {
+    try {
+      return Uri.parse(url).host;
+    } catch (_) {
+      return '(unparseable url)';
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    appLogger.info('Payment', 'checkout webview: opened host=${_hostOf(widget.url)}');
+    _lastHost = _hostOf(widget.url);
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(DS.surface0)
@@ -43,16 +58,24 @@ class _PaymentWebViewPageState extends State<PaymentWebViewPage> {
         // can use the "open externally" action if a provider needs them.
         onNavigationRequest: (req) {
           final u = req.url;
-          if (u.startsWith('http://') ||
+          final isWeb = u.startsWith('http://') ||
               u.startsWith('https://') ||
-              u.startsWith('about:')) {
-            return NavigationDecision.navigate;
+              u.startsWith('about:');
+          // Log redirect chain by host only (checkout → 3-D Secure → return
+          // url) — useful to see where a payment got stuck.
+          final host = _hostOf(u);
+          if (host != _lastHost) {
+            _lastHost = host;
+            appLogger.info('Payment', 'checkout webview: navigated host=$host'
+                '${isWeb ? '' : ' (blocked, non-http scheme)'}');
           }
-          return NavigationDecision.prevent;
+          return isWeb ? NavigationDecision.navigate : NavigationDecision.prevent;
         },
         onWebResourceError: (err) {
           // Only the main-frame failure matters; sub-resource errors are noise.
           if (err.isForMainFrame ?? true) {
+            appLogger.error('Payment',
+                'checkout webview: load error code=${err.errorCode} desc=${err.description}');
             if (mounted) setState(() => _failed = true);
           }
         },
@@ -60,11 +83,21 @@ class _PaymentWebViewPageState extends State<PaymentWebViewPage> {
       ..loadRequest(Uri.parse(widget.url));
   }
 
+  @override
+  void dispose() {
+    appLogger.info('Payment',
+        'checkout webview: closed progress=$_progress% failed=$_failed');
+    super.dispose();
+  }
+
   Future<void> _openExternally() async {
+    appLogger.info('Payment', 'checkout webview: opening externally');
     try {
       await launchUrl(Uri.parse(widget.url),
           mode: LaunchMode.externalApplication);
-    } catch (_) {}
+    } catch (e) {
+      appLogger.error('Payment', 'checkout webview: open externally failed: $e');
+    }
     if (mounted) Navigator.of(context).maybePop();
   }
 

@@ -4,12 +4,17 @@ import 'dart:math' show Random, cos, sin, pi;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../main.dart' show DS;
 import '../models/me_response.dart';
+import '../services/app_logger.dart';
 import '../services/auth_state.dart';
 import '../services/me_service.dart';
+import '../services/referral_service.dart';
 import '../services/subscription_api_service.dart';
+import '../utils/referral_card.dart';
+import '../utils/tariff_pricing.dart' as pricing;
 import '../widgets/skeleton.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
@@ -20,30 +25,16 @@ part 'premium_page_status.dart';
 part 'premium_page_overlays.dart';
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
+// Thin wrappers around lib/utils/tariff_pricing.dart — kept so none of the
+// call sites below (or in the part files) had to change. The real,
+// unit-tested logic lives in that module.
 
 /// Parses a period label into a month count.
 /// Examples: "3 месяца" → 3, "1 год" → 12, "6 мес" → 6
-int? _parseMonths(String label) {
-  final lower = label.toLowerCase();
-  final mMonth = RegExp(r'(\d+)\s*мес').firstMatch(lower);
-  if (mMonth != null) return int.tryParse(mMonth.group(1)!);
-  final mYear = RegExp(r'(\d+)\s*(год|лет)').firstMatch(lower);
-  if (mYear != null) {
-    final y = int.tryParse(mYear.group(1)!);
-    if (y != null) return y * 12;
-  }
-  return null;
-}
+int? _parseMonths(String label) => pricing.parsePeriodMonths(label);
 
 /// Pluralises "день / дня / дней".
-String _pluralDays(int n) {
-  final abs = n.abs() % 100;
-  final last = abs % 10;
-  if (abs >= 11 && abs <= 19) return 'дней';
-  if (last == 1) return 'день';
-  if (last >= 2 && last <= 4) return 'дня';
-  return 'дней';
-}
+String _pluralDays(int n) => pricing.pluralDays(n);
 
 // ── Premium-page-specific constants (colours with no DS equivalent) ──────────
 // DS tokens used where possible; these are kept because they define the
@@ -424,14 +415,8 @@ class _PremiumPageState extends State<PremiumPage>
     }
   }
 
-  String? _bestPeriodId(SubscriptionOptions opts) {
-    PeriodOption? best;
-    for (final p in opts.periods) {
-      if (p.discountPercent > 0 &&
-          (best == null || p.discountPercent > best.discountPercent)) { best = p; }
-    }
-    return best?.id;
-  }
+  String? _bestPeriodId(SubscriptionOptions opts) =>
+      pricing.bestDiscountPeriodId(opts);
 
   // ── Manage price calculations ───────────────────────────────────────────────
 
@@ -488,6 +473,7 @@ class _PremiumPageState extends State<PremiumPage>
 
   void _startPaymentPolling() {
     if (!mounted) return;
+    appLogger.info('Payment', 'poll: started (max $_maxPollAttempts attempts)');
     _pollTimer?.cancel();
     setState(() { _pollingForPayment = true; _pollAttempt = 0; });
     _pollTimer = Timer.periodic(_pollInterval, _onPollTick);
@@ -509,12 +495,17 @@ class _PremiumPageState extends State<PremiumPage>
             exp.isAfter(_payBaselineExpiry!));
     if (confirmed || _pollAttempt >= _maxPollAttempts) {
       timer.cancel(); _pollTimer = null;
+      appLogger.info('Payment',
+          'poll: finished attempt=$_pollAttempt confirmed=$confirmed '
+          'expiry=${exp?.toIso8601String()}');
       if (!mounted) return;
       setState(() => _pollingForPayment = false);
       if (confirmed) {
         await _loadOptions();
         if (mounted) _snack('Подписка активирована!', ok: true);
       } else {
+        appLogger.warning('Payment',
+            'poll: gave up after $_maxPollAttempts attempts without confirmation');
         if (mounted) _snack('Платёж ещё не подтверждён. Проверьте статус позже.', ok: true);
       }
     }
@@ -563,7 +554,10 @@ class _PremiumPageState extends State<PremiumPage>
         } else {
           _snack(r.message ?? 'Ошибка при покупке');
         }
-      } catch (e) { if (mounted) _snack('Ошибка: $e'); }
+      } catch (e) {
+      appLogger.error('Payment', 'purchase action failed: $e');
+      if (mounted) _snack('Ошибка: $e');
+    }
       if (mounted) setState(() => _purchasing = false);
       return;
     }
@@ -599,7 +593,10 @@ class _PremiumPageState extends State<PremiumPage>
       } else if (r.requiresPayment && r.paymentUrl != null) {
         await _openPaymentUrl(r.paymentUrl!);
       } else { _snack(r.message ?? 'Ошибка при покупке'); }
-    } catch (e) { if (mounted) _snack('Ошибка: $e'); }
+    } catch (e) {
+      appLogger.error('Payment', 'purchase action failed: $e');
+      if (mounted) _snack('Ошибка: $e');
+    }
     if (mounted) setState(() => _purchasing = false);
   }
 
@@ -623,7 +620,10 @@ class _PremiumPageState extends State<PremiumPage>
       } else if (r.requiresPayment && r.paymentUrl != null) {
         await _openPaymentUrl(r.paymentUrl!);
       } else { _snack(r.message ?? 'Ошибка при продлении'); }
-    } catch (e) { if (mounted) _snack('Ошибка: $e'); }
+    } catch (e) {
+      appLogger.error('Payment', 'purchase action failed: $e');
+      if (mounted) _snack('Ошибка: $e');
+    }
     if (mounted) setState(() => _purchasing = false);
   }
 
@@ -644,7 +644,10 @@ class _PremiumPageState extends State<PremiumPage>
       } else if (r.requiresPayment && r.paymentUrl != null) {
         await _openPaymentUrl(r.paymentUrl!);
       } else { _snack(r.message ?? 'Ошибка при улучшении'); }
-    } catch (e) { if (mounted) _snack('Ошибка: $e'); }
+    } catch (e) {
+      appLogger.error('Payment', 'purchase action failed: $e');
+      if (mounted) _snack('Ошибка: $e');
+    }
     if (mounted) setState(() => _purchasing = false);
   }
 
@@ -684,7 +687,10 @@ class _PremiumPageState extends State<PremiumPage>
       } else {
         _snack(r.message ?? 'Ошибка при смене тарифа');
       }
-    } catch (e) { if (mounted) _snack('Ошибка: $e'); }
+    } catch (e) {
+      appLogger.error('Payment', 'purchase action failed: $e');
+      if (mounted) _snack('Ошибка: $e');
+    }
     if (mounted) setState(() => _purchasing = false);
   }
 
@@ -792,7 +798,10 @@ class _PremiumPageState extends State<PremiumPage>
       } else {
         _snack(r.message ?? 'Ошибка при продлении');
       }
-    } catch (e) { if (mounted) _snack('Ошибка: $e'); }
+    } catch (e) {
+      appLogger.error('Payment', 'purchase action failed: $e');
+      if (mounted) _snack('Ошибка: $e');
+    }
     if (mounted) setState(() => _purchasing = false);
   }
 
@@ -840,35 +849,16 @@ class _PremiumPageState extends State<PremiumPage>
   }
 
   /// Human-readable label for a period length in days.
-  static String _daysLabel(int days) {
-    if (days <= 31)  return '1 мес';
-    if (days <= 62)  return '2 мес';
-    if (days <= 93)  return '3 мес';
-    if (days <= 124) return '4 мес';
-    if (days <= 186) return '6 мес';
-    if (days <= 366) return '1 год';
-    return '${(days / 30).round()} мес';
-  }
+  static String _daysLabel(int days) => pricing.periodDaysLabel(days);
 
   /// Find the period in [tariff] whose days match [days].
   /// Returns cheapest period as fallback.
-  static TariffPeriod? _periodForDays(TariffInfo tariff, int days) {
-    if (tariff.periods.isEmpty) return null;
-    try {
-      return tariff.periods.firstWhere((p) => p.days == days);
-    } catch (_) {
-      return tariff.cheapestPeriod ?? tariff.periods.first;
-    }
-  }
+  static TariffPeriod? _periodForDays(TariffInfo tariff, int days) =>
+      pricing.periodForDays(tariff, days);
 
   /// All unique period-day values across a list of tariffs, sorted ascending.
-  static List<int> _uniqueDays(List<TariffInfo> tariffs) {
-    return tariffs
-        .expand((t) => t.periods.map((p) => p.days))
-        .toSet()
-        .toList()
-      ..sort();
-  }
+  static List<int> _uniqueDays(List<TariffInfo> tariffs) =>
+      pricing.uniqueDays(tariffs);
 
   /// Build the new-user radio-card + period-strip tariff section.
   Widget _buildNewUserTariffSection(

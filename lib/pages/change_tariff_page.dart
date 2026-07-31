@@ -7,6 +7,7 @@ import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../main.dart' show DS;
 import '../models/me_response.dart';
+import '../services/app_logger.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
 import 'payment_webview_page.dart';
@@ -302,6 +303,8 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     if (confirmed || _pollAttempt >= _maxPollAttempts) {
       timer.cancel();
       _pollTimer = null;
+      appLogger.info('Payment',
+          'change-tariff poll: finished attempt=$_pollAttempt confirmed=$confirmed');
       if (!mounted) return;
       setState(() => _pollingForPayment = false);
       if (confirmed) {
@@ -309,6 +312,8 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
         await Future.delayed(const Duration(milliseconds: 900));
         if (mounted) Navigator.of(context).pop();
       } else {
+        appLogger.warning('Payment',
+            'change-tariff poll: gave up after $_maxPollAttempts attempts without confirmation');
         _snack('Платёж ещё не подтверждён. Проверьте статус позже.',
             ok: true);
       }
@@ -407,6 +412,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
         _snack(r.message ?? 'Ошибка при оформлении тарифа');
       }
     } catch (e) {
+      appLogger.error('Payment', 'change tariff: exception: $e');
       if (mounted) _snack('Ошибка: $e');
     }
     if (mounted) setState(() => _purchasing = false);
