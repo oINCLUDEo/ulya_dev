@@ -220,10 +220,14 @@ class AuthService {
     required String email,
     required String password,
     String? firstName,
+    String? referralCode,
   }) async {
     try {
       final body = <String, dynamic>{'email': email, 'password': password};
       if (firstName != null && firstName.isNotEmpty) body['first_name'] = firstName;
+      if (referralCode != null && referralCode.isNotEmpty) {
+        body['referral_code'] = referralCode;
+      }
 
       final response = await http
           .post(
@@ -356,17 +360,23 @@ class AuthService {
   /// the `mobile=1` query parameter (or equivalent) on the authorize
   /// endpoint and redirecting to `ulyavpn://oauth/done?token=<short_jwt>`
   /// after the Google round-trip. See [AppConfig.oauthCallback].
-  static Future<String?> signInWithGoogle() async {
+  static Future<String?> signInWithGoogle({String? referralCode}) async {
     try {
       // ── Step 1: ask the cabinet for the Google authorize URL ───────────
       // mobile=1 tells the backend to switch to the deeplink-return mode
       // instead of rendering a web success page. Also pass the expected
-      // redirect target so the backend can pin its 302 response.
+      // redirect target so the backend can pin its 302 response. The
+      // referral code (if any) rides along in the OAuth state so the
+      // mobile-callback can attribute it once the round-trip completes.
+      var authorizeUrlStr =
+          '${AppConfig.backendBaseUrl}/cabinet/auth/oauth/google/authorize'
+          '?mobile=1&redirect_uri=${Uri.encodeQueryComponent(AppConfig.oauthCallback)}';
+      if (referralCode != null && referralCode.isNotEmpty) {
+        authorizeUrlStr += '&referral_code=${Uri.encodeQueryComponent(referralCode)}';
+      }
       final authorizeResp = await http
           .get(
-            Uri.parse(
-                '${AppConfig.backendBaseUrl}/cabinet/auth/oauth/google/authorize'
-                '?mobile=1&redirect_uri=${Uri.encodeQueryComponent(AppConfig.oauthCallback)}'),
+            Uri.parse(authorizeUrlStr),
             headers: const {'Accept': 'application/json'},
           )
           .timeout(const Duration(seconds: 12));
@@ -509,7 +519,7 @@ class AuthService {
   /// Returns `null` on success, [telegramCancelled] if the user aborted,
   /// [telegramFallback] if the caller should try the deep-link flow, or a
   /// localised error string for a hard failure.
-  static Future<String?> signInWithTelegram() async {
+  static Future<String?> signInWithTelegram({String? referralCode}) async {
     final String? idToken;
     try {
       idToken = await _telegramChannel.invokeMethod<String>('login');
@@ -532,6 +542,10 @@ class AuthService {
     }
 
     try {
+      final body = <String, dynamic>{'id_token': idToken};
+      if (referralCode != null && referralCode.isNotEmpty) {
+        body['referral_code'] = referralCode;
+      }
       final resp = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/cabinet/auth/telegram/oidc'),
@@ -539,7 +553,7 @@ class AuthService {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
             },
-            body: jsonEncode({'id_token': idToken}),
+            body: jsonEncode(body),
           )
           .timeout(const Duration(seconds: 20));
 

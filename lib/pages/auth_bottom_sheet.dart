@@ -47,6 +47,14 @@ class _AuthSheetState extends State<_AuthSheet>
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
 
+  // ── Referral code (optional, shared across all sign-up methods) ────────────
+  bool _showReferralField = false;
+  final TextEditingController _referralCtrl = TextEditingController();
+  String? get _referralCode {
+    final v = _referralCtrl.text.trim();
+    return v.isEmpty ? null : v;
+  }
+
   late final AnimationController _successCtrl;
   late final Animation<double> _scaleAnim;
   late final Animation<double> _fadeAnim;
@@ -69,6 +77,7 @@ class _AuthSheetState extends State<_AuthSheet>
     _successCtrl.dispose();
     _emailCtrl.dispose();
     _passCtrl.dispose();
+    _referralCtrl.dispose();
     super.dispose();
   }
 
@@ -82,7 +91,7 @@ class _AuthSheetState extends State<_AuthSheet>
     });
 
     // Primary: full Telegram OAuth via oauth.telegram.org (same as the cabinet).
-    final res = await AuthService.signInWithTelegram();
+    final res = await AuthService.signInWithTelegram(referralCode: _referralCode);
     if (!mounted) return;
     if (res == null) {
       _showSuccess();
@@ -126,7 +135,7 @@ class _AuthSheetState extends State<_AuthSheet>
     // Cabinet OAuth is synchronous from our point of view: the in-app
     // browser blocks until the redirect arrives, then the call returns.
     // No long-poll loop needed.
-    final error = await AuthService.signInWithGoogle();
+    final error = await AuthService.signInWithGoogle(referralCode: _referralCode);
     if (!mounted) return;
     if (error != null) {
       setState(() {
@@ -214,7 +223,8 @@ class _AuthSheetState extends State<_AuthSheet>
     });
 
     if (_registerMode) {
-      final r = await AuthService.registerWithEmail(email: email, password: pass);
+      final r = await AuthService.registerWithEmail(
+          email: email, password: pass, referralCode: _referralCode);
       if (!mounted) return;
       if (!r.success) {
         setState(() { _emailBusy = false; _errorMessage = r.error; });
@@ -366,7 +376,48 @@ class _AuthSheetState extends State<_AuthSheet>
               child: const Text('Отмена',
                   style: TextStyle(color: DS.textMuted, fontSize: 13))),
         ],
+
+        if (_step == _Step.idle || _step == _Step.error) ...[
+          const SizedBox(height: 6),
+          _buildReferralExpander(),
+        ],
       ]),
+    );
+  }
+
+  /// Collapsed by default so it doesn't clutter the sheet for returning
+  /// users — a link reveals a single optional field, shared across all three
+  /// sign-in methods (Telegram, Google, email) since none of them have a
+  /// separate "you're new here" step to hang it off of individually.
+  Widget _buildReferralExpander() {
+    if (!_showReferralField) {
+      return TextButton(
+        onPressed: () => setState(() => _showReferralField = true),
+        child: const Text('Есть код приглашения?',
+            style: TextStyle(color: DS.textMuted, fontSize: 13)),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: TextField(
+        controller: _referralCtrl,
+        autocorrect: false,
+        textCapitalization: TextCapitalization.characters,
+        style: const TextStyle(color: DS.textPrimary, fontSize: 15),
+        decoration: InputDecoration(
+          hintText: 'Код приглашения',
+          prefixIcon: const Icon(PhosphorIconsRegular.gift,
+              size: 18, color: DS.textMuted),
+          suffixIcon: IconButton(
+            onPressed: () => setState(() {
+              _referralCtrl.clear();
+              _showReferralField = false;
+            }),
+            icon: const Icon(PhosphorIconsRegular.x,
+                size: 16, color: DS.textMuted),
+          ),
+        ),
+      ),
     );
   }
 
