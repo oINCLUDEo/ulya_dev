@@ -41,9 +41,8 @@ class AppConfig {
 
   /// Sentry DSN for crash reporting. Empty string disables Sentry entirely
   /// (no SDK init, zero network calls) — safe default for local dev builds.
-  /// Create a Flutter project at sentry.io (or self-hosted) and paste the
-  /// DSN here before building a release.
-  static const String sentryDsn = '';
+  static const String sentryDsn =
+      'https://0bfa4f291246b351c94ef04cb8ab88b6@o4511840135217152.ingest.de.sentry.io/4511840512770128';
 
   /// Package names excluded from VPN tunnel by default (on first launch).
   static const List<String> defaultBlockedApps = [
