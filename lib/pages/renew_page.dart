@@ -349,12 +349,14 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
           periodId: legacyPeriod.id,
           trafficValue: params.traffic,
           devices: params.devices,
+          useBalance: _useBalance,
         );
       } else {
         final tariff = _currentTariff!;
         r = await SubscriptionApiService.buyTariff(
           tariffId: tariff.id,
           periodDays: period.days,
+          useBalance: _useBalance,
         );
       }
 

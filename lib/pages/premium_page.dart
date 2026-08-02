@@ -1,5 +1,5 @@
 ﻿import 'dart:async';
-import 'dart:math' show Random, cos, sin, pi;
+import 'dart:math' show Random, cos, min, sin, pi;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show HapticFeedback;
@@ -120,9 +120,10 @@ class _PremiumPageState extends State<PremiumPage>
   bool              _showChangeTariff = false;
   // Global period selector (days): shared by new-user + change-tariff radio card list
   int?              _selectedPeriodDays;
-  // Prorated price preview for change-tariff flow (null = not yet loaded)
-  UpgradeCalcResult? _changeTariffCalcResult;
-  bool               _changeTariffCalcLoading = false;
+  // Real switch-cost preview (active/trial subs only — no period to pick,
+  // backend keeps end_date and prorates the difference for remaining days).
+  TariffSwitchPreview? _switchPreview;
+  bool                 _switchPreviewLoading = false;
 
   // ── New-user legacy buy flow ───────────────────────────────────────────────
   String? _selectedPeriodId;
@@ -641,7 +642,10 @@ class _PremiumPageState extends State<PremiumPage>
     try {
       final p = _resolveParams(periodId);
       final r = await SubscriptionApiService.buySubscription(
-          periodId: periodId, trafficValue: p.traffic, devices: p.devices);
+          periodId: periodId,
+          trafficValue: p.traffic,
+          devices: p.devices,
+          useBalance: _useBalance);
       if (!mounted) return;
       if (r == null)                         { _snack('Ошибка соединения с сервером'); }
       else if (r.isSuccess) {
@@ -691,21 +695,34 @@ class _PremiumPageState extends State<PremiumPage>
     final tariff = tariffs.firstWhere(
         (t) => t.id == (_changeTariffId ?? tariffs.first.id),
         orElse: () => tariffs.first);
-    if (tariff.periods.isEmpty) return;
-    // Prefer period by days (radio-card flow), fall back to stored id
-    final period = (_selectedPeriodDays != null
-            ? _periodForDays(tariff, _selectedPeriodDays!)
-            : null) ??
-        (_changeTariffPeriodId != null
-            ? tariff.periods.firstWhere(
-                (p) => p.id == _changeTariffPeriodId,
-                orElse: () => tariff.periods.first)
-            : tariff.periods.first);
 
     setState(() => _purchasing = true);
     try {
-      final r = await SubscriptionApiService.changeTariff(
-          tariffId: tariff.id, periodDays: period.days);
+      BuyResult? r;
+      if (_hasActiveTariffSub) {
+        // Active/trial: real proration switch, no period involved.
+        final devices = _isFamilyTariff(tariff) ? _familyDeviceCount : null;
+        r = await SubscriptionApiService.switchTariff(
+            tariffId: tariff.id, devices: devices, useBalance: _useBalance);
+      } else {
+        // Expired: effectively a fresh tariff purchase, period-based.
+        if (tariff.periods.isEmpty) {
+          if (mounted) setState(() => _purchasing = false);
+          return;
+        }
+        final period = (_selectedPeriodDays != null
+                ? _periodForDays(tariff, _selectedPeriodDays!)
+                : null) ??
+            (_changeTariffPeriodId != null
+                ? tariff.periods.firstWhere(
+                    (p) => p.id == _changeTariffPeriodId,
+                    orElse: () => tariff.periods.first)
+                : tariff.periods.first);
+        r = await SubscriptionApiService.buyTariff(
+            tariffId: tariff.id,
+            periodDays: period.days,
+            useBalance: _useBalance);
+      }
       if (!mounted) return;
       if (r == null) {
         _snack('Ошибка соединения с сервером');
@@ -726,65 +743,6 @@ class _PremiumPageState extends State<PremiumPage>
       if (mounted) _snack('Ошибка: $e');
     }
     if (mounted) setState(() => _purchasing = false);
-  }
-
-  /// Fetches the prorated price for switching to the currently selected tariff.
-  /// Sets _changeTariffCalcResult to 0 immediately for downgrades (no network call).
-  Future<void> _loadChangeTariffCalc() async {
-    final tariffs = _tariffs;
-    if (tariffs == null || tariffs.isEmpty) return;
-
-    final tariff = tariffs.firstWhere(
-      (t) => t.id == (_changeTariffId ?? tariffs.first.id),
-      orElse: () => tariffs.first,
-    );
-    if (tariff.periods.isEmpty) return;
-
-    final period = (_selectedPeriodDays != null
-            ? _periodForDays(tariff, _selectedPeriodDays!)
-            : null) ??
-        tariff.cheapestPeriod ??
-        tariff.periods.first;
-
-    // Determine if this is a downgrade by comparing tier levels.
-    final subName =
-        (meNotifier.value?.subscription?.planName ?? '').toLowerCase().trim();
-    TariffInfo? curTariff;
-    if (subName.isNotEmpty) {
-      try {
-        curTariff =
-            tariffs.firstWhere((t) => t.name.toLowerCase().trim() == subName);
-      } catch (_) {}
-    }
-
-    // Downgrade is always free — skip the network round-trip.
-    if (curTariff != null && tariff.tierLevel <= curTariff.tierLevel) {
-      if (mounted) {
-        setState(() => _changeTariffCalcResult =
-            const UpgradeCalcResult(amountKopeks: 0, amountRub: 0.0));
-      }
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _changeTariffCalcLoading = true;
-      _changeTariffCalcResult  = null;
-    });
-    try {
-      final r = await SubscriptionApiService.calcChangeTariffPrice(
-        tariffId:  tariff.id,
-        periodDays: period.days,
-      );
-      if (mounted) {
-        setState(() {
-          _changeTariffCalcResult  = r;
-          _changeTariffCalcLoading = false;
-        });
-      }
-    } catch (_) {
-      if (mounted) setState(() => _changeTariffCalcLoading = false);
-    }
   }
 
   /// Renewal of the current active tariff via tariff API (tariff mode).
@@ -816,7 +774,9 @@ class _PremiumPageState extends State<PremiumPage>
     setState(() => _purchasing = true);
     try {
       final r = await SubscriptionApiService.buyTariff(
-          tariffId: curTariff.id, periodDays: period.days);
+          tariffId: curTariff.id,
+          periodDays: period.days,
+          useBalance: _useBalance);
       if (!mounted) return;
       if (r == null) {
         _snack('Ошибка соединения с сервером');
@@ -880,6 +840,41 @@ class _PremiumPageState extends State<PremiumPage>
   static bool _isFamilyTariff(TariffInfo t) {
     final n = t.name.toLowerCase();
     return n.contains('семей') || n.contains('family');
+  }
+
+  /// Real /tariff/switch only applies to active/trial subs — it keeps the
+  /// existing end_date and prorates the difference, with no period to pick.
+  /// Expired accounts effectively buy a fresh tariff instead (period-based,
+  /// same as the new-user flow).
+  bool get _hasActiveTariffSub {
+    final sub = meNotifier.value?.subscription;
+    return sub != null && (sub.isActive || sub.isTrial);
+  }
+
+  /// Fetches the real prorated switch cost via /tariff/switch/preview.
+  /// Only meaningful when [_hasActiveTariffSub].
+  Future<void> _loadSwitchPreview() async {
+    final tariffs = _tariffs;
+    if (tariffs == null || tariffs.isEmpty) return;
+    final tariff = tariffs.firstWhere(
+      (t) => t.id == (_changeTariffId ?? tariffs.first.id),
+      orElse: () => tariffs.first,
+    );
+    if (!mounted) return;
+    setState(() {
+      _switchPreviewLoading = true;
+      _switchPreview = null;
+    });
+    final devices = _isFamilyTariff(tariff) ? _familyDeviceCount : null;
+    final r = await SubscriptionApiService.previewTariffSwitch(
+      tariffId: tariff.id,
+      devices: devices,
+    );
+    if (!mounted) return;
+    setState(() {
+      _switchPreview = r;
+      _switchPreviewLoading = false;
+    });
   }
 
   /// Human-readable label for a period length in days.
@@ -1090,9 +1085,9 @@ class _PremiumPageState extends State<PremiumPage>
               onTap: () {
                 final t = available[i];
                 setState(() {
-                  _changeTariffId         = t.id;
-                  _changeTariffPeriodId   = t.cheapestPeriod?.id;
-                  _changeTariffCalcResult = null;
+                  _changeTariffId       = t.id;
+                  _changeTariffPeriodId = t.cheapestPeriod?.id;
+                  _switchPreview        = null;
                   if (_isFamilyTariff(t)) {
                     _familyDeviceCount = t.deviceLimit;
                   }
@@ -1127,26 +1122,208 @@ class _PremiumPageState extends State<PremiumPage>
           label: buttonLabel,
           onTap: () {
             setState(() {
-              _checkoutMode           = true;
-              _changeTariffCalcResult = null;
+              _checkoutMode  = true;
+              _switchPreview = null;
               final p = selTariff.cheapestPeriod;
               if (p != null) {
                 _changeTariffPeriodId  = p.id;
                 _selectedPeriodDays    = p.days;
               }
             });
-            _loadChangeTariffCalc();
+            if (_hasActiveTariffSub) _loadSwitchPreview();
           },
         ),
 
         const SizedBox(height: 6),
         Center(
           child: Text(
-            'Выбор периода — на следующем шаге',
+            _hasActiveTariffSub
+                ? 'Стоимость рассчитывается автоматически'
+                : 'Выбор периода — на следующем шаге',
             style: const TextStyle(color: _t2, fontSize: 11),
           ),
         ),
         const SizedBox(height: 4),
+        const _Disclaimer(),
+      ],
+    );
+  }
+
+  /// Step 2 (active/trial sub) — no period picker: the real /tariff/switch
+  /// endpoint keeps the current end_date and charges only the prorated
+  /// difference for the remaining days.
+  Widget _buildChangeTariffCheckoutSwitch(TariffInfo selTariff) {
+    final isFam = _isFamilyTariff(selTariff);
+    final preview = _switchPreview;
+    final loading = _switchPreviewLoading;
+    final balanceRub = _options?.balanceRub ?? 0.0;
+
+    final upgradeCostRub = preview?.upgradeCostRub ?? 0.0;
+    final toPayRub = preview == null
+        ? 0.0
+        : (_useBalance
+            ? (upgradeCostRub - balanceRub).clamp(0.0, double.infinity)
+            : upgradeCostRub);
+    final balanceDeducted = (_useBalance && preview != null)
+        ? min(balanceRub, upgradeCostRub)
+        : 0.0;
+
+    return Column(
+      key: const ValueKey('change-step2-switch'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Tariff summary (with pencil to go back) ────────────────────────
+        const Text(
+          'ТАРИФ',
+          style: TextStyle(
+            color: _t2, fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 2.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: _premSurface,
+            borderRadius: BorderRadius.circular(DS.radiusSm),
+            border: Border.all(color: _b1),
+          ),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+          child: Row(children: [
+            Builder(builder: (context) {
+              final (iconData, accent) = _TariffRadioCardState._tariffStyle(selTariff);
+              return Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(
+                  child: PhosphorIcon(iconData, color: accent, size: 20),
+                ),
+              );
+            }),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  _TariffRadioCard._cleanTariffName(selTariff.name),
+                  style: const TextStyle(
+                    color: _t0, fontSize: 15, fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  isFam
+                      ? '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · $_familyDeviceCount устр.'
+                      : '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · ${selTariff.deviceLimit} устр.',
+                  style: const TextStyle(color: _t1, fontSize: 12),
+                ),
+              ]),
+            ),
+            GestureDetector(
+              onTap: () => setState(() => _checkoutMode = false),
+              child: const Icon(Icons.edit_rounded, color: DS.violet, size: 18),
+            ),
+          ]),
+        ),
+
+        const SizedBox(height: 16),
+
+        // ── Расчёт ───────────────────────────────────────────────────────────
+        const Text(
+          'РАСЧЁТ',
+          style: TextStyle(
+            color: _t2, fontSize: 10,
+            fontWeight: FontWeight.w700, letterSpacing: 2.2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (loading || preview == null)
+          Container(
+            decoration: BoxDecoration(
+              color: _premSurface,
+              borderRadius: BorderRadius.circular(DS.radiusSm),
+              border: Border.all(color: _b1),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: const Center(
+              child: SizedBox(
+                width: 22, height: 22,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2.5, color: DS.violet),
+              ),
+            ),
+          )
+        else
+          Container(
+            decoration: BoxDecoration(
+              color: _premSurface,
+              borderRadius: BorderRadius.circular(DS.radiusSm),
+              border: Border.all(color: _b1),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Column(children: [
+              _BreakdownRow(
+                label: 'Доплата за ${preview.remainingDays} дн.',
+                value: preview.upgradeCostLabel,
+              ),
+              if (preview.hasDeviceBreakdown)
+                _BreakdownRow(
+                  label: '${preview.devicesRequested} устр. (доп.)',
+                  value:
+                      '+${((preview.extraDeviceCostKopeks ?? 0) / 100).round()} ₽',
+                ),
+              if (balanceDeducted > 0) ...[
+                const SizedBox(height: 4),
+                _BreakdownRow(
+                  label: 'Списано с баланса',
+                  value: '−${balanceDeducted.toStringAsFixed(0)} ₽',
+                  accent: DS.emerald,
+                ),
+              ],
+              const SizedBox(height: 10),
+              const Divider(height: 1, color: _b0),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  const Text('К оплате',
+                      style: TextStyle(
+                          color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
+                  Text(
+                    '${toPayRub.toStringAsFixed(0)} ₽',
+                    style: const TextStyle(
+                      color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ]),
+          ),
+
+        if (balanceRub > 0) ...[
+          const SizedBox(height: 12),
+          _BalanceUsageToggle(
+            balanceRub: balanceRub,
+            enabled: _useBalance,
+            onToggle: (v) => setState(() => _useBalance = v),
+          ),
+        ],
+
+        const SizedBox(height: 16),
+
+        _ActionBtn(
+          loading: _purchasing || loading,
+          disabled: preview == null,
+          color: DS.violet,
+          label: preview == null
+              ? 'Загрузка…'
+              : preview.isFree
+                  ? 'Сменить тариф'
+                  : 'Оплатить ${preview.upgradeCostRub.toStringAsFixed(0)} ₽',
+          onTap: _onChangeTariffTapped,
+        ),
+
+        const SizedBox(height: 10),
         const _Disclaimer(),
       ],
     );
@@ -1165,6 +1342,10 @@ class _PremiumPageState extends State<PremiumPage>
         ? available.firstWhere((t) => t.id == selId,
             orElse: () => available.isNotEmpty ? available.first : tariffs.first)
         : (available.isNotEmpty ? available.first : tariffs.first);
+
+    if (_hasActiveTariffSub) {
+      return _buildChangeTariffCheckoutSwitch(selTariff);
+    }
 
     final periods  = selTariff.periods;
     final selPerId = _changeTariffPeriodId ?? (periods.isNotEmpty ? periods.first.id : null);
@@ -1191,8 +1372,6 @@ class _PremiumPageState extends State<PremiumPage>
     final toPayRub       = _useBalance
         ? (periodTotalRub - balanceRub).clamp(0.0, double.infinity)
         : periodTotalRub;
-
-    final calcResult  = _changeTariffCalcResult;
 
     return Column(
       key: const ValueKey('change-step2'),
@@ -1245,10 +1424,7 @@ class _PremiumPageState extends State<PremiumPage>
               ]),
             ),
             GestureDetector(
-              onTap: () => setState(() {
-                _checkoutMode           = false;
-                _changeTariffCalcResult = null;
-              }),
+              onTap: () => setState(() => _checkoutMode = false),
               child: const Icon(Icons.edit_rounded, color: DS.violet, size: 18),
             ),
           ]),
@@ -1279,11 +1455,9 @@ class _PremiumPageState extends State<PremiumPage>
                   child: GestureDetector(
                     onTap: () {
                       setState(() {
-                        _changeTariffPeriodId   = periods[i].id;
-                        _selectedPeriodDays     = periods[i].days;
-                        _changeTariffCalcResult = null;
+                        _changeTariffPeriodId = periods[i].id;
+                        _selectedPeriodDays   = periods[i].days;
                       });
-                      _loadChangeTariffCalc();
                     },
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 180),
@@ -1432,16 +1606,11 @@ class _PremiumPageState extends State<PremiumPage>
                   const Text('К оплате',
                       style: TextStyle(
                           color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
-                  _changeTariffCalcLoading
-                      ? const SizedBox(
-                          width: 18, height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: DS.violet))
-                      : Text(
-                          '${(calcResult?.amountRub ?? toPayRub).toStringAsFixed(0)} ₽',
-                          style: const TextStyle(
-                            color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
-                        ),
+                  Text(
+                    '${toPayRub.toStringAsFixed(0)} ₽',
+                    style: const TextStyle(
+                      color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
+                  ),
                 ],
               ),
             ]),
@@ -1461,10 +1630,10 @@ class _PremiumPageState extends State<PremiumPage>
         const SizedBox(height: 16),
 
         _ActionBtn(
-          loading: _purchasing || _changeTariffCalcLoading,
+          loading: _purchasing,
           disabled: selPer == null,
           color: DS.violet,
-          label: 'Оплатить ${(calcResult?.amountRub ?? toPayRub).toStringAsFixed(0)} ₽',
+          label: 'Оплатить ${toPayRub.toStringAsFixed(0)} ₽',
           onTap: _onChangeTariffTapped,
         ),
 
@@ -1684,9 +1853,9 @@ class _PremiumPageState extends State<PremiumPage>
                           labels: const ['Продлить', 'Сменить тариф'],
                           onChanged: (i) {
                             setState(() {
-                              _showChangeTariff       = i == 1;
-                              _changeTariffCalcResult = null;
-                              _checkoutMode           = false;
+                              _showChangeTariff = i == 1;
+                              _switchPreview    = null;
+                              _checkoutMode     = false;
                             });
                           },
                         ),
@@ -1787,9 +1956,9 @@ class _PremiumPageState extends State<PremiumPage>
                           labels: const ['Продлить', 'Сменить тариф'],
                           onChanged: (i) {
                             setState(() {
-                              _showChangeTariff       = i == 1;
-                              _changeTariffCalcResult = null;
-                              _checkoutMode           = false;
+                              _showChangeTariff = i == 1;
+                              _switchPreview    = null;
+                              _checkoutMode     = false;
                             });
                           },
                         ),

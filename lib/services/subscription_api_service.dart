@@ -673,11 +673,15 @@ class SubscriptionApiService {
     int? trafficValue,
     int? devices,
     List<String>? servers,
+    bool useBalance = true,
   }) async {
     appLogger.info('Payment',
-        'buySubscription: start periodId=$periodId traffic=$trafficValue devices=$devices');
+        'buySubscription: start periodId=$periodId traffic=$trafficValue devices=$devices useBalance=$useBalance');
     try {
-      final body = <String, dynamic>{'period_id': periodId};
+      final body = <String, dynamic>{
+        'period_id': periodId,
+        'use_balance': useBalance,
+      };
       if (trafficValue != null) body['traffic_value'] = trafficValue;
       if (devices != null) body['devices'] = devices;
       if (servers != null) body['servers'] = servers;
@@ -944,7 +948,7 @@ class SubscriptionApiService {
     }
   }
 
-  /// Cabinet fallback for [buyTariff] and [changeTariff].
+  /// Cabinet fallback for [buyTariff] and [switchTariff].
   ///
   /// [isSwitch] = false → POST /cabinet/subscription/purchase-tariff
   /// [isSwitch] = true  → POST /cabinet/subscription/tariff/switch
@@ -1040,15 +1044,20 @@ class SubscriptionApiService {
   static Future<BuyResult?> buyTariff({
     required int tariffId,
     required int periodDays,
+    bool useBalance = true,
   }) async {
     appLogger.info('Payment',
-        'buyTariff: start tariffId=$tariffId periodDays=$periodDays');
+        'buyTariff: start tariffId=$tariffId periodDays=$periodDays useBalance=$useBalance');
     if (authStateNotifier.value.isEmailAuth) {
       return _purchaseTariffCabinet(
           tariffId: tariffId, periodDays: periodDays, isSwitch: false);
     }
     try {
-      final body = {'tariff_id': tariffId, 'period_days': periodDays};
+      final body = {
+        'tariff_id': tariffId,
+        'period_days': periodDays,
+        'use_balance': useBalance,
+      };
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/buy-tariff'),
         jsonEncode(body),
@@ -1084,91 +1093,21 @@ class SubscriptionApiService {
     }
   }
 
-  /// POST /mobile/v1/subscription/change-tariff/calc
-  /// Returns the prorated cost to switch to a different tariff.
-  /// Returns 0 when the server considers the change free (downgrade).
-  static Future<UpgradeCalcResult?> calcChangeTariffPrice({
-    required int tariffId,
-    required int periodDays,
-  }) async {
-    try {
-      final body = {'tariff_id': tariffId, 'period_days': periodDays};
-      final resp = await _post(
-        Uri.parse('$_base/mobile/v1/subscription/change-tariff/calc'),
-        jsonEncode(body),
-        timeout: const Duration(seconds: 15),
-      );
-      if (resp.statusCode == 200) {
-        return UpgradeCalcResult.fromJson(
-          jsonDecode(resp.body) as Map<String, dynamic>,
-        );
-      }
-      appLogger.warning('Payment',
-          'calcChangeTariffPrice: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
-      return null;
-    } on Exception catch (e) {
-      appLogger.error('Payment', 'calcChangeTariffPrice: tariffId=$tariffId exception: $e');
-      return null;
-    }
-  }
-
-  /// POST /mobile/v1/subscription/change-tariff
-  /// Switches the active subscription to a different tariff with server-side
-  /// proration. Falls back to Cabinet /tariff/switch for email-only users.
-  static Future<BuyResult?> changeTariff({
-    required int tariffId,
-    required int periodDays,
-  }) async {
-    appLogger.info('Payment',
-        'changeTariff: start tariffId=$tariffId periodDays=$periodDays');
-    if (authStateNotifier.value.isEmailAuth) {
-      return _purchaseTariffCabinet(
-          tariffId: tariffId, periodDays: periodDays, isSwitch: true);
-    }
-    try {
-      final body = {'tariff_id': tariffId, 'period_days': periodDays};
-      final resp = await _post(
-        Uri.parse('$_base/mobile/v1/subscription/change-tariff'),
-        jsonEncode(body),
-      );
-      if (resp.statusCode == 200) {
-        final result = BuyResult.fromJson(
-          jsonDecode(resp.body) as Map<String, dynamic>,
-        );
-        appLogger.info('Payment',
-            'changeTariff: result status=${result.status} amountKopeks=${result.amountKopeks}');
-        return result;
-      }
-      appLogger.error('Payment',
-          'changeTariff: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
-      try {
-        final err = jsonDecode(resp.body) as Map<String, dynamic>;
-        final detail = err['detail'];
-        if (detail is String) return BuyResult(status: 'error', message: detail);
-        if (detail is Map) {
-          return BuyResult(
-            status: 'error',
-            message: detail['message'] as String? ?? 'Ошибка смены тарифа',
-          );
-        }
-      } catch (_) {}
-      return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
-    } on Exception catch (e) {
-      appLogger.error('Payment', 'changeTariff: tariffId=$tariffId exception: $e');
-      return BuyResult(status: 'error', message: e.toString());
-    }
-  }
-
   // -------------------------------------------------------------------------
   // Tariff switch (proper prorated switch, keeps end_date)
   // -------------------------------------------------------------------------
 
   /// POST /mobile/v1/subscription/tariff/switch/preview
   /// Returns cost preview without committing anything.
+  /// Falls back to Cabinet /tariff/switch/preview for email-only users
+  /// (no devices surcharge breakdown there — same base fields otherwise).
   static Future<TariffSwitchPreview?> previewTariffSwitch({
     required int tariffId,
     int? devices,
   }) async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _previewTariffSwitchCabinet(tariffId: tariffId);
+    }
     try {
       final body = <String, dynamic>{'tariff_id': tariffId};
       if (devices != null) body['devices'] = devices;
@@ -1191,15 +1130,48 @@ class SubscriptionApiService {
     }
   }
 
+  /// Cabinet fallback for [previewTariffSwitch]. period_days is required by
+  /// the shared schema but ignored by the handler (prorates off end_date).
+  static Future<TariffSwitchPreview?> _previewTariffSwitchCabinet({
+    required int tariffId,
+  }) async {
+    try {
+      final resp = await CabinetHttp.post(
+        '/cabinet/subscription/tariff/switch/preview',
+        body: {'tariff_id': tariffId, 'period_days': 30},
+      );
+      if (resp == null || resp.statusCode != 200) return null;
+      return TariffSwitchPreview.fromJson(
+        jsonDecode(resp.body) as Map<String, dynamic>,
+      );
+    } on Exception catch (e) {
+      appLogger.error('Payment', '_previewTariffSwitchCabinet: exception: $e');
+      return null;
+    }
+  }
+
   /// POST /mobile/v1/subscription/tariff/switch
   /// Executes tariff switch. Keeps existing end_date; charges difference for upgrades.
+  /// Falls back to Cabinet /tariff/switch for email-only users (no devices/use_balance
+  /// support there — it always deducts from balance and 402s if insufficient).
   static Future<BuyResult?> switchTariff({
     required int tariffId,
     int? devices,
+    bool useBalance = true,
   }) async {
-    appLogger.info('Payment', 'switchTariff: start tariffId=$tariffId devices=$devices');
+    appLogger.info('Payment',
+        'switchTariff: start tariffId=$tariffId devices=$devices useBalance=$useBalance');
+    if (authStateNotifier.value.isEmailAuth) {
+      // period_days is required by the schema but ignored by the handler —
+      // the cabinet switch endpoint prorates off the existing end_date.
+      return _purchaseTariffCabinet(
+          tariffId: tariffId, periodDays: 30, isSwitch: true);
+    }
     try {
-      final body = <String, dynamic>{'tariff_id': tariffId};
+      final body = <String, dynamic>{
+        'tariff_id': tariffId,
+        'use_balance': useBalance,
+      };
       if (devices != null) body['devices'] = devices;
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/subscription/tariff/switch'),
@@ -1207,14 +1179,18 @@ class SubscriptionApiService {
       );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        // Backend returns {success, charged_kopeks, new_tariff_name, ...}
+        // Backend returns {success, payment_required, payment_url, charged_kopeks, ...}
         // Map to BuyResult for uniform handling in the UI.
         final success = json['success'] as bool? ?? false;
+        final paymentRequired = json['payment_required'] as bool? ?? false;
         appLogger.info('Payment',
-            'switchTariff: result success=$success chargedKopeks=${json['charged_kopeks']}');
+            'switchTariff: result success=$success paymentRequired=$paymentRequired chargedKopeks=${json['charged_kopeks']}');
         return BuyResult(
-          status: success ? 'success' : 'error',
+          status: success
+              ? 'success'
+              : (paymentRequired ? 'payment_required' : 'error'),
           message: json['message'] as String?,
+          paymentUrl: json['payment_url'] as String?,
           amountKopeks: (json['charged_kopeks'] as num?)?.toInt(),
           subscription: json['subscription'] as Map<String, dynamic>?,
         );

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:math' show max;
+import 'dart:math' show max, min;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -93,6 +93,10 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
   // ── Step 2 ───────────────────────────────────────────────────────────────────
   bool _checkoutMode = false;
   TariffPeriod? _selectedPeriod;
+
+  // ── Step 2 (existing active/trial plan — real proration preview) ────────────
+  TariffSwitchPreview? _switchPreview;
+  bool _switchPreviewLoading = false;
 
   // ── Payment ─────────────────────────────────────────────────────────────────
   bool _purchasing = false;
@@ -197,13 +201,16 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     }
   }
 
-  /// True when the user has any existing plan (active or expired).
-  /// In this case we use /change-tariff instead of /buy-tariff.
+  /// True when the user has an active/trial plan. Only then does the real
+  /// backend switch endpoint apply (it keeps the existing end_date and
+  /// prorates the difference — there's no period to pick). Expired or
+  /// plan-less users go through the regular buy-tariff flow instead.
   bool get _hasExistingPlan {
     final sub = meNotifier.value?.subscription;
     return sub != null &&
         sub.planName != null &&
-        sub.planName!.isNotEmpty;
+        sub.planName!.isNotEmpty &&
+        (sub.isActive || sub.isTrial);
   }
 
   TariffPeriod? _cheapestPeriod(TariffInfo t) {
@@ -366,6 +373,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     if (_familyDevices > _kFamilyBaseDevices) {
       HapticFeedback.selectionClick();
       setState(() => _familyDevices--);
+      if (_checkoutMode && _hasExistingPlan) _loadSwitchPreview();
     } else {
       HapticFeedback.heavyImpact();
     }
@@ -375,36 +383,80 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     if (_familyDevices < _kFamilyMaxDevices) {
       HapticFeedback.selectionClick();
       setState(() => _familyDevices++);
+      if (_checkoutMode && _hasExistingPlan) _loadSwitchPreview();
     } else {
       HapticFeedback.heavyImpact();
     }
   }
 
+  /// Fetches the real prorated switch cost for the selected tariff (and, for
+  /// the Family tariff, the currently chosen device count) via the working
+  /// /tariff/switch/preview endpoint. Only meaningful when [_hasExistingPlan].
+  Future<void> _loadSwitchPreview() async {
+    final t = _selectedTariff;
+    if (t == null) return;
+    if (!mounted) return;
+    setState(() {
+      _switchPreviewLoading = true;
+      _switchPreview = null;
+    });
+    final devices = _isFamilyTariff(t) ? _familyDevices : null;
+    final r = await SubscriptionApiService.previewTariffSwitch(
+      tariffId: t.id,
+      devices: devices,
+    );
+    if (!mounted) return;
+    setState(() {
+      _switchPreview = r;
+      _switchPreviewLoading = false;
+    });
+  }
+
   Future<void> _onPayTapped() async {
     final t = _selectedTariff;
+    if (t == null) return;
+
+    if (_hasExistingPlan) {
+      setState(() => _purchasing = true);
+      try {
+        final devices = _isFamilyTariff(t) ? _familyDevices : null;
+        final r = await SubscriptionApiService.switchTariff(
+          tariffId: t.id,
+          devices: devices,
+        );
+        if (!mounted) return;
+        if (r == null) {
+          _snack('Ошибка соединения с сервером');
+        } else if (r.isSuccess) {
+          await MeService.refreshAll();
+          _snack('Тариф успешно изменён!', ok: true);
+          await Future.delayed(const Duration(milliseconds: 900));
+          if (mounted) Navigator.of(context).pop();
+        } else if (r.requiresPayment && r.paymentUrl != null) {
+          await _openPaymentUrl(r.paymentUrl!);
+        } else {
+          _snack(r.message ?? 'Ошибка при смене тарифа');
+        }
+      } catch (e) {
+        appLogger.error('Payment', 'switch tariff: exception: $e');
+        if (mounted) _snack('Ошибка: $e');
+      }
+      if (mounted) setState(() => _purchasing = false);
+      return;
+    }
+
     final p = _selectedPeriod;
-    if (t == null || p == null) {
+    if (p == null) {
       _snack('Выберите период');
       return;
     }
 
     setState(() => _purchasing = true);
     try {
-      BuyResult? r;
-
-      if (_hasExistingPlan) {
-        // ── Смена тарифа через /change-tariff (работает и для активных, и для истёкших) ──
-        r = await SubscriptionApiService.changeTariff(
-          tariffId: t.id,
-          periodDays: p.days,
-        );
-      } else {
-        // ── Первая покупка тарифа ──
-        r = await SubscriptionApiService.buyTariff(
-          tariffId: t.id,
-          periodDays: p.days,
-        );
-      }
+      final r = await SubscriptionApiService.buyTariff(
+        tariffId: t.id,
+        periodDays: p.days,
+      );
 
       if (!mounted) return;
       if (r == null) {
@@ -623,14 +675,17 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
                     ? () {
                         HapticFeedback.mediumImpact();
                         setState(() => _checkoutMode = true);
+                        if (_hasExistingPlan) _loadSwitchPreview();
                       }
                     : null,
                 loading: false,
               ),
               const SizedBox(height: 10),
-              const Text(
-                'Выбор периода — на следующем шаге',
-                style: TextStyle(color: _t2, fontSize: 11),
+              Text(
+                _hasExistingPlan
+                    ? 'Стоимость рассчитывается автоматически'
+                    : 'Выбор периода — на следующем шаге',
+                style: const TextStyle(color: _t2, fontSize: 11),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -658,6 +713,82 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
       );
     }
 
+    return _hasExistingPlan ? _buildCheckoutSwitch(t) : _buildCheckoutBuy(t);
+  }
+
+  /// Checkout for switching an existing active/trial plan: no period picker —
+  /// the real /tariff/switch endpoint keeps the current end_date and charges
+  /// only the prorated difference for the remaining days.
+  Widget _buildCheckoutSwitch(TariffInfo t) {
+    final isFamily = _isFamilyTariff(t);
+    final preview = _switchPreview;
+    final loading = _switchPreviewLoading;
+
+    return ListView(
+      key: const ValueKey('step2-switch'),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      children: [
+        const _SectionLabel(text: 'Тариф'),
+        const SizedBox(height: 8),
+        _CheckoutTariffCard(
+          tariff: t,
+          deviceCount: isFamily ? _familyDevices : t.deviceLimit,
+          onEdit: () => setState(() => _checkoutMode = false),
+        ),
+        const SizedBox(height: 14),
+
+        if (isFamily) ...[
+          const _SectionLabel(text: 'Устройства'),
+          const SizedBox(height: 8),
+          _FamilyStepper(
+            count: _familyDevices,
+            max: _kFamilyMaxDevices,
+            base: _kFamilyBaseDevices,
+            onDecrement: _familyDecrement,
+            onIncrement: _familyIncrement,
+          ),
+          const SizedBox(height: 14),
+        ],
+
+        const _SectionLabel(text: 'Расчёт'),
+        const SizedBox(height: 8),
+        if (loading || preview == null)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            decoration: BoxDecoration(
+              color: _surf,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Center(
+              child: SizedBox(
+                width: 22, height: 22,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2.5, color: DS.violet),
+              ),
+            ),
+          )
+        else
+          _SwitchBreakdownCard(preview: preview),
+        const SizedBox(height: 16),
+
+        _CTAButton(
+          label: preview == null
+              ? 'Оплатить'
+              : preview.isFree
+                  ? 'Сменить тариф'
+                  : 'Оплатить ${(preview.upgradeCostKopeks / 100).round()} ₽',
+          onPressed: (preview != null && !loading && !_pollingForPayment)
+              ? _onPayTapped
+              : null,
+          loading: _purchasing || loading || _pollingForPayment,
+        ),
+        const SizedBox(height: 10),
+        const _SecureCaption(),
+      ],
+    );
+  }
+
+  Widget _buildCheckoutBuy(TariffInfo t) {
     final periods = _sortedPeriods(t);
     final p = _selectedPeriod ?? (periods.isNotEmpty ? periods.first : null);
 
@@ -1518,6 +1649,71 @@ class _BreakdownCard extends StatelessWidget {
       return '$m месяца';
     }
     return '$m месяцев';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  _SwitchBreakdownCard — блок «Расчёт» для смены тарифа активной подписки
+//  (реальная доплата за оставшиеся дни, без выбора периода).
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SwitchBreakdownCard extends StatelessWidget {
+  final TariffSwitchPreview preview;
+
+  const _SwitchBreakdownCard({required this.preview});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = preview;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: _surf,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
+          _Row(
+            label: 'Доплата за ${p.remainingDays} дн.',
+            value: p.upgradeCostLabel,
+          ),
+          if (p.hasDeviceBreakdown)
+            _Row(
+              label: '${p.devicesRequested} устр. (доп.)',
+              value:
+                  '+${((p.extraDeviceCostKopeks ?? 0) / 100).round()} ₽',
+            ),
+          if (p.upgradeCostKopeks > 0)
+            _Row(
+              label: 'Списано с баланса',
+              value:
+                  '−${(min(p.upgradeCostKopeks, p.balanceKopeks) / 100).round()} ₽',
+              labelColor: DS.emerald,
+              valueColor: DS.emerald,
+            ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Divider(
+                height: 1, thickness: 0.5, color: Color(0xFF2A2A38)),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              const Text('К оплате',
+                  style: TextStyle(
+                      color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
+              Text(
+                '${(p.upgradeCostKopeks / 100).round()} ₽',
+                style: const TextStyle(
+                    color: _t0, fontSize: 22, fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 
