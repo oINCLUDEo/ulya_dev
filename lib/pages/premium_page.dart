@@ -19,6 +19,7 @@ import '../widgets/skeleton.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 import 'payment_webview_page.dart';
+import 'referral_page.dart';
 
 part 'premium_page_cards.dart';
 part 'premium_page_status.dart';
@@ -82,6 +83,12 @@ class _PremiumPageState extends State<PremiumPage>
   bool _trialAvailable = false;
   int  _trialDays      = 7;
   bool _activatingTrial = false;
+
+  // ── Referral teaser ─────────────────────────────────────────────────────────
+  // Shown while the user is still deciding whether to pay — the referral
+  // programme effectively lowers the real cost of a subscription, so it
+  // belongs right where that decision is being made, not just after checkout.
+  ReferralInfo? _referralInfo;
 
   // ── Payment polling ────────────────────────────────────────────────────────
   Timer? _pollTimer;
@@ -196,6 +203,7 @@ class _PremiumPageState extends State<PremiumPage>
       _applyOptionsData(cachedOptions, cachedTariffs);
     }
     _loadOptions();
+    _loadReferral();
   }
 
   @override
@@ -217,9 +225,27 @@ class _PremiumPageState extends State<PremiumPage>
     }
   }
 
-  void _onAuthChanged() { if (mounted) { _loadOptions(); setState(() {}); } }
+  void _onAuthChanged() {
+    if (mounted) { _loadOptions(); _loadReferral(); setState(() {}); }
+  }
   void _onMeChanged()     { if (mounted) setState(() {}); }
   void _onGlobalRefresh() { if (mounted) _loadOptions(); }
+
+  /// Pulls the referral snapshot if we have any auth context — mirrors
+  /// HomePage's loader. Idempotent and safe on every auth-change tick;
+  /// clears the banner on logout.
+  Future<void> _loadReferral() async {
+    final auth = authStateNotifier.value;
+    final hasAuth = (auth.cabinetAccessToken?.isNotEmpty ?? false) ||
+        auth.telegramId != null;
+    if (!hasAuth) {
+      if (_referralInfo != null && mounted) setState(() => _referralInfo = null);
+      return;
+    }
+    final info = await ReferralService.getInfo();
+    if (!mounted) return;
+    if (info != _referralInfo) setState(() => _referralInfo = info);
+  }
 
   // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -1620,6 +1646,18 @@ class _PremiumPageState extends State<PremiumPage>
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 120),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
+
+                    // ── Referral teaser ──────────────────────────────────────
+                    // Same position regardless of state (new/active/expired) —
+                    // hidden only while the payment-confirmation screen is up.
+                    if (_referralInfo != null && !_pollingForPayment) ...[
+                      _ReferralBanner(
+                        info: _referralInfo!,
+                        onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const ReferralPage())),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
 
                     // ── Payment polling ─────────────────────────────────────
                     if (_pollingForPayment) ...[

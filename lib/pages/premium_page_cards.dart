@@ -1498,6 +1498,67 @@ class _BuyButton extends StatelessWidget {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Referral teaser — surfaced while the purchase decision is being made
+//  (not just after checkout, where the success overlay already has its own
+//  invite nudge). Framed as lowering the real cost, since that's the
+//  strongest angle right where someone is deciding whether to pay.
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _ReferralBanner extends StatelessWidget {
+  final ReferralInfo info;
+  final VoidCallback onTap;
+  const _ReferralBanner({required this.info, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final commission = info.commissionPercent;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: _premSurface,
+          borderRadius: BorderRadius.circular(DS.radiusSm),
+          border: Border.all(color: DS.violet.withValues(alpha: 0.30)),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+        child: Row(children: [
+          Container(
+            width: 38, height: 38,
+            decoration: BoxDecoration(
+              color: DS.violet.withValues(alpha: 0.16),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(PhosphorIconsFill.gift, color: DS.violet, size: 19),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Снизьте свою цену',
+                    style: TextStyle(
+                        color: _t0, fontSize: 13.5, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(
+                  commission > 0
+                      ? 'Приглашайте друзей — получайте $commission% с каждого их платежа'
+                      : 'Приглашайте друзей и получайте бонусы',
+                  style: const TextStyle(color: _t1, fontSize: 11.5, height: 1.3),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(Icons.chevron_right_rounded,
+              color: DS.violet.withValues(alpha: 0.7), size: 20),
+        ]),
+      ),
+    );
+  }
+}
+
 class _Disclaimer extends StatelessWidget {
   const _Disclaimer();
 
