@@ -1,9 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 
 import '../config/app_config.dart';
 import 'app_logger.dart';
@@ -540,73 +538,40 @@ class SubscriptionApiService {
 
   static String get _base => AppConfig.backendBaseUrl;
 
-  static Map<String, String> _headers() {
-    final auth = authStateNotifier.value;
-    return {
-      'Content-Type': 'application/json',
-      if (auth.telegramId != null) 'X-Telegram-Id': auth.telegramId.toString(),
-    };
-  }
-
   /// GET helper that uses Cabinet Bearer auth (401 → refresh → retry).
   static Future<http.Response?> _cabinetGet(String path) =>
       CabinetHttp.get(path);
 
-  /// Returns an HTTP client that routes through the local xray HTTP proxy
-  /// (port 10808) when the VPN is active, so subscription API calls reach
-  /// the backend even when the app package is excluded from the VPN tunnel.
-  static http.Client _makeClient() {
-    if (vpnConnectedNotifier.value) {
-      return IOClient(
-        HttpClient()..findProxy = (uri) => 'PROXY 127.0.0.1:10808',
-      );
-    }
-    return http.Client();
-  }
+  // All /mobile/v1/* calls below go through CabinetHttp — same Bearer JWT +
+  // transparent-refresh-on-401 auth as /cabinet/*, instead of the old
+  // unverified X-Telegram-Id header. CabinetHttp returns null when there's no
+  // token or the request fails outright; every call site here already
+  // wraps its call in try/catch expecting a plain Exception on failure, so we
+  // just surface that instead of a nullable response to keep them unchanged.
 
   static Future<http.Response> _get(Uri uri) async {
-    final c = _makeClient();
-    try {
-      return await c
-          .get(uri, headers: _headers())
-          .timeout(const Duration(seconds: 15));
-    } finally {
-      c.close();
-    }
+    final resp = await CabinetHttp.get(uri.path);
+    if (resp == null) throw Exception('request failed: GET ${uri.path}');
+    return resp;
   }
 
   static Future<http.Response> _post(Uri uri, String body,
       {Duration timeout = const Duration(seconds: 20)}) async {
-    final c = _makeClient();
-    try {
-      return await c
-          .post(uri, headers: _headers(), body: body)
-          .timeout(timeout);
-    } finally {
-      c.close();
-    }
+    final resp = await CabinetHttp.post(uri.path, body: body, timeout: timeout);
+    if (resp == null) throw Exception('request failed: POST ${uri.path}');
+    return resp;
   }
 
   static Future<http.Response> _put(Uri uri, String body) async {
-    final c = _makeClient();
-    try {
-      return await c
-          .put(uri, headers: _headers(), body: body)
-          .timeout(const Duration(seconds: 15));
-    } finally {
-      c.close();
-    }
+    final resp = await CabinetHttp.put(uri.path, body: body);
+    if (resp == null) throw Exception('request failed: PUT ${uri.path}');
+    return resp;
   }
 
   static Future<http.Response> _delete(Uri uri) async {
-    final c = _makeClient();
-    try {
-      return await c
-          .delete(uri, headers: _headers())
-          .timeout(const Duration(seconds: 15));
-    } finally {
-      c.close();
-    }
+    final resp = await CabinetHttp.delete(uri.path);
+    if (resp == null) throw Exception('request failed: DELETE ${uri.path}');
+    return resp;
   }
 
   /// GET /mobile/v1/subscription/options

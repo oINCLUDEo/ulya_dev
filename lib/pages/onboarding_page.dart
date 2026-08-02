@@ -404,7 +404,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         }
       }
     } else {
-      // Telegram user → use Mobile API (X-Telegram-Id)
+      // Telegram user → use Mobile API (Bearer JWT)
       result = await SubscriptionApiService.activateTrial();
       if (result != null && result.isSuccess) {
         MeService.refresh();

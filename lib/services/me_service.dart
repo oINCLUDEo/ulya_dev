@@ -1,13 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../config/app_config.dart';
 import '../models/me_response.dart';
 import 'app_logger.dart';
 import 'auth_state.dart';
@@ -32,21 +28,11 @@ final ValueNotifier<int> globalRefreshNotifier = ValueNotifier<int>(0);
 class MeService {
   MeService._();
 
-  static String get _url => '${AppConfig.backendBaseUrl}/mobile/v1/me';
   static const _prefCachedMe = 'cached_me_response';
-
-  static http.Client _makeClient() {
-    if (vpnConnectedNotifier.value) {
-      return IOClient(
-        HttpClient()..findProxy = (uri) => 'PROXY 127.0.0.1:10808',
-      );
-    }
-    return http.Client();
-  }
 
   /// Fetch user/subscription data and update [meNotifier].
   ///
-  /// - Telegram users  → GET /mobile/v1/me  (X-Telegram-Id header)
+  /// - Telegram users  → GET /mobile/v1/me  (Bearer JWT)
   /// - Email-only users → GET /cabinet/subscription  (Bearer JWT)
   ///
   /// Does nothing when the user is not logged in.
@@ -68,14 +54,11 @@ class MeService {
 
   static Future<MeResponse?> _refreshFromMobile(AuthState auth) async {
     try {
-      final client = _makeClient();
-      final response = await client
-          .get(
-        Uri.parse(_url),
-        headers: {'X-Telegram-Id': auth.telegramId.toString()},
-      )
-          .timeout(const Duration(seconds: 15));
-      client.close();
+      final response = await CabinetHttp.get('/mobile/v1/me');
+      if (response == null) {
+        appLogger.warning('MeService', '/me unreachable');
+        return null;
+      }
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -88,7 +71,7 @@ class MeService {
         await _saveToCache(me);
         appLogger.info('MeService', '/me refreshed — subscription: ${me.hasSubscription}');
         _checkAndPostExpiryWarning(me);
-        unawaited(_fetchAndPostNotifications(auth.telegramId!));
+        unawaited(_fetchAndPostNotifications());
         return me;
       }
 
@@ -265,15 +248,11 @@ class MeService {
 
   // ── Backend notifications ─────────────────────────────────────────────────
 
-  static Future<void> _fetchAndPostNotifications(int telegramId) async {
+  static Future<void> _fetchAndPostNotifications() async {
     try {
-      final url = '${AppConfig.backendBaseUrl}/mobile/v1/notifications';
-      final client = _makeClient();
-      final resp = await client
-          .get(Uri.parse(url), headers: {'X-Telegram-Id': telegramId.toString()})
-          .timeout(const Duration(seconds: 10));
-      client.close();
-      if (resp.statusCode != 200) return;
+      final resp = await CabinetHttp.get('/mobile/v1/notifications',
+          timeout: const Duration(seconds: 10));
+      if (resp == null || resp.statusCode != 200) return;
       final body = jsonDecode(resp.body) as Map<String, dynamic>;
       final items = body['notifications'] as List<dynamic>? ?? [];
       for (final raw in items) {

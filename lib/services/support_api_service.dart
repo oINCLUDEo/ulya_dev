@@ -1,10 +1,6 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
-
-import '../config/app_config.dart';
 import 'app_logger.dart';
-import 'auth_state.dart';
 import 'cabinet_http.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,38 +119,17 @@ class SupportTicketDetail extends SupportTicket {
 
 /// Support tickets API.
 ///
-/// Primary path: Cabinet endpoints (`/cabinet/tickets`) with Bearer JWT —
-/// works for every auth method (Telegram, email, Google) since all of them
-/// now receive a cabinet token pair on login. Legacy sessions without a JWT
-/// fall back to the Mobile API (`/mobile/v1/support`, X-Telegram-Id header).
+/// Cabinet endpoints (`/cabinet/tickets`) with Bearer JWT — works for every
+/// auth method (Telegram, email, Google) since all of them receive a cabinet
+/// token pair on login.
 class SupportApiService {
   SupportApiService._();
-
-  static String get _mobileBase => '${AppConfig.backendBaseUrl}/mobile/v1/support';
-
-  static bool get _hasJwt =>
-      authStateNotifier.value.cabinetAccessToken?.isNotEmpty ?? false;
-
-  static Map<String, String> _mobileHeaders() {
-    final auth = authStateNotifier.value;
-    return {
-      'Content-Type': 'application/json',
-      if (auth.telegramId != null) 'X-Telegram-Id': auth.telegramId.toString(),
-    };
-  }
 
   // ── List ──────────────────────────────────────────────────────────────────
 
   static Future<List<SupportTicket>> getTickets() async {
     try {
-      final http.Response? resp;
-      if (_hasJwt) {
-        resp = await CabinetHttp.get('/cabinet/tickets?page=1&per_page=100');
-      } else {
-        resp = await http
-            .get(Uri.parse('$_mobileBase/tickets'), headers: _mobileHeaders())
-            .timeout(const Duration(seconds: 15));
-      }
+      final resp = await CabinetHttp.get('/cabinet/tickets?page=1&per_page=100');
       if (resp == null) return [];
       if (resp.statusCode == 200) {
         final body = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -180,30 +155,20 @@ class SupportApiService {
     String? logs,
   }) async {
     try {
-      final http.Response? resp;
-      if (_hasJwt) {
-        // Cabinet schema has no separate `logs` field — append them to the
-        // message body within its 4000-char limit.
-        var text = message;
-        if (logs != null && logs.isNotEmpty) {
-          final budget = 4000 - text.length - 20;
-          if (budget > 100) {
-            final tail = logs.length > budget
-                ? logs.substring(logs.length - budget)
-                : logs;
-            text = '$text\n\n--- Логи ---\n$tail';
-          }
+      // Cabinet schema has no separate `logs` field — append them to the
+      // message body within its 4000-char limit.
+      var text = message;
+      if (logs != null && logs.isNotEmpty) {
+        final budget = 4000 - text.length - 20;
+        if (budget > 100) {
+          final tail = logs.length > budget
+              ? logs.substring(logs.length - budget)
+              : logs;
+          text = '$text\n\n--- Логи ---\n$tail';
         }
-        resp = await CabinetHttp.post('/cabinet/tickets',
-            body: {'title': title, 'message': text});
-      } else {
-        final body = <String, dynamic>{'title': title, 'message': message};
-        if (logs != null && logs.isNotEmpty) body['logs'] = logs;
-        resp = await http
-            .post(Uri.parse('$_mobileBase/tickets'),
-                headers: _mobileHeaders(), body: jsonEncode(body))
-            .timeout(const Duration(seconds: 15));
       }
+      final resp = await CabinetHttp.post('/cabinet/tickets',
+          body: {'title': title, 'message': text});
       if (resp == null) return null;
       if (resp.statusCode == 200 || resp.statusCode == 201) {
         return SupportTicket.fromJson(
@@ -222,15 +187,7 @@ class SupportApiService {
 
   static Future<SupportTicketDetail?> getTicket(int ticketId) async {
     try {
-      final http.Response? resp;
-      if (_hasJwt) {
-        resp = await CabinetHttp.get('/cabinet/tickets/$ticketId');
-      } else {
-        resp = await http
-            .get(Uri.parse('$_mobileBase/tickets/$ticketId'),
-                headers: _mobileHeaders())
-            .timeout(const Duration(seconds: 15));
-      }
+      final resp = await CabinetHttp.get('/cabinet/tickets/$ticketId');
       if (resp == null) return null;
       if (resp.statusCode == 200) {
         return SupportTicketDetail.fromJson(
@@ -251,17 +208,8 @@ class SupportApiService {
     required String message,
   }) async {
     try {
-      final http.Response? resp;
-      if (_hasJwt) {
-        resp = await CabinetHttp.post('/cabinet/tickets/$ticketId/messages',
-            body: {'message': message});
-      } else {
-        resp = await http
-            .post(Uri.parse('$_mobileBase/tickets/$ticketId/messages'),
-                headers: _mobileHeaders(),
-                body: jsonEncode({'message': message}))
-            .timeout(const Duration(seconds: 15));
-      }
+      final resp = await CabinetHttp.post('/cabinet/tickets/$ticketId/messages',
+          body: {'message': message});
       if (resp == null) return null;
       if (resp.statusCode == 200 || resp.statusCode == 201) {
         return SupportTicketMessage.fromJson(
@@ -280,15 +228,7 @@ class SupportApiService {
 
   static Future<SupportTicket?> closeTicket(int ticketId) async {
     try {
-      final http.Response? resp;
-      if (_hasJwt) {
-        resp = await CabinetHttp.post('/cabinet/tickets/$ticketId/close');
-      } else {
-        resp = await http
-            .post(Uri.parse('$_mobileBase/tickets/$ticketId/close'),
-                headers: _mobileHeaders(), body: '{}')
-            .timeout(const Duration(seconds: 15));
-      }
+      final resp = await CabinetHttp.post('/cabinet/tickets/$ticketId/close');
       if (resp == null) return null;
       if (resp.statusCode == 200) {
         return SupportTicket.fromJson(
