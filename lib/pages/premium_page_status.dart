@@ -1180,36 +1180,6 @@ class _ErrorCard extends StatelessWidget {
 //  Payment polling card
 // ═══════════════════════════════════════════════════════════════════════════
 
-class _PollingCard extends StatelessWidget {
-  const _PollingCard();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(32),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [_cg1, _cg2],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      borderRadius: BorderRadius.circular(_r22),
-      border: Border.all(color: DS.violet.withValues(alpha: 0.28))),
-    child: Column(children: [
-      const SizedBox(
-          width: 52, height: 52,
-          child: CircularProgressIndicator(strokeWidth: 3, color: DS.violet)),
-      const SizedBox(height: 24),
-      const Text('Обрабатываем платёж…',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: _t0, fontSize: 20, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 8),
-      const Text('Ожидаем подтверждение.\nОбычно это занимает меньше минуты.',
-          textAlign: TextAlign.center,
-          style: TextStyle(color: _t1, fontSize: 14, height: 1.6)),
-    ]),
-  );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 //  Reserve-squad grace card — subscription genuinely expired, but we've left
 //  a small, temporary window open while the user decides to renew. Warm/

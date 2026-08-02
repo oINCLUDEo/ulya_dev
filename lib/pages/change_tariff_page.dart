@@ -10,6 +10,7 @@ import '../models/me_response.dart';
 import '../services/app_logger.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
+import '../widgets/payment_polling_card.dart';
 import 'payment_webview_page.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +285,13 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     _pollTimer = Timer.periodic(_pollInterval, _onPollTick);
   }
 
+  void _cancelPaymentPolling() {
+    appLogger.info('Payment', 'change-tariff poll: cancelled by user at attempt=$_pollAttempt');
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (mounted) setState(() => _pollingForPayment = false);
+  }
+
   Future<void> _onPollTick(Timer timer) async {
     _pollAttempt++;
     await MeService.refreshAll();
@@ -335,7 +343,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
         fullscreenDialog: true,
       ));
       if (mounted) {
-        _snack('Проверяем оплату…', ok: true);
+        _snack('Проверяем оплату…', color: DS.violet);
         _startPaymentPolling();
       }
     } catch (_) {
@@ -418,13 +426,13 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
     if (mounted) setState(() => _purchasing = false);
   }
 
-  void _snack(String msg, {bool ok = false}) {
+  void _snack(String msg, {bool ok = false, Color? color}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg,
           style: const TextStyle(
               color: Colors.white, fontWeight: FontWeight.w500)),
-      backgroundColor: ok ? DS.emerald : DS.rose,
+      backgroundColor: color ?? (ok ? DS.emerald : DS.rose),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(DS.radiusSm)),
@@ -639,6 +647,16 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
   Widget _buildCheckout() {
     final t = _selectedTariff;
     if (t == null) return const SizedBox.shrink();
+
+    if (_pollingForPayment) {
+      return Center(
+        key: const ValueKey('step2-polling'),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: PaymentPollingCard(onCancel: _cancelPaymentPolling),
+        ),
+      );
+    }
 
     final periods = _sortedPeriods(t);
     final p = _selectedPeriod ?? (periods.isNotEmpty ? periods.first : null);

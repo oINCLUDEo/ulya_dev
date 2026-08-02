@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../main.dart' show DS;
@@ -10,6 +12,7 @@ import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/subscription_api_service.dart';
+import '../widgets/payment_polling_card.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
 import 'change_tariff_page.dart';
@@ -36,6 +39,14 @@ class _SubscriptionPageState extends State<SubscriptionPage>
   bool _autopayEnabled = false;
   bool _autopayLoading = false;
 
+  // ── Balance top-up payment polling ─────────────────────────────────────────
+  Timer? _pollTimer;
+  int _pollAttempt = 0;
+  bool _pollingForPayment = false;
+  int _pollBalanceBeforeKopeks = 0;
+  static const int _maxPollAttempts = 30;
+  static const Duration _pollInterval = Duration(seconds: 4);
+
   @override
   void initState() {
     super.initState();
@@ -54,6 +65,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
     globalRefreshNotifier.removeListener(_onGlobalRefresh);
+    _pollTimer?.cancel();
     super.dispose();
   }
 
@@ -162,6 +174,15 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                       me: me,
                       onTopup: () => _showTopupSheet(context),
                     ),
+                    if (_pollingForPayment) ...[
+                      const SizedBox(height: 12),
+                      PaymentPollingCard(
+                        onCancel: _cancelPaymentPolling,
+                        title: 'Проверяем пополнение…',
+                        subtitle: 'Баланс обновится автоматически.\n'
+                            'Обычно это занимает меньше минуты.',
+                      ),
+                    ],
                     if (me?.subscription != null) ...[
                       const SizedBox(height: 12),
                       _AutopayCard(
@@ -243,8 +264,60 @@ class _SubscriptionPageState extends State<SubscriptionPage>
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _TopupSheet(),
+      builder: (_) => _TopupSheet(onPaymentInitiated: _startPaymentPolling),
     );
+  }
+
+  // ── Balance top-up payment polling ─────────────────────────────────────────
+
+  void _startPaymentPolling(int balanceBeforeKopeks) {
+    if (!mounted) return;
+    appLogger.info('Payment', 'balance-topup poll: started (max $_maxPollAttempts attempts)');
+    _pollTimer?.cancel();
+    _pollBalanceBeforeKopeks = balanceBeforeKopeks;
+    setState(() { _pollingForPayment = true; _pollAttempt = 0; });
+    _pollTimer = Timer.periodic(_pollInterval, _onPollTick);
+  }
+
+  Future<void> _onPollTick(Timer timer) async {
+    _pollAttempt++;
+    await MeService.refresh();
+    globalRefreshNotifier.value++;
+    if (!mounted) { timer.cancel(); return; }
+    final balanceAfter = meNotifier.value?.balanceKopeks ?? _pollBalanceBeforeKopeks;
+    final confirmed = balanceAfter != _pollBalanceBeforeKopeks;
+    if (confirmed || _pollAttempt >= _maxPollAttempts) {
+      timer.cancel(); _pollTimer = null;
+      appLogger.info('Payment',
+          'balance-topup poll: finished attempt=$_pollAttempt confirmed=$confirmed');
+      if (!mounted) return;
+      setState(() => _pollingForPayment = false);
+      if (confirmed) {
+        _snack('Баланс пополнен!', ok: true);
+      } else {
+        appLogger.warning('Payment',
+            'balance-topup poll: gave up after $_maxPollAttempts attempts without confirmation');
+        _snack('Платёж ещё не подтверждён. Проверьте баланс позже.', color: DS.violet);
+      }
+    }
+  }
+
+  void _cancelPaymentPolling() {
+    appLogger.info('Payment', 'balance-topup poll: cancelled by user at attempt=$_pollAttempt');
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (mounted) setState(() => _pollingForPayment = false);
+  }
+
+  void _snack(String msg, {bool ok = false, Color? color}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+      backgroundColor: color ?? (ok ? DS.emerald : DS.rose),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(DS.radiusSm)),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+    ));
   }
 
   Future<void> _onAutopayToggle(bool value) async {
@@ -1072,11 +1145,12 @@ class _PulsingDotState extends State<_PulsingDot>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Top-up sheet — без изменений
+// Top-up sheet
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TopupSheet extends StatefulWidget {
-  const _TopupSheet();
+  final void Function(int balanceBeforeKopeks) onPaymentInitiated;
+  const _TopupSheet({required this.onPaymentInitiated});
 
   @override
   State<_TopupSheet> createState() => _TopupSheetState();
@@ -1146,25 +1220,10 @@ class _TopupSheetState extends State<_TopupSheet> {
         builder: (_) => PaymentWebViewPage(url: result.paymentUrl!),
         fullscreenDialog: true,
       ));
-      if (!mounted) return;
-      // Balance is credited server-side after payment — refresh to reflect it.
-      await MeService.refresh();
-      globalRefreshNotifier.value++;
-      final balanceAfterKopeks = meNotifier.value?.balanceKopeks;
-      // This check is not conclusive (crediting can lag behind the webhook by
-      // more than one refresh), but a mismatch here is exactly the "paid but
-      // balance didn't move" symptom support needs to see in the log export.
-      if (balanceAfterKopeks == balanceBeforeKopeks) {
-        appLogger.warning('Payment',
-            'balance topup: webview closed but balance unchanged '
-            '(before=$balanceBeforeKopeks after=$balanceAfterKopeks) — '
-            'may still be processing on the backend');
-      } else {
-        appLogger.info('Payment',
-            'balance topup: balance changed after checkout '
-            '(before=$balanceBeforeKopeks after=$balanceAfterKopeks)');
-      }
-      _snack('Проверяем оплату… баланс обновится автоматически', isError: false);
+      // The sheet is already popped — hand off to the parent page, which
+      // stays alive and keeps polling/showing progress after this widget
+      // (and its BuildContext) are gone.
+      widget.onPaymentInitiated(balanceBeforeKopeks ?? 0);
     } else {
       appLogger.error('Payment',
           'balance topup: request rejected: ${result.message}');

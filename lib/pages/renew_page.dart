@@ -10,6 +10,7 @@ import '../models/me_response.dart';
 import '../services/app_logger.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
+import '../widgets/payment_polling_card.dart';
 import 'payment_webview_page.dart';
 
 // ── Дизайн-токены (синхронизированы с premium_page) ─────────────────────────
@@ -262,6 +263,13 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
     _pollTimer = Timer.periodic(_pollInterval, _onPollTick);
   }
 
+  void _cancelPaymentPolling() {
+    appLogger.info('Payment', 'renew poll: cancelled by user at attempt=$_pollAttempt');
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (mounted) setState(() => _pollingForPayment = false);
+  }
+
   Future<void> _onPollTick(Timer timer) async {
     _pollAttempt++;
     await MeService.refresh();
@@ -310,7 +318,7 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
       fullscreenDialog: true,
     ));
     if (!mounted) return;
-    _snack('Проверяем оплату…', ok: true);
+    _snack('Проверяем оплату…', color: DS.violet);
     _startPaymentPolling();
   }
 
@@ -396,13 +404,13 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
     return (traffic: traffic, devices: devices);
   }
 
-  void _snack(String msg, {bool ok = false}) {
+  void _snack(String msg, {bool ok = false, Color? color}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg,
           style: const TextStyle(
               color: Colors.white, fontWeight: FontWeight.w500)),
-      backgroundColor: ok ? DS.emerald : DS.rose,
+      backgroundColor: color ?? (ok ? DS.emerald : DS.rose),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(DS.radiusSm)),
@@ -456,6 +464,15 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
 
   Widget _buildBody() {
     final sub = meNotifier.value?.subscription;
+
+    if (_pollingForPayment) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: PaymentPollingCard(onCancel: _cancelPaymentPolling),
+        ),
+      );
+    }
 
     // Показываем ошибку только если нет ни периодов тарифа, ни legacy-периодов
     if (_displayPeriods.isEmpty) {

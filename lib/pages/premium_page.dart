@@ -15,6 +15,7 @@ import '../services/referral_service.dart';
 import '../services/subscription_api_service.dart';
 import '../utils/referral_card.dart';
 import '../utils/tariff_pricing.dart' as pricing;
+import '../widgets/payment_polling_card.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
@@ -505,6 +506,13 @@ class _PremiumPageState extends State<PremiumPage>
     _pollTimer = Timer.periodic(_pollInterval, _onPollTick);
   }
 
+  void _cancelPaymentPolling() {
+    appLogger.info('Payment', 'poll: cancelled by user at attempt=$_pollAttempt');
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    if (mounted) setState(() => _pollingForPayment = false);
+  }
+
   Future<void> _onPollTick(Timer timer) async {
     _pollAttempt++;
     await MeService.refresh();
@@ -846,15 +854,15 @@ class _PremiumPageState extends State<PremiumPage>
       fullscreenDialog: true,
     ));
     if (!mounted) return;
-    _snack('Проверяем оплату…', ok: true);
+    _snack('Проверяем оплату…', color: DS.violet);
     _startPaymentPolling();
   }
 
-  void _snack(String msg, {bool ok = false}) {
+  void _snack(String msg, {bool ok = false, Color? color}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
-      backgroundColor: ok ? _teal : DS.rose,
+      backgroundColor: color ?? (ok ? _teal : DS.rose),
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(DS.radiusSm)),
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -1662,7 +1670,7 @@ class _PremiumPageState extends State<PremiumPage>
                     // ── Payment polling ─────────────────────────────────────
                     if (_pollingForPayment) ...[
                       const SizedBox(height: 20),
-                      const _PollingCard(),
+                      PaymentPollingCard(onCancel: _cancelPaymentPolling),
 
                     // ── Active subscriber ──────────────────────────────────
                     ] else if (hasActivePaidSub) ...[
