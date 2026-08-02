@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="connect"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_connect"
+        android:shortcutShortLabel="@string/shortcut_connect_short"
+        android:shortcutLongLabel="@string/shortcut_connect_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="space.ulya.vpn"
+            android:targetClass="space.ulya.vpn.MainActivity">
+            <extra android:name="shortcut_action" android:value="toggle"/>
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="servers"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_servers"
+        android:shortcutShortLabel="@string/shortcut_servers_short"
+        android:shortcutLongLabel="@string/shortcut_servers_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="space.ulya.vpn"
+            android:targetClass="space.ulya.vpn.MainActivity">
+            <extra android:name="shortcut_action" android:value="servers"/>
+        </intent>
+    </shortcut>
+</shortcuts>

@@ -1,8 +1,16 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'apps_service.dart';
 
+/// Caches the installed-apps list and their icons for the split-tunneling
+/// picker.
+///
+/// Performance contract:
+///  * the platform side renders icons at 64px and compresses them OFF the
+///    Android main thread, so bytes arriving here are final — no decoding,
+///    resizing or re-encoding happens in Dart;
+///  * [iconsVersion] ticks are BATCHED (count + time based) so the listening
+///    list rebuilds a few times per second instead of once per icon.
 class AppsRepository {
   static final AppsRepository instance = AppsRepository._();
   AppsRepository._();
@@ -20,97 +28,76 @@ class AppsRepository {
   Map<String, Uint8List?> get icons => _icons;
   bool get isLoaded => _apps != null;
 
-  /// ===============================
-  /// Загрузка списка приложений
-  /// ===============================
+  /// Notify listeners after this many freshly loaded icons…
+  static const int _notifyEvery = 12;
+
+  /// …or after this much time since the last notification, whichever first.
+  static const Duration _notifyInterval = Duration(milliseconds: 200);
+
+  // ── App list ──────────────────────────────────────────────────────────────
+
   Future<void> preload() async {
     if (_apps != null || _loadingApps) return;
 
     _loadingApps = true;
-
-    final apps = await AppsService.getInstalledApps();
-
-    apps.sort(
-          (a, b) =>
-          (a['appName'] as String).compareTo(b['appName'] as String),
-    );
-
-    _apps = apps;
-    _loadingApps = false;
+    try {
+      final apps = await AppsService.getInstalledApps();
+      apps.sort(
+          (a, b) => (a['appName'] as String).compareTo(b['appName'] as String));
+      _apps = apps;
+    } finally {
+      _loadingApps = false;
+    }
   }
 
-  /// ===============================
-  /// Плавная загрузка иконок
-  /// ===============================
-  Future<void> loadIconsGradually(
-      Set<String> priorityPackages,
-      ) async {
+  // ── Icons ─────────────────────────────────────────────────────────────────
+
+  /// Loads missing icons, selected apps first. Safe to call repeatedly.
+  Future<void> loadIconsGradually(Set<String> priorityPackages) async {
     if (_apps == null || _loadingIcons) return;
 
     _loadingIcons = true;
     _cancelLoading = false;
 
-    // Формируем порядок: сначала выбранные
+    // Selected apps first — they're pinned at the top of the picker.
     final ordered = [
-      ..._apps!.where(
-            (a) => priorityPackages.contains(a['packageName']),
-      ),
-      ..._apps!.where(
-            (a) => !priorityPackages.contains(a['packageName']),
-      ),
+      ..._apps!.where((a) => priorityPackages.contains(a['packageName'])),
+      ..._apps!.where((a) => !priorityPackages.contains(a['packageName'])),
     ];
+
+    var pendingNotify = 0;
+    final sinceNotify = Stopwatch()..start();
+
+    void flushNotify() {
+      if (pendingNotify == 0) return;
+      pendingNotify = 0;
+      sinceNotify.reset();
+      iconsVersion.value++;
+    }
 
     for (final app in ordered) {
       if (_cancelLoading) break;
 
       final pkg = app['packageName'] as String;
-
       if (_icons.containsKey(pkg)) continue;
 
-      final rawIcon = await AppsService.getAppIcon(pkg);
+      _icons[pkg] = await AppsService.getAppIcon(pkg);
+      pendingNotify++;
 
-      if (rawIcon != null) {
-        final resized = await _resizeUltraLight(rawIcon);
-        _icons[pkg] = resized;
-      } else {
-        _icons[pkg] = null;
+      if (pendingNotify >= _notifyEvery || sinceNotify > _notifyInterval) {
+        flushNotify();
       }
-
-      // 🔥 уведомляем только слушателей
-      iconsVersion.value++;
-
-      // 🔥 микро-пауза чтобы UI не лагал
-      await Future.delayed(const Duration(milliseconds: 6));
     }
 
+    flushNotify();
     _loadingIcons = false;
   }
 
-  /// ===============================
-  /// Ресайз (28px)
-  /// ===============================
-  Future<Uint8List?> _resizeUltraLight(Uint8List data) async {
-    try {
-      final codec = await ui.instantiateImageCodec(
-        data,
-        targetWidth: 28,
-        targetHeight: 28,
-      );
-
-      final frame = await codec.getNextFrame();
-      final byteData =
-      await frame.image.toByteData(format: ui.ImageByteFormat.png);
-
-      return byteData?.buffer.asUint8List();
-    } catch (_) {
-      return data;
-    }
-  }
-
-  /// ===============================
-  /// Остановка загрузки
-  /// ===============================
   void cancelIconLoading() {
     _cancelLoading = true;
   }
+}
+
+extension on Stopwatch {
+  bool operator >(Duration d) => elapsed > d;
 }

@@ -10,14 +10,27 @@ class AppsService {
         .toList();
   }
 
+  /// Android-only: `Settings.Secure.ANDROID_ID` — stable per (device, user,
+  /// app signing key), survives app uninstall/reinstall. Null on any failure
+  /// (unsupported platform, plugin missing) — callers must fall back.
+  static Future<String?> getAndroidId() async {
+    try {
+      return await _channel.invokeMethod<String>('getAndroidId');
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<Uint8List?> getAppIcon(String packageName) async {
     final bytes = await _channel.invokeMethod(
       'getAppIcon',
       {"packageName": packageName},
     );
 
-    if (bytes == null) return null;
-
-    return Uint8List.fromList(List<int>.from(bytes));
+    // The platform channel already delivers byte arrays as Uint8List —
+    // avoid the old double copy through List<int>.
+    if (bytes is Uint8List) return bytes;
+    if (bytes is List) return Uint8List.fromList(bytes.cast<int>());
+    return null;
   }
 }

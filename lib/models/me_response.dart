@@ -1,5 +1,3 @@
-import 'package:flutter/foundation.dart';
-
 /// Model for the GET /mobile/v1/me response.
 class MeResponse {
   const MeResponse({
@@ -60,10 +58,18 @@ class MeSubscription {
     required this.deviceLimit,
     this.autopayEnabled = false,
     this.planName,
+    this.isReserveGrace = false,
   });
 
   final String status;
   final bool isTrial;
+
+  /// True when the real subscription has expired and this is a small,
+  /// temporary reserve-squad allowance — the backend reports [status] as
+  /// 'active' purely for its own bookkeeping, so every screen must check
+  /// this explicitly rather than trust [isActive] alone. See [isActive] /
+  /// [isExpired], which already fold this in.
+  final bool isReserveGrace;
 
   /// Unix timestamp (seconds) when subscription expires, or null if unlimited.
   final int? expireAt;
@@ -83,9 +89,9 @@ class MeSubscription {
   /// return this field.
   final String? planName;
 
-  bool get isActive => status == 'active';
+  bool get isActive => status == 'active' && !isReserveGrace;
 
-  bool get isExpired => status == 'expired';
+  bool get isExpired => status == 'expired' || isReserveGrace;
 
   /// Fraction [0,1] of traffic used. 0 when limit is unlimited.
   double get trafficFraction =>
@@ -105,9 +111,6 @@ class MeSubscription {
   }
 
   factory MeSubscription.fromJson(Map<String, dynamic> json) {
-    // Log subscription JSON keys once to help identify the plan-name field.
-    debugPrint('MeSubscription.fromJson keys: ${json.keys.toList()}');
-
     // Try several common field names for the tariff / plan label.
     final rawPlan =
         (json['plan_name']         as String?) ??
@@ -126,6 +129,7 @@ class MeSubscription {
       deviceLimit: (json['device_limit'] as num?)?.toInt() ?? 1,
       autopayEnabled: json['autopay_enabled'] as bool? ?? false,
       planName: (rawPlan?.isNotEmpty == true) ? rawPlan : null,
+      isReserveGrace: json['is_reserve_grace'] as bool? ?? false,
     );
   }
 }

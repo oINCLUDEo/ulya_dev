@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
 import '../config/app_config.dart';
+import 'app_logger.dart';
+import 'cabinet_http.dart';
 import 'auth_state.dart';
 
 /// Models for the subscription API responses.
@@ -396,6 +398,8 @@ class TariffInfo {
   final int deviceLimit;
   final int tierLevel;
   final List<TariffPeriod> periods;
+  /// Price per extra device per month, in kopeks. Null = not configurable.
+  final int? devicePriceKopeks;
 
   const TariffInfo({
     required this.id,
@@ -405,6 +409,7 @@ class TariffInfo {
     required this.deviceLimit,
     required this.tierLevel,
     required this.periods,
+    this.devicePriceKopeks,
   });
 
   /// Cheapest period (lowest total price — usually 1 month).
@@ -434,6 +439,7 @@ class TariffInfo {
       trafficLimitGb: (json['traffic_limit_gb'] as num?)?.toInt() ?? 0,
       deviceLimit: (json['device_limit'] as num?)?.toInt() ?? 1,
       tierLevel: (json['tier_level'] as num?)?.toInt() ?? 1,
+      devicePriceKopeks: (json['device_price_kopeks'] as num?)?.toInt(),
       periods: rawPeriods
           .whereType<Map<String, dynamic>>()
           .map(TariffPeriod.fromJson)
@@ -441,6 +447,92 @@ class TariffInfo {
     );
   }
 }
+
+/// Preview result from POST /mobile/v1/subscription/tariff/switch/preview
+class TariffSwitchPreview {
+  final bool canSwitch;
+  final int? currentTariffId;
+  final String? currentTariffName;
+  final int newTariffId;
+  final String newTariffName;
+  final int remainingDays;
+  final int upgradeCostKopeks;
+  final String upgradeCostLabel;
+  final int balanceKopeks;
+  final String balanceLabel;
+  final bool hasEnoughBalance;
+  final int missingAmountKopeks;
+  final String missingAmountLabel;
+  final bool isUpgrade;
+  // Device surcharge breakdown (non-null only when devices param was passed)
+  final int? baseSwitchCostKopeks;
+  final int? extraDeviceCostKopeks;
+  final int? devicesRequested;
+
+  const TariffSwitchPreview({
+    required this.canSwitch,
+    this.currentTariffId,
+    this.currentTariffName,
+    required this.newTariffId,
+    required this.newTariffName,
+    required this.remainingDays,
+    required this.upgradeCostKopeks,
+    required this.upgradeCostLabel,
+    required this.balanceKopeks,
+    required this.balanceLabel,
+    required this.hasEnoughBalance,
+    required this.missingAmountKopeks,
+    required this.missingAmountLabel,
+    required this.isUpgrade,
+    this.baseSwitchCostKopeks,
+    this.extraDeviceCostKopeks,
+    this.devicesRequested,
+  });
+
+  double get upgradeCostRub => upgradeCostKopeks / 100;
+  bool get isFree => upgradeCostKopeks == 0;
+  bool get hasDeviceBreakdown =>
+      extraDeviceCostKopeks != null && extraDeviceCostKopeks! > 0;
+
+  factory TariffSwitchPreview.fromJson(Map<String, dynamic> json) {
+    return TariffSwitchPreview(
+      canSwitch: json['can_switch'] as bool? ?? false,
+      currentTariffId: (json['current_tariff_id'] as num?)?.toInt(),
+      currentTariffName: json['current_tariff_name'] as String?,
+      newTariffId: (json['new_tariff_id'] as num?)?.toInt() ?? 0,
+      newTariffName: json['new_tariff_name'] as String? ?? '',
+      remainingDays: (json['remaining_days'] as num?)?.toInt() ?? 0,
+      upgradeCostKopeks: (json['upgrade_cost_kopeks'] as num?)?.toInt() ?? 0,
+      upgradeCostLabel: json['upgrade_cost_label'] as String? ?? '',
+      balanceKopeks: (json['balance_kopeks'] as num?)?.toInt() ?? 0,
+      balanceLabel: json['balance_label'] as String? ?? '',
+      hasEnoughBalance: json['has_enough_balance'] as bool? ?? false,
+      missingAmountKopeks: (json['missing_amount_kopeks'] as num?)?.toInt() ?? 0,
+      missingAmountLabel: json['missing_amount_label'] as String? ?? '',
+      isUpgrade: json['is_upgrade'] as bool? ?? false,
+      baseSwitchCostKopeks: (json['base_switch_cost_kopeks'] as num?)?.toInt(),
+      extraDeviceCostKopeks:
+          (json['extra_device_cost_kopeks'] as num?)?.toInt(),
+      devicesRequested: (json['devices_requested'] as num?)?.toInt(),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// In-memory cache notifiers — populated once on startup, shared across pages
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Last successfully fetched tariff list.  Pages read this immediately on
+/// mount so they never flash an empty state while the network request is in
+/// flight.
+final ValueNotifier<List<TariffInfo>?> tarifsNotifier =
+    ValueNotifier<List<TariffInfo>?>(null);
+
+/// Last successfully fetched subscription options (balance, periods, …).
+final ValueNotifier<SubscriptionOptions?> optionsNotifier =
+    ValueNotifier<SubscriptionOptions?>(null);
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Service for the mobile subscription API.
 class SubscriptionApiService {
@@ -455,6 +547,10 @@ class SubscriptionApiService {
       if (auth.telegramId != null) 'X-Telegram-Id': auth.telegramId.toString(),
     };
   }
+
+  /// GET helper that uses Cabinet Bearer auth (401 → refresh → retry).
+  static Future<http.Response?> _cabinetGet(String path) =>
+      CabinetHttp.get(path);
 
   /// Returns an HTTP client that routes through the local xray HTTP proxy
   /// (port 10808) when the VPN is active, so subscription API calls reach
@@ -502,21 +598,74 @@ class SubscriptionApiService {
     }
   }
 
+  static Future<http.Response> _delete(Uri uri) async {
+    final c = _makeClient();
+    try {
+      return await c
+          .delete(uri, headers: _headers())
+          .timeout(const Duration(seconds: 15));
+    } finally {
+      c.close();
+    }
+  }
+
   /// GET /mobile/v1/subscription/options
+  /// Falls back to Cabinet API for email-only users.
   static Future<SubscriptionOptions?> getOptions() async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _getOptionsCabinet();
+    }
     try {
       final resp = await _get(
         Uri.parse('$_base/mobile/v1/subscription/options'),
       );
       if (resp.statusCode == 200) {
-        return SubscriptionOptions.fromJson(
+        final opts = SubscriptionOptions.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        optionsNotifier.value = opts;
+        return opts;
       }
-      debugPrint('SubscriptionApiService.getOptions: ${resp.statusCode}');
+      appLogger.warning('Payment', 'getOptions: HTTP ${resp.statusCode}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.getOptions error: $e');
+      appLogger.error('Payment', 'getOptions: exception: $e');
+      return null;
+    }
+  }
+
+  /// Cabinet fallback for [getOptions] — parses /cabinet/subscription/purchase-options.
+  static Future<SubscriptionOptions?> _getOptionsCabinet() async {
+    try {
+      final resp = await _cabinetGet('/cabinet/subscription/purchase-options');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+
+      // Build a synthetic SubscriptionOptions from the Cabinet response.
+      // The Cabinet endpoint returns either tariff mode or classic mode data.
+      final balanceKopeks = (json['balance_kopeks'] as num?)?.toInt() ?? 0;
+      final hasSub = json['has_subscription'] as bool? ?? false;
+
+      // In classic mode the response has a 'periods' array directly.
+      // In tariff mode periods come from within each tariff object.
+      // Extract top-level periods if present (classic mode).
+      final rawPeriods = json['periods'] as List<dynamic>? ?? [];
+      final periods = rawPeriods
+          .whereType<Map<String, dynamic>>()
+          .map(PeriodOption.fromJson)
+          .toList();
+
+      final opts = SubscriptionOptions(
+        hasSubscription: hasSub,
+        periods: periods,
+        balanceKopeks: balanceKopeks,
+        balanceRub: balanceKopeks / 100,
+        currency: json['currency'] as String? ?? 'RUB',
+      );
+      optionsNotifier.value = opts;
+      return opts;
+    } on Exception catch (e) {
+      appLogger.error('Payment', '_getOptionsCabinet: exception: $e');
       return null;
     }
   }
@@ -544,10 +693,11 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.calcPrice: ${resp.statusCode} ${resp.body}');
+      appLogger.warning('Payment',
+          'calcPrice: periodId=$periodId HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.calcPrice error: $e');
+      appLogger.error('Payment', 'calcPrice: periodId=$periodId exception: $e');
       return null;
     }
   }
@@ -559,6 +709,8 @@ class SubscriptionApiService {
     int? devices,
     List<String>? servers,
   }) async {
+    appLogger.info('Payment',
+        'buySubscription: start periodId=$periodId traffic=$trafficValue devices=$devices');
     try {
       final body = <String, dynamic>{'period_id': periodId};
       if (trafficValue != null) body['traffic_value'] = trafficValue;
@@ -570,11 +722,17 @@ class SubscriptionApiService {
         jsonEncode(body),
       );
       if (resp.statusCode == 200) {
-        return BuyResult.fromJson(
+        final result = BuyResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'buySubscription: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.buySubscription: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'buySubscription: periodId=$periodId HTTP ${resp.statusCode} ${resp.body}');
       // Try to extract error detail
       try {
         final errBody = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -585,7 +743,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return BuyResult(status: 'error', message: 'Ошибка покупки подписки');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.buySubscription error: $e');
+      appLogger.error('Payment', 'buySubscription: periodId=$periodId exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -597,6 +755,8 @@ class SubscriptionApiService {
     int? devicesAdd,
     List<String>? servers,
   }) async {
+    appLogger.info('Payment',
+        'upgradeSubscription: start periodId=$periodId trafficAdd=$trafficAdd devicesAdd=$devicesAdd');
     try {
       final body = <String, dynamic>{};
       if (periodId != null) body['period_id'] = periodId;
@@ -610,15 +770,21 @@ class SubscriptionApiService {
       );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        return BuyResult(
+        final result = BuyResult(
           status: json['status'] as String? ?? 'error',
           message: json['message'] as String?,
           paymentUrl: json['payment_url'] as String?,
           amountKopeks: (json['amount_kopeks'] as num?)?.toInt(),
           subscription: json['subscription'] as Map<String, dynamic>?,
         );
+        appLogger.info('Payment',
+            'upgradeSubscription: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.upgradeSubscription: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'upgradeSubscription: HTTP ${resp.statusCode} ${resp.body}');
       try {
         final errBody = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = errBody['detail'] as String?;
@@ -628,7 +794,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return BuyResult(status: 'error', message: 'Ошибка улучшения подписки');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.upgradeSubscription error: $e');
+      appLogger.error('Payment', 'upgradeSubscription: exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -657,10 +823,11 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.calcUpgradePrice: ${resp.statusCode} ${resp.body}');
+      appLogger.warning('Payment',
+          'calcUpgradePrice: HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.calcUpgradePrice error: $e');
+      appLogger.error('Payment', 'calcUpgradePrice: exception: $e');
       return null;
     }
   }
@@ -674,27 +841,34 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint('SubscriptionApiService.getBalance: ${resp.statusCode}');
+      appLogger.warning('Payment', 'getBalance: HTTP ${resp.statusCode}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.getBalance error: $e');
+      appLogger.error('Payment', 'getBalance: exception: $e');
       return null;
     }
   }
 
   /// POST /mobile/v1/balance/topup
   static Future<TopupResult?> topupBalance({required int amountKopeks}) async {
+    appLogger.info('Payment', 'topupBalance: start amountKopeks=$amountKopeks');
     try {
       final resp = await _post(
         Uri.parse('$_base/mobile/v1/balance/topup'),
         jsonEncode({'amount_kopeks': amountKopeks}),
       );
       if (resp.statusCode == 200) {
-        return TopupResult.fromJson(
+        final result = TopupResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'topupBalance: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.topupBalance: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'topupBalance: amountKopeks=$amountKopeks HTTP ${resp.statusCode} ${resp.body}');
       try {
         final errBody = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = errBody['detail'] as String?;
@@ -702,17 +876,19 @@ class SubscriptionApiService {
       } catch (_) {}
       return const TopupResult(status: 'error', message: 'Ошибка пополнения баланса');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.topupBalance error: $e');
+      appLogger.error('Payment', 'topupBalance: amountKopeks=$amountKopeks exception: $e');
       return TopupResult(status: 'error', message: e.toString());
     }
   }
 
   /// GET /mobile/v1/tariffs
+  /// Falls back to Cabinet API for email-only users.
   static Future<List<TariffInfo>?> getTariffs() async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _getTariffsCabinet();
+    }
     try {
       final resp = await _get(Uri.parse('$_base/mobile/v1/tariffs'));
-      debugPrint('SubscriptionApiService.getTariffs: status=${resp.statusCode}');
-      debugPrint('SubscriptionApiService.getTariffs: body=${resp.body}');
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
         final raw = json['tariffs'] as List<dynamic>? ?? [];
@@ -720,21 +896,192 @@ class SubscriptionApiService {
             .whereType<Map<String, dynamic>>()
             .map(TariffInfo.fromJson)
             .toList();
-        debugPrint('SubscriptionApiService.getTariffs: parsed ${result.length} tariffs');
+        tarifsNotifier.value = result;
         return result;
       }
+      appLogger.warning('Payment', 'getTariffs: HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.getTariffs error: $e');
+      appLogger.error('Payment', 'getTariffs: exception: $e');
       return null;
     }
   }
 
+  /// Cabinet fallback for [getTariffs].
+  static Future<List<TariffInfo>?> _getTariffsCabinet() async {
+    try {
+      final resp = await _cabinetGet('/cabinet/subscription/purchase-options');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      // Cabinet purchase-options in tariff mode returns {"tariffs": [...], ...}
+      // The tariff objects share the same schema as the mobile API tariffs.
+      final raw = json['tariffs'] as List<dynamic>? ?? [];
+      final result = raw
+          .whereType<Map<String, dynamic>>()
+          .map(TariffInfo.fromJson)
+          .toList();
+      tarifsNotifier.value = result;
+      return result;
+    } on Exception catch (e) {
+      appLogger.error('Payment', '_getTariffsCabinet: exception: $e');
+      return null;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Trial subscription
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// GET /mobile/v1/subscription/trial — check trial availability.
+  /// Returns null when the endpoint is unavailable or an error occurs.
+  static Future<Map<String, dynamic>?> getTrialInfo() async {
+    try {
+      final resp = await _get(Uri.parse('$_base/mobile/v1/subscription/trial'));
+      if (resp.statusCode == 200) {
+        return jsonDecode(resp.body) as Map<String, dynamic>;
+      }
+      appLogger.warning('Payment', 'getTrialInfo: HTTP ${resp.statusCode}');
+      return null;
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'getTrialInfo: exception: $e');
+      return null;
+    }
+  }
+
+  /// POST /mobile/v1/subscription/trial — activate free trial.
+  static Future<BuyResult?> activateTrial() async {
+    appLogger.info('Payment', 'activateTrial: start');
+    try {
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/trial'),
+        '{}',
+      );
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        final success = json['success'] as bool? ?? false;
+        appLogger.info('Payment', 'activateTrial: result success=$success');
+        return BuyResult(
+          status: success ? 'success' : 'error',
+          message: json['message'] as String?,
+          subscription: json['subscription'] as Map<String, dynamic>?,
+        );
+      }
+      appLogger.error('Payment', 'activateTrial: HTTP ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+      } catch (_) {}
+      return const BuyResult(status: 'error', message: 'Ошибка активации пробного периода');
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'activateTrial: exception: $e');
+      return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
+  /// Cabinet fallback for [buyTariff] and [changeTariff].
+  ///
+  /// [isSwitch] = false → POST /cabinet/subscription/purchase-tariff
+  /// [isSwitch] = true  → POST /cabinet/subscription/tariff/switch
+  static Future<BuyResult?> _purchaseTariffCabinet({
+    required int tariffId,
+    required int periodDays,
+    required bool isSwitch,
+  }) async {
+    final path = isSwitch
+        ? '/cabinet/subscription/tariff/switch'
+        : '/cabinet/subscription/purchase-tariff';
+    appLogger.info('Payment',
+        '_purchaseTariffCabinet: start path=$path tariffId=$tariffId periodDays=$periodDays');
+    try {
+      final resp = await CabinetHttp.post(
+        path,
+        body: {'tariff_id': tariffId, 'period_days': periodDays},
+      );
+      if (resp == null) {
+        appLogger.error('Payment', '_purchaseTariffCabinet: no cabinet JWT available');
+        return const BuyResult(status: 'error', message: 'Не авторизован');
+      }
+
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        // Cabinet returns {success, message, subscription, ...}
+        final success = json['success'] as bool? ?? false;
+        appLogger.info('Payment', '_purchaseTariffCabinet: result success=$success');
+        return BuyResult(
+          status: success ? 'success' : 'error',
+          message: json['message'] as String?,
+          subscription: json['subscription'] as Map<String, dynamic>?,
+        );
+      }
+
+      appLogger.error('Payment',
+          '_purchaseTariffCabinet: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+      } catch (_) {}
+      return BuyResult(status: 'error', message: 'Ошибка сервера (${resp.statusCode})');
+    } on Exception catch (e) {
+      appLogger.error('Payment', '_purchaseTariffCabinet: tariffId=$tariffId exception: $e');
+      return BuyResult(status: 'error', message: 'Ошибка соединения: $e');
+    }
+  }
+
+  /// POST /cabinet/subscription/trial — activate trial via Cabinet JWT (email users).
+  ///
+  /// The Cabinet endpoint returns a full SubscriptionData object on success,
+  /// including `subscription_url` so the app can update its state immediately.
+  static Future<BuyResult?> activateCabinetTrial() async {
+    appLogger.info('Payment', 'activateCabinetTrial: start');
+    try {
+      final resp = await CabinetHttp.post(
+        '/cabinet/subscription/trial',
+        timeout: const Duration(seconds: 15),
+      );
+      if (resp == null) {
+        appLogger.error('Payment', 'activateCabinetTrial: no cabinet JWT available');
+        return const BuyResult(status: 'error', message: 'Не авторизован');
+      }
+
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        appLogger.info('Payment', 'activateCabinetTrial: result success');
+        // Cabinet returns SubscriptionData directly (subscription_url is at root)
+        return BuyResult(
+          status: 'success',
+          message: 'Пробная подписка активирована!',
+          subscription: json, // contains subscription_url, plan_name, etc.
+        );
+      }
+
+      appLogger.error('Payment',
+          'activateCabinetTrial: HTTP ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+      } catch (_) {}
+      return const BuyResult(status: 'error', message: 'Ошибка активации пробного периода');
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'activateCabinetTrial: exception: $e');
+      return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
   /// POST /mobile/v1/subscription/buy-tariff
+  /// Falls back to Cabinet /purchase-tariff for email-only users.
   static Future<BuyResult?> buyTariff({
     required int tariffId,
     required int periodDays,
   }) async {
+    appLogger.info('Payment',
+        'buyTariff: start tariffId=$tariffId periodDays=$periodDays');
+    if (authStateNotifier.value.isEmailAuth) {
+      return _purchaseTariffCabinet(
+          tariffId: tariffId, periodDays: periodDays, isSwitch: false);
+    }
     try {
       final body = {'tariff_id': tariffId, 'period_days': periodDays};
       final resp = await _post(
@@ -742,11 +1089,17 @@ class SubscriptionApiService {
         jsonEncode(body),
       );
       if (resp.statusCode == 200) {
-        return BuyResult.fromJson(
+        final result = BuyResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'buyTariff: result status=${result.status} '
+            'amountKopeks=${result.amountKopeks} '
+            'hasPaymentUrl=${result.paymentUrl != null}');
+        return result;
       }
-      debugPrint('SubscriptionApiService.buyTariff: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'buyTariff: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         // detail can be a string or a dict (insufficient_funds case)
@@ -761,7 +1114,7 @@ class SubscriptionApiService {
       } catch (_) {}
       return BuyResult(status: 'error', message: 'Ошибка покупки тарифа');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.buyTariff error: $e');
+      appLogger.error('Payment', 'buyTariff: tariffId=$tariffId exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
@@ -785,23 +1138,28 @@ class SubscriptionApiService {
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
       }
-      debugPrint(
-          'SubscriptionApiService.calcChangeTariffPrice: ${resp.statusCode} ${resp.body}');
+      appLogger.warning('Payment',
+          'calcChangeTariffPrice: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.calcChangeTariffPrice error: $e');
+      appLogger.error('Payment', 'calcChangeTariffPrice: tariffId=$tariffId exception: $e');
       return null;
     }
   }
 
   /// POST /mobile/v1/subscription/change-tariff
   /// Switches the active subscription to a different tariff with server-side
-  /// proration. For downgrades the server typically returns status='success'
-  /// with amount_kopeks=0.
+  /// proration. Falls back to Cabinet /tariff/switch for email-only users.
   static Future<BuyResult?> changeTariff({
     required int tariffId,
     required int periodDays,
   }) async {
+    appLogger.info('Payment',
+        'changeTariff: start tariffId=$tariffId periodDays=$periodDays');
+    if (authStateNotifier.value.isEmailAuth) {
+      return _purchaseTariffCabinet(
+          tariffId: tariffId, periodDays: periodDays, isSwitch: true);
+    }
     try {
       final body = {'tariff_id': tariffId, 'period_days': periodDays};
       final resp = await _post(
@@ -809,12 +1167,15 @@ class SubscriptionApiService {
         jsonEncode(body),
       );
       if (resp.statusCode == 200) {
-        return BuyResult.fromJson(
+        final result = BuyResult.fromJson(
           jsonDecode(resp.body) as Map<String, dynamic>,
         );
+        appLogger.info('Payment',
+            'changeTariff: result status=${result.status} amountKopeks=${result.amountKopeks}');
+        return result;
       }
-      debugPrint(
-          'SubscriptionApiService.changeTariff: ${resp.statusCode} ${resp.body}');
+      appLogger.error('Payment',
+          'changeTariff: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
       try {
         final err = jsonDecode(resp.body) as Map<String, dynamic>;
         final detail = err['detail'];
@@ -828,13 +1189,94 @@ class SubscriptionApiService {
       } catch (_) {}
       return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.changeTariff error: $e');
+      appLogger.error('Payment', 'changeTariff: tariffId=$tariffId exception: $e');
+      return BuyResult(status: 'error', message: e.toString());
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Tariff switch (proper prorated switch, keeps end_date)
+  // -------------------------------------------------------------------------
+
+  /// POST /mobile/v1/subscription/tariff/switch/preview
+  /// Returns cost preview without committing anything.
+  static Future<TariffSwitchPreview?> previewTariffSwitch({
+    required int tariffId,
+    int? devices,
+  }) async {
+    try {
+      final body = <String, dynamic>{'tariff_id': tariffId};
+      if (devices != null) body['devices'] = devices;
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/tariff/switch/preview'),
+        jsonEncode(body),
+        timeout: const Duration(seconds: 15),
+      );
+      if (resp.statusCode == 200) {
+        return TariffSwitchPreview.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      appLogger.warning('Payment',
+          'previewTariffSwitch: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
+      return null;
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'previewTariffSwitch: tariffId=$tariffId exception: $e');
+      return null;
+    }
+  }
+
+  /// POST /mobile/v1/subscription/tariff/switch
+  /// Executes tariff switch. Keeps existing end_date; charges difference for upgrades.
+  static Future<BuyResult?> switchTariff({
+    required int tariffId,
+    int? devices,
+  }) async {
+    appLogger.info('Payment', 'switchTariff: start tariffId=$tariffId devices=$devices');
+    try {
+      final body = <String, dynamic>{'tariff_id': tariffId};
+      if (devices != null) body['devices'] = devices;
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/subscription/tariff/switch'),
+        jsonEncode(body),
+      );
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        // Backend returns {success, charged_kopeks, new_tariff_name, ...}
+        // Map to BuyResult for uniform handling in the UI.
+        final success = json['success'] as bool? ?? false;
+        appLogger.info('Payment',
+            'switchTariff: result success=$success chargedKopeks=${json['charged_kopeks']}');
+        return BuyResult(
+          status: success ? 'success' : 'error',
+          message: json['message'] as String?,
+          amountKopeks: (json['charged_kopeks'] as num?)?.toInt(),
+          subscription: json['subscription'] as Map<String, dynamic>?,
+        );
+      }
+      appLogger.error('Payment',
+          'switchTariff: tariffId=$tariffId HTTP ${resp.statusCode} ${resp.body}');
+      try {
+        final err = jsonDecode(resp.body) as Map<String, dynamic>;
+        final detail = err['detail'];
+        if (detail is String) return BuyResult(status: 'error', message: detail);
+        if (detail is Map) {
+          return BuyResult(
+            status: 'error',
+            message: detail['message'] as String? ?? 'Ошибка смены тарифа',
+          );
+        }
+      } catch (_) {}
+      return const BuyResult(status: 'error', message: 'Ошибка смены тарифа');
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'switchTariff: tariffId=$tariffId exception: $e');
       return BuyResult(status: 'error', message: e.toString());
     }
   }
 
   /// PUT /mobile/v1/subscription/autopay
   static Future<bool?> setAutopay({required bool enabled}) async {
+    appLogger.info('Payment', 'setAutopay: start enabled=$enabled');
     try {
       final resp = await _put(
         Uri.parse('$_base/mobile/v1/subscription/autopay'),
@@ -842,13 +1284,252 @@ class SubscriptionApiService {
       );
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        return json['autopay_enabled'] as bool? ?? enabled;
+        final result = json['autopay_enabled'] as bool? ?? enabled;
+        appLogger.info('Payment', 'setAutopay: result autopayEnabled=$result');
+        return result;
       }
-      debugPrint('SubscriptionApiService.setAutopay: ${resp.statusCode}');
+      appLogger.error('Payment',
+          'setAutopay: enabled=$enabled HTTP ${resp.statusCode} ${resp.body}');
       return null;
     } on Exception catch (e) {
-      debugPrint('SubscriptionApiService.setAutopay error: $e');
+      appLogger.error('Payment', 'setAutopay: enabled=$enabled exception: $e');
       return null;
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Device management
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// GET /mobile/v1/devices
+  /// Falls back to Cabinet API for email-only users.
+  static Future<DevicesResult?> listDevices() async {
+    if (authStateNotifier.value.isEmailAuth) {
+      return _listDevicesCabinet();
+    }
+    try {
+      final resp = await _get(Uri.parse('$_base/mobile/v1/devices'));
+      if (resp.statusCode == 200) {
+        return DevicesResult.fromJson(
+          jsonDecode(resp.body) as Map<String, dynamic>,
+        );
+      }
+      appLogger.warning('Payment', 'listDevices: HTTP ${resp.statusCode}');
+      return null;
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'listDevices: exception: $e');
+      return null;
+    }
+  }
+
+  /// Cabinet fallback for [listDevices].
+  /// Cabinet returns {devices, total, device_limit} — mobile expects {devices, count, device_limit}.
+  static Future<DevicesResult?> _listDevicesCabinet() async {
+    try {
+      final resp = await _cabinetGet('/cabinet/subscription/devices');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      // Cabinet uses "total" instead of "count"
+      final normalized = Map<String, dynamic>.from(json);
+      normalized['count'] = json['total'] ?? json['count'] ?? 0;
+      return DevicesResult.fromJson(normalized);
+    } on Exception catch (e) {
+      appLogger.error('Payment', '_listDevicesCabinet: exception: $e');
+      return null;
+    }
+  }
+
+  /// DELETE /mobile/v1/devices — сбросить все устройства
+  static Future<bool> resetDevices() async {
+    appLogger.info('Payment', 'resetDevices: start');
+    try {
+      final resp = await _delete(Uri.parse('$_base/mobile/v1/devices'));
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        final ok = json['success'] as bool? ?? false;
+        appLogger.info('Payment', 'resetDevices: result success=$ok');
+        return ok;
+      }
+      appLogger.error('Payment', 'resetDevices: HTTP ${resp.statusCode}');
+      return false;
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'resetDevices: exception: $e');
+      return false;
+    }
+  }
+
+  /// POST /mobile/v1/devices/delete — удалить одно устройство по hwid
+  static Future<bool> deleteDevice({required String hwid}) async {
+    appLogger.info('Payment', 'deleteDevice: start hwid=$hwid');
+    try {
+      final resp = await _post(
+        Uri.parse('$_base/mobile/v1/devices/delete'),
+        jsonEncode({'hwid': hwid}),
+        timeout: const Duration(seconds: 15),
+      );
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        final ok = json['success'] as bool? ?? false;
+        appLogger.info('Payment', 'deleteDevice: result success=$ok hwid=$hwid');
+        return ok;
+      }
+      appLogger.error('Payment', 'deleteDevice: hwid=$hwid HTTP ${resp.statusCode}');
+      return false;
+    } on Exception catch (e) {
+      appLogger.error('Payment', 'deleteDevice: hwid=$hwid exception: $e');
+      return false;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Device management models
+// ─────────────────────────────────────────────────────────────────────────────
+
+class DeviceItem {
+  final String hwid;
+  /// Raw name / userAgent string from the API (legacy fallback).
+  final String? rawName;
+  /// OS platform returned directly by RemnaWave (Android, iOS, Windows, …).
+  final String? apiPlatform;
+  /// Hardware model returned directly by RemnaWave (Redmi Note 10 Pro, iPhone 14, …).
+  final String? apiDeviceModel;
+  final DateTime? createdAt;
+
+  const DeviceItem({
+    required this.hwid,
+    this.rawName,
+    this.apiPlatform,
+    this.apiDeviceModel,
+    this.createdAt,
+  });
+
+  /// VPN-client app name (first line in device row).
+  String get clientName {
+    final s = (rawName ?? '').toLowerCase();
+    if (s.isEmpty) return '';
+    // Our own app's User-Agent is "Happ/<ver>/Ulya/<ver>" — it deliberately
+    // mimics Happ's UA format so Remnawave treats it as a supported client.
+    // Check for our marker first, otherwise every device running this app
+    // would be mislabeled as the third-party "Happ" client.
+    if (s.contains('ulya')) return 'Ulya VPN';
+    if (s.contains('sing-box') || s.contains('singbox')) return 'sing-box';
+    if (s.contains('happ')) return 'Happ';
+    if (s.contains('v2rayng') || s.contains('v2ray-ng')) return 'v2rayNG';
+    if (s.contains('v2rayn')) return 'v2rayN';
+    if (s.contains('nekoray')) return 'Nekoray';
+    if (s.contains('nekobox')) return 'NekoBox';
+    if (s.contains('clashx')) return 'ClashX';
+    if (s.contains('flclash')) return 'FlClash';
+    if (s.contains('clash')) return 'Clash';
+    if (s.contains('shadowrocket')) return 'Shadowrocket';
+    if (s.contains('quantumult')) return 'Quantumult';
+    if (s.contains('streisand')) return 'Streisand';
+    if (s.contains('karing')) return 'Karing';
+    if (s.contains('mihomo')) return 'Mihomo';
+    // No known client — platform becomes the primary label
+    return '';
+  }
+
+  /// OS / platform: uses direct API field first, falls back to UA parsing.
+  String get platformName {
+    // Direct from RemnaWave API
+    final api = (apiPlatform ?? '').trim();
+    if (api.isNotEmpty) return api;
+    // Fallback: parse from UA string
+    final s = (rawName ?? '').toLowerCase();
+    if (s.isEmpty) return '';
+    if (s.contains('iphone')) return 'iPhone';
+    if (s.contains('ipad')) return 'iPad';
+    if (s.contains('ios')) return 'iOS';
+    if (s.contains('android')) return 'Android';
+    if (s.contains('windows')) return 'Windows';
+    if (s.contains('mac os x') || s.contains('macos')) return 'macOS';
+    if (s.contains('linux')) return 'Linux';
+    if (s.contains('okhttp') || s.contains('dart:io')) return 'Android';
+    return '';
+  }
+
+  /// Hardware model: uses direct API field first, falls back to UA parsing.
+  String? get deviceModel {
+    // Direct from RemnaWave API
+    final api = (apiDeviceModel ?? '').trim();
+    if (api.isNotEmpty) return api;
+    // Fallback: parse Android UA format
+    final s = rawName ?? '';
+    if (s.isEmpty) return null;
+    final m = RegExp(
+      r'\((?:Linux;\s*)?Android[^;]*;\s*([^;)]+?)(?:\s+Build[/;][^)]+)?\)',
+      caseSensitive: false,
+    ).firstMatch(s);
+    if (m != null) {
+      final raw = (m.group(1) ?? '').trim();
+      if (raw.isNotEmpty &&
+          !raw.toLowerCase().startsWith('android') &&
+          !RegExp(r'^[a-z]{2}-[A-Z]{2}$').hasMatch(raw)) {
+        return raw;
+      }
+    }
+    return null;
+  }
+
+  /// Primary display label — model > platform > client > raw fallback.
+  String get displayName {
+    final model = deviceModel;
+    if (model != null && model.isNotEmpty) return model;
+    final p = platformName;
+    if (p.isNotEmpty) return p;
+    final c = clientName;
+    if (c.isNotEmpty) return c;
+    final trimmed = rawName?.trim() ?? '';
+    return trimmed.length > 24 ? '${trimmed.substring(0, 22)}…' : trimmed;
+  }
+
+  /// Subtitle hint — platform when different from [displayName], null otherwise.
+  String? get displaySubtitle {
+    final client = clientName;
+    final platform = platformName;
+    if (client.isEmpty || platform.isEmpty) return null;
+    if (client.toLowerCase() == platform.toLowerCase()) return null;
+    return platform;
+  }
+
+  factory DeviceItem.fromJson(Map<String, dynamic> j) {
+    DateTime? dt;
+    final rawDate = j['created_at'] as String?;
+    if (rawDate != null) {
+      try { dt = DateTime.parse(rawDate); } catch (_) {}
+    }
+    return DeviceItem(
+      hwid: j['hwid'] as String? ?? '',
+      rawName: j['name'] as String?,
+      apiPlatform: j['platform'] as String?,
+      apiDeviceModel: j['device_model'] as String?,
+      createdAt: dt,
+    );
+  }
+}
+
+class DevicesResult {
+  final List<DeviceItem> devices;
+  final int count;
+  final int deviceLimit;
+
+  const DevicesResult({
+    required this.devices,
+    required this.count,
+    required this.deviceLimit,
+  });
+
+  factory DevicesResult.fromJson(Map<String, dynamic> j) {
+    final raw = j['devices'] as List<dynamic>? ?? [];
+    return DevicesResult(
+      devices: raw
+          .whereType<Map<String, dynamic>>()
+          .map(DeviceItem.fromJson)
+          .toList(),
+      count: (j['count'] as num?)?.toInt() ?? 0,
+      deviceLimit: (j['device_limit'] as num?)?.toInt() ?? 0,
+    );
   }
 }

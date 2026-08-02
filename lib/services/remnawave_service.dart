@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +13,7 @@ import '../config/app_config.dart';
 import '../models/server_node.dart';
 import '../models/subscription_info.dart';
 import '../models/vless_server.dart';
+import 'apps_service.dart';
 
 /// Service that fetches and parses the user's personal subscription URL.
 ///
@@ -58,6 +61,37 @@ class RemnawaveService {
   /// Whether the most recent [fetchNodes] call returned cached data.
   static bool get lastFetchWasFromCache => _lastFetchWasFromCache;
 
+  static List<String> _lastNotes = const [];
+
+  /// Admin status notes from the most recent [fetchNodes] call — the texts
+  /// Remnawave returns (as 0.0.0.0 sentinel entries) when the subscription is
+  /// blocked (HWID limit, expired, limited, disabled, no hosts). Empty when the
+  /// subscription is healthy.
+  static List<String> get lastNotes => _lastNotes;
+
+  /// Extracts the note text from a sentinel subscription line (host 0.0.0.0).
+  /// Returns null for real server links.
+  static String? _noteFromLink(String line) {
+    line = line.trim();
+    if (!line.contains('@0.0.0.0')) return null;
+    try {
+      final uri = Uri.parse(line);
+      if (uri.host != '0.0.0.0') return null;
+      final raw = uri.fragment.trim();
+      if (raw.isEmpty) return null;
+      // Uri.fragment is the raw, still percent-encoded string — decode it,
+      // same as VlessServer.fromUri does for display names. Without this the
+      // admin's note text renders as literal "%D0%..." gibberish.
+      try {
+        return Uri.decodeComponent(raw);
+      } catch (_) {
+        return raw;
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── Subscription URL storage ─────────────────────────────────────────────
 
   static Future<String> getSubscriptionUrl() async {
@@ -84,22 +118,88 @@ class RemnawaveService {
 
   // ── Device HWID ───────────────────────────────────────────────────────────
 
+  /// Secure storage used to recover the HWID across an app uninstall on iOS
+  /// (Keychain items survive app deletion, unlike SharedPreferences/UserDefaults).
+  static const FlutterSecureStorage _hwidStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+  static const String _secureHwidKey = 'device_hwid_keychain';
+
   /// Returns the stable hardware ID for this device installation.
   ///
-  /// On first call a random UUID-v4-like string is generated and persisted in
-  /// SharedPreferences.  Subsequent calls return the same value so the
-  /// subscription server sees a consistent device identity.
+  /// Cached in SharedPreferences once resolved — existing installs keep
+  /// whatever value they already have (no disruption on app update). Only a
+  /// genuinely empty cache (first install, or after a reinstall) triggers
+  /// [_resolveStableHwid], which tries to recover/derive a HWID that survives
+  /// reinstall instead of generating a fresh random one every time.
   static Future<String> getOrCreateHwid() async {
     final prefs = await SharedPreferences.getInstance();
     final existing = prefs.getString(_prefHwid);
     if (existing != null && existing.isNotEmpty) return existing;
 
-    final hwid = _generateUuid();
+    final hwid = await _resolveStableHwid();
     await prefs.setString(_prefHwid, hwid);
     return hwid;
   }
 
-  /// Generates a random UUID v4 string without external dependencies.
+  /// Resolves a HWID that ideally survives an app uninstall/reinstall, so the
+  /// same physical device doesn't consume a fresh slot against the account's
+  /// device limit every time the user reinstalls the app.
+  ///
+  ///  * Android: derived deterministically from `Settings.Secure.ANDROID_ID`
+  ///    — stable per (device, user, app signing key), survives reinstall.
+  ///    Changes only on factory reset or a different signing certificate.
+  ///  * iOS: there's no OS-level identifier that survives a *full* uninstall
+  ///    (Apple resets `identifierForVendor` once every app from the vendor is
+  ///    gone — and this is a single-app vendor). Instead we persist the HWID
+  ///    itself in the Keychain, which — unlike UserDefaults — is NOT wiped on
+  ///    uninstall, so a reinstall recovers the previous value.
+  ///  * Any failure (unsupported platform, plugin error, first run with
+  ///    nothing to recover) falls back to a random UUID, same as before.
+  static Future<String> _resolveStableHwid() async {
+    try {
+      if (Platform.isAndroid) {
+        final androidId = await AppsService.getAndroidId();
+        if (androidId != null && androidId.isNotEmpty) {
+          return _deriveUuidFrom('android:$androidId');
+        }
+      } else if (Platform.isIOS) {
+        final recovered = await _hwidStorage.read(key: _secureHwidKey);
+        if (recovered != null && recovered.isNotEmpty) return recovered;
+      }
+    } catch (e) {
+      debugPrint('RemnawaveService: stable hwid derivation failed: $e');
+    }
+
+    final hwid = _generateUuid();
+    if (Platform.isIOS) {
+      // Stash it in the Keychain so a future reinstall can recover it.
+      try {
+        await _hwidStorage.write(key: _secureHwidKey, value: hwid);
+      } catch (_) {}
+    }
+    return hwid;
+  }
+
+  /// Deterministic UUID-v4-shaped string derived from [seed] — the same seed
+  /// always produces the same output (unlike [_generateUuid]'s random bytes),
+  /// so re-deriving from the same ANDROID_ID after a reinstall yields the
+  /// identical HWID.
+  static String _deriveUuidFrom(String seed) {
+    final digest = sha256.convert(utf8.encode('ulya-vpn-hwid-v1:$seed'));
+    final bytes = digest.bytes.sublist(0, 16);
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    String h(int b) => b.toRadixString(16).padLeft(2, '0');
+    return '${bytes.sublist(0, 4).map(h).join()}'
+        '-${bytes.sublist(4, 6).map(h).join()}'
+        '-${bytes.sublist(6, 8).map(h).join()}'
+        '-${bytes.sublist(8, 10).map(h).join()}'
+        '-${bytes.sublist(10, 16).map(h).join()}';
+  }
+
+  /// Generates a random UUID v4 string without external dependencies — the
+  /// fallback when no stable device anchor is available.
   static String _generateUuid() {
     final bytes = List<int>.generate(16, (_) => _rng.nextInt(256));
     // Set version bits (v4) and variant bits per RFC 4122.
@@ -178,11 +278,24 @@ class RemnawaveService {
       _lastSubscriptionInfo = _parseSubscriptionInfo(response.headers);
 
       final lines = _parseSubscriptionBody(response.body);
-      final nodes = lines
-          .map(_parseConfigLink)
-          .whereType<ServerNode>()
+      // Blocked states (HWID limit, expired, limited, disabled, no hosts) come
+      // back as sentinel entries pointing at 0.0.0.0, with the admin's note
+      // text (placeholders already resolved) in the fragment. Pull those out
+      // as status notes and keep them out of the real server list.
+      _lastNotes = [
+        for (final line in lines) ?_noteFromLink(line),
+      ];
+      final jsonConfigs = lines
+          .map(_tryDecodeJsonConfig)
+          .whereType<Map<String, dynamic>>()
           .toList();
-      debugPrint('RemnawaveService: loaded ${nodes.length} nodes');
+      final proxyOutboundsByUuid = _collectProxyOutboundsByUuid(jsonConfigs);
+      final nodes = lines
+          .map((line) => _parseConfigLink(line, proxyOutboundsByUuid))
+          .whereType<ServerNode>()
+          .where((n) => n.address != '0.0.0.0')
+          .toList();
+      debugPrint('RemnawaveService: loaded ${nodes.length} nodes, ${_lastNotes.length} notes');
 
       // Persist to cache for offline use.
       await _saveToCache(nodes, _lastSubscriptionInfo);
@@ -433,6 +546,97 @@ class RemnawaveService {
         .toList();
   }
 
+  static Map<String, dynamic>? _tryDecodeJsonConfig(String raw) {
+    final trimmed = raw.trim();
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      return jsonDecode(trimmed) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Map<String, dynamic> _deepCloneJsonMap(Map<String, dynamic> source) =>
+      jsonDecode(jsonEncode(source)) as Map<String, dynamic>;
+
+  static Map<String, Map<String, dynamic>> _collectProxyOutboundsByUuid(
+      List<Map<String, dynamic>> configs) {
+    final result = <String, Map<String, dynamic>>{};
+    for (final cfg in configs) {
+      final allOutbounds = cfg['outbounds'] as List<dynamic>? ?? const [];
+      final proxy = allOutbounds
+          .whereType<Map<String, dynamic>>()
+          .firstWhere(
+            (ob) => !{'freedom', 'blackhole', 'dns', 'loopback'}.contains(
+                (ob['protocol'] as String? ?? '').toLowerCase()),
+            orElse: () => const {},
+          );
+      if (proxy.isEmpty) continue;
+      final uuids = _extractConfigUuids(cfg);
+      if (uuids.isEmpty) continue;
+      for (final id in uuids) {
+        // Deep-clone to avoid mutating shared references when re-tagging.
+        result[id] = _deepCloneJsonMap(proxy);
+      }
+    }
+    return result;
+  }
+
+  static List<String> _extractConfigUuids(Map<String, dynamic> cfg) {
+    final ids = <String>{};
+
+    void add(dynamic v) {
+      final s = v?.toString().trim();
+      if (s == null || s.isEmpty) return;
+      if (RegExp(
+        r'^[0-9a-fA-F]{8}-'
+        r'[0-9a-fA-F]{4}-'
+        r'[0-9a-fA-F]{4}-'
+        r'[0-9a-fA-F]{4}-'
+        r'[0-9a-fA-F]{12}$',
+      ).hasMatch(s)) {
+        ids.add(s.toLowerCase());
+      }
+    }
+
+    add(cfg['uuid']);
+    add(cfg['serverUuid']);
+    final meta = cfg['meta'] as Map<String, dynamic>?;
+    add(meta?['uuid']);
+    add(meta?['serverUuid']);
+
+    return ids.toList();
+  }
+
+  static List<Map<String, dynamic>> _injectRemnawaveOutbounds(
+    Map<String, dynamic> json,
+    Map<String, Map<String, dynamic>> proxyOutboundsByUuid,
+  ) {
+    final remnawave = json['remnawave'] as Map<String, dynamic>?;
+    final injectHosts = remnawave?['injectHosts'] as List<dynamic>?;
+    if (injectHosts == null || injectHosts.isEmpty) return const [];
+
+    final injected = <Map<String, dynamic>>[];
+    for (final raw in injectHosts.whereType<Map<String, dynamic>>()) {
+      final selector = raw['selector'] as Map<String, dynamic>?;
+      final values = selector?['values'] as List<dynamic>? ?? const [];
+      final tagPrefixRaw = raw['tagPrefix']?.toString().trim() ?? '';
+      final tagPrefix = tagPrefixRaw.isEmpty ? 'proxy' : tagPrefixRaw;
+      var idx = 0;
+
+      for (final value in values) {
+        final key = value.toString().trim().toLowerCase();
+        final template = proxyOutboundsByUuid[key];
+        if (template == null) continue;
+        final outbound = _deepCloneJsonMap(template);
+        outbound['tag'] = idx == 0 ? tagPrefix : '$tagPrefix-$idx';
+        injected.add(outbound);
+        idx++;
+      }
+    }
+    return injected;
+  }
+
   // ── Subscription info header ──────────────────────────────────────────────
 
   /// Parses the `Subscription-Userinfo` header into a [SubscriptionInfo].
@@ -514,14 +718,17 @@ class RemnawaveService {
   /// fully-typed parameters (flow, sni, fp, pbk, etc.) ready for Stage 4.
   ///
   /// Returns `null` for unrecognised or malformed links.
-  static ServerNode? _parseConfigLink(String link) {
+  static ServerNode? _parseConfigLink(
+    String link,
+    Map<String, Map<String, dynamic>> proxyOutboundsByUuid,
+  ) {
     try {
       link = link.trim();
       if (link.isEmpty) return null;
 
       // ── Full Xray JSON config ──────────────────────────────────────────
       if (link.startsWith('{')) {
-        return _parseXrayJsonConfig(link);
+        return _parseXrayJsonConfig(link, proxyOutboundsByUuid);
       }
 
       final uri = Uri.parse(link);
@@ -611,7 +818,10 @@ class RemnawaveService {
   /// For **virtual/balanced hosts** the routing.balancers + rules are preserved
   /// (they contain the load-balancing logic), but inbounds are stripped and
   /// DNS is simplified.
-  static ServerNode? _parseXrayJsonConfig(String jsonStr) {
+  static ServerNode? _parseXrayJsonConfig(
+    String jsonStr,
+    Map<String, Map<String, dynamic>> proxyOutboundsByUuid,
+  ) {
     try {
       final json = jsonDecode(jsonStr) as Map<String, dynamic>;
 
@@ -640,6 +850,14 @@ class RemnawaveService {
           .where((ob) => !skipProtocols.contains(
               (ob['protocol'] as String? ?? '').toLowerCase()))
           .toList();
+      final injectedOutbounds = proxyOutbounds.isEmpty
+          ? _injectRemnawaveOutbounds(json, proxyOutboundsByUuid)
+          : const <Map<String, dynamic>>[];
+      final mobileOutbounds = [...allOutbounds, ...injectedOutbounds];
+      final hasProxyTargets = mobileOutbounds
+          .whereType<Map<String, dynamic>>()
+          .any((ob) => !skipProtocols.contains(
+              (ob['protocol'] as String? ?? '').toLowerCase()));
 
       // ── Detect virtual / balanced host ────────────────────────────────────
       final routing   = json['routing'] as Map<String, dynamic>?;
@@ -661,43 +879,65 @@ class RemnawaveService {
         // mobile.  Keep only rules that reference a balancerTag (load-balancer
         // dispatch) and add a minimal bittorrent-block rule.  All other traffic
         // is forwarded by the balancer outbound.
-        // TODO: Уточнить нужду этих правил
         final desktopRules =
             (routing?['rules'] as List<dynamic>?)?.whereType<Map<String, dynamic>>().toList()
             ?? <Map<String, dynamic>>[];
 
-        final mobileRules = <Map<String, dynamic>>[
-          // Block torrents — simple port-based rule, no geo assets needed.
-          {'type': 'field', 'network': 'tcp,udp', 'protocol': ['bittorrent'], 'outboundTag': 'blackhole'},
-          // Keep every rule that dispatches via a balancer (load-balancing logic).
-          ...desktopRules.where((r) => r.containsKey('balancerTag')),
-        ];
+        // Keep rules from original config that don't need geo asset files.
+        // This preserves correct outbound tags (e.g. "block") and balancer rules.
+        // Geo rules (geoip:/geosite:) are dropped — those files aren't on mobile.
+        final mobileRules = desktopRules.where((r) {
+          final ip = r['ip'] as List<dynamic>?;
+          final domain = r['domain'] as List<dynamic>?;
+          if (ip != null && ip.any((e) => e.toString().startsWith('geoip:'))) return false;
+          if (domain != null && domain.any((e) => e.toString().startsWith('geosite:'))) return false;
+          return true;
+        }).toList();
 
-        final mobileJson = jsonEncode({
-          'log':      {'loglevel': 'warning'},
-          'dns':      {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
-          'inbounds': [_socksInbound],
-          'outbounds': allOutbounds,  // keep all — balancer references them
-          'routing':  {
+        // burstObservatory is required for leastLoad/leastPing balancer strategies:
+        // without it xray has no latency measurements and balancers can't pick
+        // the best outbound. Preserve from original; generate a fallback if absent.
+        final origObservatory = json['burstObservatory'] as Map<String, dynamic>?;
+        final observatory = origObservatory ?? _buildObservatory(
+            (balancers ?? []).whereType<Map<String, dynamic>>().toList());
+
+        // policy controls connection idle/handshake timeouts needed by balancers.
+        final policy = json['policy'] as Map<String, dynamic>?;
+
+        final mobileMap = <String, dynamic>{
+          'log':             {'loglevel': 'warning'},
+          'dns':             {'servers': ['1.1.1.1', '1.0.0.1'], 'queryStrategy': 'UseIP'},
+          'inbounds':        [_socksInbound],
+          // Keep original outbounds (balancer references them) and append
+          // remnawave-injected proxies.
+          'outbounds':       mobileOutbounds,
+          'routing':         {
             'domainStrategy': routing?['domainStrategy'] ?? 'IPIfNonMatch',
             'domainMatcher':  'hybrid',
-            'rules':    mobileRules,
-            'balancers': balancers ?? [],
+            'rules':          mobileRules,
+            'balancers':      balancers ?? [],
           },
-        });
+          'burstObservatory': observatory,
+        };
+        if (policy != null) mobileMap['policy'] = policy;
 
-        final name = rawRemarks.isNotEmpty ? _cleanServerName(rawRemarks) : 'Авто-выбор';
+        final mobileJson = jsonEncode(mobileMap);
+
+        final name     = _parseAutoName(rawRemarks);
+        final autoType = _parseAutoType(rawRemarks);
         return ServerNode(
-          uuid:        mobileJson,
+          uuid:        'auto:$rawRemarks',
           name:        name,
           address:     '',
           serverPort:  443,
           countryCode: '',
           isConnected: true,
-          isDisabled:  false,
-          link:        mobileJson,
+          isDisabled:  !hasProxyTargets,
+          link:        hasProxyTargets ? mobileJson : null,
           protocol:    'auto',
-          description: serverDescription ?? rawRemarks,
+          // description stores the connection type label ("Wi-Fi | 4G") so
+          // the UI can show it as a subtitle under the server name.
+          description: autoType ?? serverDescription ?? rawRemarks,
         );
       }
 
@@ -823,5 +1063,64 @@ class RemnawaveService {
     if (prefixMatch != null) return prefixMatch.group(1)!;
 
     return '';
+  }
+
+  // ── Auto-server name helpers ──────────────────────────────────────────────
+
+  /// Extracts the display name for an auto/balanced server from its remarks.
+  ///
+  /// Input:  "🇪🇺 Wi-Fi | 4G  · Авто-Подключение"
+  /// Output: "Авто-подключение"
+  static String _parseAutoName(String remarks) {
+    if (remarks.isEmpty) return 'Авто-подключение';
+    final cleaned = _cleanServerName(remarks); // strips flag emoji
+    final dot = cleaned.indexOf('·');
+    if (dot >= 0) {
+      final after = cleaned.substring(dot + 1).trim();
+      if (after.isNotEmpty) return after;
+    }
+    return cleaned.isNotEmpty ? cleaned : 'Авто-подключение';
+  }
+
+  /// Extracts the connection-type subtitle for an auto server (e.g. "Wi-Fi | 4G").
+  ///
+  /// Input:  "🇪🇺 Wi-Fi | 4G  · Авто-Подключение"
+  /// Output: "Wi-Fi | 4G"
+  static String? _parseAutoType(String remarks) {
+    if (remarks.isEmpty) return null;
+    final cleaned = _cleanServerName(remarks);
+    final dot = cleaned.indexOf('·');
+    if (dot > 0) {
+      final before = cleaned.substring(0, dot).trim();
+      if (before.isNotEmpty) return before;
+    }
+    return null;
+  }
+
+  // ── Observatory builder ───────────────────────────────────────────────────
+
+  /// Builds a `burstObservatory` config from balancer definitions.
+  ///
+  /// Xray's `leastLoad` and `leastPing` balancer strategies require an
+  /// observatory to measure outbound latency. The `subjectSelector` is the
+  /// union of all balancer `selector` arrays — xray matches outbound tags by
+  /// prefix, so `["wifi", "mobile"]` covers `wifi`, `wifi-2`, `mobile`, etc.
+  static Map<String, dynamic> _buildObservatory(
+      List<Map<String, dynamic>> balancers) {
+    final selectors = <String>{};
+    for (final b in balancers) {
+      final sel = b['selector'] as List<dynamic>?;
+      if (sel != null) selectors.addAll(sel.whereType<String>());
+    }
+    return {
+      'pingConfig': {
+        'connectivity': '',
+        'destination':  'http://www.gstatic.com/generate_204',
+        'interval':     '15s',
+        'sampling':     1,
+        'timeout':      '3s',
+      },
+      'subjectSelector': selectors.toList(),
+    };
   }
 }

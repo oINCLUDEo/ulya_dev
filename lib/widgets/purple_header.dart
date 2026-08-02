@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../theme/app_colors.dart';
+import '../main.dart' show DS;
 
 class PurpleHeader extends StatelessWidget {
   final String title;
@@ -23,11 +23,10 @@ class PurpleHeader extends StatelessWidget {
       children: [
         // Левая часть: заголовок + подзаголовок + BETA
         Container(
-          // Тут добавляем свечение
           decoration: BoxDecoration(
             boxShadow: [
               BoxShadow(
-                color: AppColors.primary.withValues(alpha: 0.35),
+                color: DS.violet.withValues(alpha: 0.35),
                 blurRadius: 24,
                 spreadRadius: -8,
               ),
@@ -38,24 +37,27 @@ class PurpleHeader extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  // Основной заголовок
                   Text(
                     title,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w900,
-                      color: AppColors.textMain,
+                    style: const TextStyle(
+                      color: DS.textPrimary,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
                       letterSpacing: 0.4,
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // BETA плашка
                   if (showBeta)
                     Container(
                       padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        gradient: AppColors.gradientAccent,
-                        borderRadius: BorderRadius.circular(8),
+                        gradient: const LinearGradient(
+                          colors: [DS.violet, DS.violetDim],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(DS.radiusXs),
                         border: Border.all(
                           color: Colors.white.withValues(alpha: 0.08),
                         ),
@@ -64,7 +66,7 @@ class PurpleHeader extends StatelessWidget {
                         'BETA',
                         style: TextStyle(
                           fontSize: 10,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w600,
                           color: Colors.white,
                           letterSpacing: 0.8,
                         ),
@@ -79,9 +81,9 @@ class PurpleHeader extends StatelessWidget {
                   child: Text(
                     subtitle!,
                     key: ValueKey(subtitle),
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 12.5,
+                    style: const TextStyle(
+                      color: DS.textSecondary,
+                      fontSize: 14,
                     ),
                   ),
                 ),
@@ -89,7 +91,6 @@ class PurpleHeader extends StatelessWidget {
             ],
           ),
         ),
-        // Правая часть: кастомный виджет
         ?trailing,
       ],
     );

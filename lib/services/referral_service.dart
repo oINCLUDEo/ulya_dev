@@ -1,0 +1,352 @@
+import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
+import '../config/app_config.dart';
+import 'app_logger.dart';
+import 'auth_state.dart';
+import 'cabinet_http.dart';
+
+/// User-facing referral state, sourced from
+/// `GET /cabinet/referral` (Bearer JWT, Cabinet API).
+///
+/// Numeric fields are stored both in kopeks (as the backend ships them) and
+/// rubles (the convenience double) so UI can pick whichever it needs.
+class ReferralInfo {
+  final String referralCode;
+  /// Public web link a friend opens to register with the code applied.
+  final String referralLink;
+  /// `t.me/<bot>?start=ref_<code>` — preferred share target on mobile.
+  final String botReferralLink;
+  final int totalReferrals;
+  final int activeReferrals;
+  final int totalEarningsKopeks;
+  final double totalEarningsRubles;
+  final int commissionPercent;
+  final int availableBalanceKopeks;
+  final double availableBalanceRubles;
+  final int withdrawnKopeks;
+
+  const ReferralInfo({
+    required this.referralCode,
+    required this.referralLink,
+    required this.botReferralLink,
+    required this.totalReferrals,
+    required this.activeReferrals,
+    required this.totalEarningsKopeks,
+    required this.totalEarningsRubles,
+    required this.commissionPercent,
+    required this.availableBalanceKopeks,
+    required this.availableBalanceRubles,
+    required this.withdrawnKopeks,
+  });
+
+  factory ReferralInfo.fromJson(Map<String, dynamic> j) => ReferralInfo(
+        referralCode: j['referral_code'] as String? ?? '',
+        referralLink: j['referral_link'] as String? ?? '',
+        botReferralLink: j['bot_referral_link'] as String? ?? '',
+        totalReferrals: (j['total_referrals'] as num?)?.toInt() ?? 0,
+        activeReferrals: (j['active_referrals'] as num?)?.toInt() ?? 0,
+        totalEarningsKopeks: (j['total_earnings_kopeks'] as num?)?.toInt() ?? 0,
+        totalEarningsRubles: (j['total_earnings_rubles'] as num?)?.toDouble() ?? 0.0,
+        commissionPercent: (j['commission_percent'] as num?)?.toInt() ?? 0,
+        availableBalanceKopeks: (j['available_balance_kopeks'] as num?)?.toInt() ?? 0,
+        availableBalanceRubles: (j['available_balance_rubles'] as num?)?.toDouble() ?? 0.0,
+        withdrawnKopeks: (j['withdrawn_kopeks'] as num?)?.toInt() ?? 0,
+      );
+
+  /// Preferred share text — keeps it short for messengers and inserts the
+  /// canonical bot link so a friend lands directly in the bot with the code
+  /// pre-applied.
+  String get shareText {
+    final link = botReferralLink.isNotEmpty ? botReferralLink : referralLink;
+    return 'Подключайся к Ulya VPN по моему приглашению: $link';
+  }
+}
+
+/// Single referred friend (item of /cabinet/referral/list).
+class ReferralFriend {
+  final int id;
+  final String? username;
+  final String? firstName;
+  final DateTime? createdAt;
+  final bool hasSubscription;
+  final bool hasPaid;
+
+  const ReferralFriend({
+    required this.id,
+    this.username,
+    this.firstName,
+    this.createdAt,
+    required this.hasSubscription,
+    required this.hasPaid,
+  });
+
+  factory ReferralFriend.fromJson(Map<String, dynamic> j) => ReferralFriend(
+        id: (j['id'] as num?)?.toInt() ?? 0,
+        username: j['username'] as String?,
+        firstName: j['first_name'] as String?,
+        createdAt: DateTime.tryParse(j['created_at'] as String? ?? ''),
+        hasSubscription: j['has_subscription'] as bool? ?? false,
+        hasPaid: j['has_paid'] as bool? ?? false,
+      );
+
+  /// Initials for the avatar placeholder. Uses first_name if available,
+  /// then username, then "??".
+  String get initials {
+    final src = (firstName?.isNotEmpty == true ? firstName : username) ?? '';
+    if (src.isEmpty) return '??';
+    final parts = src.trim().split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return src.substring(0, src.length >= 2 ? 2 : 1).toUpperCase();
+  }
+
+  String get displayName {
+    if (firstName?.isNotEmpty == true) return firstName!;
+    if (username?.isNotEmpty == true) return '@$username';
+    return 'Пользователь';
+  }
+}
+
+class ReferralListPage {
+  final List<ReferralFriend> items;
+  final int total;
+  final int page;
+  final int perPage;
+  final int pages;
+
+  const ReferralListPage({
+    required this.items,
+    required this.total,
+    required this.page,
+    required this.perPage,
+    required this.pages,
+  });
+
+  factory ReferralListPage.fromJson(Map<String, dynamic> j) {
+    final raw = (j['items'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(ReferralFriend.fromJson)
+        .toList();
+    return ReferralListPage(
+      items: raw,
+      total: (j['total'] as num?)?.toInt() ?? 0,
+      page: (j['page'] as num?)?.toInt() ?? 1,
+      perPage: (j['per_page'] as num?)?.toInt() ?? raw.length,
+      pages: (j['pages'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
+/// Single earning event (item of /cabinet/referral/earnings).
+class ReferralEarning {
+  final int id;
+  final int amountKopeks;
+  final double amountRubles;
+  final String reason;
+  final String? referralUsername;
+  final String? referralFirstName;
+  final String? campaignName;
+  final DateTime? createdAt;
+
+  const ReferralEarning({
+    required this.id,
+    required this.amountKopeks,
+    required this.amountRubles,
+    required this.reason,
+    this.referralUsername,
+    this.referralFirstName,
+    this.campaignName,
+    this.createdAt,
+  });
+
+  factory ReferralEarning.fromJson(Map<String, dynamic> j) => ReferralEarning(
+        id: (j['id'] as num?)?.toInt() ?? 0,
+        amountKopeks: (j['amount_kopeks'] as num?)?.toInt() ?? 0,
+        amountRubles: (j['amount_rubles'] as num?)?.toDouble() ?? 0.0,
+        reason: j['reason'] as String? ?? '',
+        referralUsername: j['referral_username'] as String?,
+        referralFirstName: j['referral_first_name'] as String?,
+        campaignName: j['campaign_name'] as String?,
+        createdAt: DateTime.tryParse(j['created_at'] as String? ?? ''),
+      );
+}
+
+class ReferralEarningsPage {
+  final List<ReferralEarning> items;
+  final int total;
+  final int totalAmountKopeks;
+  final double totalAmountRubles;
+  final int page;
+  final int perPage;
+  final int pages;
+
+  const ReferralEarningsPage({
+    required this.items,
+    required this.total,
+    required this.totalAmountKopeks,
+    required this.totalAmountRubles,
+    required this.page,
+    required this.perPage,
+    required this.pages,
+  });
+
+  factory ReferralEarningsPage.fromJson(Map<String, dynamic> j) {
+    final raw = (j['items'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(ReferralEarning.fromJson)
+        .toList();
+    return ReferralEarningsPage(
+      items: raw,
+      total: (j['total'] as num?)?.toInt() ?? 0,
+      totalAmountKopeks: (j['total_amount_kopeks'] as num?)?.toInt() ?? 0,
+      totalAmountRubles: (j['total_amount_rubles'] as num?)?.toDouble() ?? 0.0,
+      page: (j['page'] as num?)?.toInt() ?? 1,
+      perPage: (j['per_page'] as num?)?.toInt() ?? raw.length,
+      pages: (j['pages'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
+/// Terms of the referral programme — used to label the "earn N% from every
+/// payment of your friends" CTA.
+class ReferralTerms {
+  final bool isEnabled;
+  final int commissionPercent;
+  final double minimumTopupRubles;
+  final double firstTopupBonusRubles;
+  final double inviterBonusRubles;
+  final bool partnerSectionVisible;
+
+  const ReferralTerms({
+    required this.isEnabled,
+    required this.commissionPercent,
+    required this.minimumTopupRubles,
+    required this.firstTopupBonusRubles,
+    required this.inviterBonusRubles,
+    required this.partnerSectionVisible,
+  });
+
+  factory ReferralTerms.fromJson(Map<String, dynamic> j) => ReferralTerms(
+        isEnabled: j['is_enabled'] as bool? ?? false,
+        commissionPercent: (j['commission_percent'] as num?)?.toInt() ?? 0,
+        minimumTopupRubles: (j['minimum_topup_rubles'] as num?)?.toDouble() ?? 0.0,
+        firstTopupBonusRubles: (j['first_topup_bonus_rubles'] as num?)?.toDouble() ?? 0.0,
+        inviterBonusRubles: (j['inviter_bonus_rubles'] as num?)?.toDouble() ?? 0.0,
+        partnerSectionVisible: j['partner_section_visible'] as bool? ?? false,
+      );
+}
+
+/// Lightweight client for the Cabinet referral endpoints.
+///
+/// Auth model: all endpoints (except /terms) require Bearer JWT — the same
+/// `cabinetAccessToken` issued by email login. Telegram-only users currently
+/// don't have a JWT, so [getInfo] returns null for them and the UI falls back
+/// to a "open in Telegram bot" CTA.
+class ReferralService {
+  ReferralService._();
+
+  static String get _base => AppConfig.backendBaseUrl;
+
+  /// GET with the strongest auth available. Order of preference:
+  ///   1. Cabinet Bearer JWT via [CabinetHttp] (handles 401 → refresh → retry).
+  ///   2. X-Telegram-Id (Telegram bot users — backend may still accept this
+  ///      on the Cabinet endpoint as a soft fallback).
+  ///   3. null — caller should hide the referral surface.
+  static Future<http.Response?> _get(String pathAndQuery) async {
+    final auth = authStateNotifier.value;
+    if (auth.cabinetAccessToken?.isNotEmpty ?? false) {
+      return CabinetHttp.get(pathAndQuery,
+          timeout: const Duration(seconds: 12));
+    }
+    final tgId = auth.telegramId;
+    if (tgId == null) return null;
+    try {
+      return await http.get(
+        Uri.parse('$_base$pathAndQuery'),
+        headers: {'Accept': 'application/json', 'X-Telegram-Id': '$tgId'},
+      ).timeout(const Duration(seconds: 12));
+    } on Exception catch (e) {
+      appLogger.error('ReferralService', 'GET $pathAndQuery failed: $e');
+      return null;
+    }
+  }
+
+  /// GET /cabinet/referral — current user's referral statistics.
+  /// Returns null on auth/network/parse failure; callers should hide the
+  /// referral surface in that case rather than show an error.
+  ///
+  /// Tries Bearer first, then falls back to X-Telegram-Id so Telegram-bot
+  /// users (who don't have a JWT yet) can still see the card if the backend
+  /// honours that header on the cabinet endpoint.
+  static Future<ReferralInfo?> getInfo() async {
+    try {
+      final resp = await _get('/cabinet/referral');
+      if (resp == null) {
+        appLogger.info('ReferralService',
+            'getInfo: skipped — no auth (cabinet JWT and telegram id both null) or network error');
+        return null;
+      }
+      if (resp.statusCode != 200) {
+        appLogger.error('ReferralService',
+            'getInfo: HTTP ${resp.statusCode} — body: ${resp.body}');
+        return null;
+      }
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      final info = ReferralInfo.fromJson(json);
+      appLogger.info('ReferralService',
+          'getInfo: ok — code="${info.referralCode}" '
+          'invited=${info.totalReferrals} earned=${info.totalEarningsRubles}');
+      return info;
+    } on Exception catch (e) {
+      appLogger.error('ReferralService', 'getInfo: exception: $e');
+      return null;
+    }
+  }
+
+  /// Paged list of friends invited by the current user.
+  static Future<ReferralListPage?> getList({int page = 1, int perPage = 20}) async {
+    try {
+      final resp =
+          await _get('/cabinet/referral/list?page=$page&per_page=$perPage');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      return ReferralListPage.fromJson(json);
+    } on Exception {
+      return null;
+    }
+  }
+
+  /// Paged history of bonus credits earned from referrals.
+  static Future<ReferralEarningsPage?> getEarnings(
+      {int page = 1, int perPage = 20}) async {
+    try {
+      final resp =
+          await _get('/cabinet/referral/earnings?page=$page&per_page=$perPage');
+      if (resp == null || resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      return ReferralEarningsPage.fromJson(json);
+    } on Exception {
+      return null;
+    }
+  }
+
+  /// GET /cabinet/referral/terms — unauth endpoint. Used to surface the
+  /// commission %/bonus even before the user has a JWT (e.g. on the marketing
+  /// hero of the invite card).
+  static Future<ReferralTerms?> getTerms() async {
+    try {
+      final resp = await http
+          .get(Uri.parse('$_base/cabinet/referral/terms'),
+              headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200) return null;
+      final json = jsonDecode(resp.body) as Map<String, dynamic>;
+      return ReferralTerms.fromJson(json);
+    } on Exception {
+      return null;
+    }
+  }
+}

@@ -187,7 +187,7 @@ class _SupportPageState extends State<SupportPage> with WidgetsBindingObserver {
                             children: [
                               const Text('Поддержка', style: TextStyle(
                                 color: DS.textPrimary, fontSize: 28,
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w600,
                                 letterSpacing: -0.5, height: 1,
                               )),
                               const SizedBox(height: 3),
@@ -341,7 +341,7 @@ class _AnsweredBanner extends StatelessWidget {
                   style: const TextStyle(
                     color: DS.textPrimary,
                     fontSize: 13,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -515,7 +515,7 @@ class _EmptyView extends StatelessWidget {
               style: TextStyle(
                   color: DS.textPrimary,
                   fontSize: 18,
-                  fontWeight: FontWeight.w700)),
+                  fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           const Text(
               'Создайте обращение — мы поможем\nв течение нескольких часов.',
@@ -591,7 +591,7 @@ class _ErrorView extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
                   color: DS.surface2,
-                  borderRadius: BorderRadius.circular(DS.radiusXs),
+                  borderRadius: BorderRadius.circular(DS.radiusSm),
                   border: Border.all(color: DS.border)),
               child: const Text('Повторить',
                   style: TextStyle(
@@ -619,7 +619,7 @@ class _CreateTicketPageState extends State<_CreateTicketPage> {
   final _titleCtrl = TextEditingController();
   final _msgCtrl   = TextEditingController();
   bool _sending    = false;
-  bool _attachDiag = false;
+  bool _attachDiag = true;
   String _diagPreview = '';
 
   @override
@@ -723,7 +723,7 @@ class _CreateTicketPageState extends State<_CreateTicketPage> {
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 13,
-                      fontWeight: FontWeight.w700)),
+                      fontWeight: FontWeight.w600)),
             ),
           ),
           topPad: top,
@@ -754,7 +754,7 @@ class _CreateTicketPageState extends State<_CreateTicketPage> {
                 onTap: _sending ? null : _send,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
-                  height: 54,
+                  height: 56,
                   decoration: BoxDecoration(
                     gradient: _sending
                         ? null
@@ -764,7 +764,7 @@ class _CreateTicketPageState extends State<_CreateTicketPage> {
                       end: Alignment.bottomRight,
                     ),
                     color: _sending ? DS.surface2 : null,
-                    borderRadius: BorderRadius.circular(DS.radiusSm),
+                    borderRadius: BorderRadius.circular(DS.radius),
                     boxShadow: _sending
                         ? null
                         : [BoxShadow(
@@ -779,8 +779,8 @@ class _CreateTicketPageState extends State<_CreateTicketPage> {
                             color: DS.violet, strokeWidth: 2.5))
                         : const Text('Отправить обращение',
                         style: TextStyle(
-                            color: Colors.white, fontSize: 15,
-                            fontWeight: FontWeight.w700,
+                            color: Colors.white, fontSize: 16,
+                            fontWeight: FontWeight.w600,
                             letterSpacing: 0.2)),
                   ),
                 ),
@@ -938,7 +938,7 @@ class _TicketDetailPageState extends State<_TicketDetailPage>
             style: TextStyle(
                 color: DS.textPrimary,
                 fontSize: 17,
-                fontWeight: FontWeight.w700)),
+                fontWeight: FontWeight.w600)),
         content: const Text(
             'Переписка будет завершена.',
             style: TextStyle(color: DS.textSecondary, fontSize: 14)),
@@ -1119,7 +1119,7 @@ class _TicketDetailPageState extends State<_TicketDetailPage>
                                 style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 12,
-                                    fontWeight: FontWeight.w700)),
+                                    fontWeight: FontWeight.w600)),
                           ],
                         ),
                       ),
@@ -1272,7 +1272,7 @@ class _AdminBubble extends StatelessWidget {
                 const Text('Поддержка',
                     style: TextStyle(
                         color: DS.emerald, fontSize: 11,
-                        fontWeight: FontWeight.w700, letterSpacing: 0.2)),
+                        fontWeight: FontWeight.w600, letterSpacing: 0.2)),
                 const SizedBox(height: 4),
                 if (msg.hasMedia) ...[
                   const Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1452,7 +1452,7 @@ class _FieldLabel extends StatelessWidget {
     const SizedBox(width: 5),
     Text(text, style: const TextStyle(
         color: DS.textMuted, fontSize: 10,
-        fontWeight: FontWeight.w700, letterSpacing: 1.0)),
+        fontWeight: FontWeight.w600, letterSpacing: 1.0)),
   ]);
 }
 
@@ -1557,7 +1557,7 @@ class _DiagToggle extends StatelessWidget {
                   const Text('ПРЕДПРОСМОТР',
                       style: TextStyle(
                           color: DS.textMuted, fontSize: 9,
-                          fontWeight: FontWeight.w700, letterSpacing: 1)),
+                          fontWeight: FontWeight.w600, letterSpacing: 1)),
                   const Spacer(),
                   GestureDetector(
                     onTap: () {
@@ -1647,7 +1647,7 @@ class _PageHeader extends StatelessWidget {
                   style: const TextStyle(
                       color: DS.textPrimary,
                       fontSize: 16,
-                      fontWeight: FontWeight.w700),
+                      fontWeight: FontWeight.w600),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1),
               if (subtitle != null)
@@ -1689,7 +1689,7 @@ class _GradientBtn extends StatelessWidget {
           style: const TextStyle(
               color: Colors.white,
               fontSize: 13,
-              fontWeight: FontWeight.w700)),
+              fontWeight: FontWeight.w600)),
     ]);
 
     Widget box = Container(

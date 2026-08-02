@@ -1,9 +1,16 @@
-import 'dart:async';
+﻿import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
 
-import 'package:country_flags/country_flags.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, HapticFeedback;
 import 'package:flutter_v2ray_plus/flutter_v2ray.dart';
+import 'package:phosphor_flutter/phosphor_flutter.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'package:share_plus/share_plus.dart';
 
 import '../models/me_response.dart';
 import '../models/server_node.dart';
@@ -11,14 +18,27 @@ import '../models/subscription_info.dart';
 import '../services/app_logger.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
+import '../services/launch_action_service.dart';
 import '../services/me_service.dart';
+import '../services/native_vpn_bridge.dart';
+import '../services/network_monitor.dart';
+import '../services/ping_state.dart';
+import '../services/referral_service.dart';
+import '../services/remote_config_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/selected_server_state.dart';
+import '../utils/referral_card.dart';
+import '../utils/server_icon.dart';
+import '../utils/signal_quality.dart';
 import '../utils/speed_calculator.dart';
-import '../widgets/telegram_login_button.dart';
+import '../widgets/quality_bars.dart';
 import 'auth_bottom_sheet.dart';
+import 'referral_page.dart';
+import 'subscription_page.dart';
 import 'support_page.dart';
 import '../main.dart' show DS;
+
+part 'home_page_widgets.dart';
 
 class HomePage extends StatefulWidget {
   final VoidCallback? onGoToPremium;
@@ -31,6 +51,18 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage>
     with TickerProviderStateMixin, WidgetsBindingObserver {
+  static const List<String> _bypassKeywords = [
+    'белые',
+    'обход',
+    'bypass',
+    'лте',
+    'lte',
+  ];
+  // Multi-token signatures where all tokens must be present in description.
+  static const List<List<String>> _bypassKeywordCombos = [
+    ['yt', 'tg'],
+  ];
+
   // ── V2ray ──────────────────────────────────────────────────────────────────
   late final FlutterV2ray _v2ray;
   VlessStatus _status = VlessStatus();
@@ -44,11 +76,50 @@ class _HomePageState extends State<HomePage>
   bool _isPublicCatalog = false;
   SubscriptionInfo? _subscriptionInfo;
   String _lastKnownSubUrl = '';
+  // True once _loadNodes finished at least once (success or failure). Used to
+  // distinguish 'still loading' from 'finished but no data', so we can show a
+  // retry CTA instead of an endless spinner when the backend returns empty.
+  bool _loadAttempted = false;
+  String? _loadError;
 
   // ── State ──────────────────────────────────────────────────────────────────
   late final SpeedCalculator _speedCalc;
   bool _initialized = false;
   bool _isConnecting = false;
+
+  // ── Stability telemetry (Sentry performance) ────────────────────────────────
+  // Measures wall-clock time from "user asked to connect" to the CONNECTED
+  // status event, and flags disconnects that weren't requested via the
+  // connect button (i.e. the tunnel dropped on its own). No-ops when Sentry
+  // has no DSN configured (see AppConfig.sentryDsn).
+  ISentrySpan? _connectSpan;
+  bool _userInitiatedDisconnect = false;
+
+  // ── Signal / ping ─────────────────────────────────────────────────────────
+  // Probe state lives in the shared PingState service so the home connection
+  // card and the servers list stay in sync — whoever measured last wins.
+  // `_pingInFlight` and `_pingMeasuring` remain local because they describe
+  // *this* widget's probe lifecycle, not the global cache.
+  Timer? _pingTimer;
+  bool _pingInFlight = false;
+  bool _pingMeasuring = false;
+
+  int? get _pingMs {
+    final uuid = _selectedNode?.uuid;
+    return uuid == null ? null : PingState.get(uuid);
+  }
+
+  // ── Speed history (sparkline ring buffers) ────────────────────────────────
+  static const int _sparkLen = 18;
+  final List<double> _downloadHist = [];
+  final List<double> _uploadHist = [];
+
+  // ── Referral ──────────────────────────────────────────────────────────────
+  // Loaded lazily from /cabinet/referral once we have a Cabinet JWT. The card
+  // is hidden entirely until [_referralInfo] is non-null, so failure modes
+  // (no auth / network error / disabled programme) just collapse the slot.
+  ReferralInfo? _referralInfo;
+  bool _referralCopied = false;
 
   // ── Computed ───────────────────────────────────────────────────────────────
   bool get _isConnected => _status.state.toUpperCase() == 'CONNECTED';
@@ -56,14 +127,6 @@ class _HomePageState extends State<HomePage>
       _status.state.toUpperCase() == 'CONNECTING' ||
           _status.state.toUpperCase() == 'DISCONNECTING' ||
           _isConnecting;
-
-  String get _statusLabel {
-    final s = _status.state.toUpperCase();
-    if (s == 'CONNECTED') return 'Подключено';
-    if (s == 'CONNECTING' || _isConnecting) return 'Подключение…';
-    if (s == 'DISCONNECTING') return 'Отключение…';
-    return 'Отключено';
-  }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
   @override
@@ -74,9 +137,22 @@ class _HomePageState extends State<HomePage>
     authStateNotifier.addListener(_onAuthChanged);
     meNotifier.addListener(_onMeChanged);
     globalRefreshNotifier.addListener(_onGlobalRefresh);
+    // Rebuild on shared ping cache updates — picks up measurements made by
+    // the ServersPage sweep without us having to re-probe locally.
+    PingState.notifier.addListener(_onPingStateChanged);
+    // Network switched (Wi-Fi ↔ LTE) — re-burst the selected node's ping so
+    // the connection card reflects the new network within seconds.
+    NetworkMonitor.changeTick.addListener(_restartPingTimer);
+    // QS tile / "Подключить" shortcut while the app is already running.
+    LaunchActionService.pending.addListener(_onLaunchAction);
     _speedCalc = SpeedCalculator(smoothing: 0.25);
     _v2ray = FlutterV2ray();
     _init();
+  }
+
+  void _onPingStateChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
@@ -92,6 +168,32 @@ class _HomePageState extends State<HomePage>
     }
   }
 
+  // ── Stability telemetry helpers ─────────────────────────────────────────────
+
+  /// Starts a Sentry performance transaction covering "tap connect" → either
+  /// CONNECTED or a give-up point. Safe to call even when Sentry has no DSN
+  /// (the SDK's no-op hub just returns a dummy span).
+  void _beginConnectSpan(String reason) {
+    // A previous attempt never resolved (e.g. user backgrounded the app) —
+    // don't leak it silently, close it as cancelled first.
+    _finishConnectSpan(const SpanStatus.cancelled());
+    _connectSpan = Sentry.startTransaction(
+      'vpn.connect',
+      'connection',
+      description: reason,
+      // Safety net so a connect that never reports CONNECTED (stuck tunnel)
+      // still shows up in Sentry instead of leaking the span forever.
+      autoFinishAfter: const Duration(seconds: 30),
+    );
+  }
+
+  void _finishConnectSpan(SpanStatus status) {
+    final span = _connectSpan;
+    _connectSpan = null;
+    if (span == null || span.finished) return;
+    unawaited(span.finish(status: status));
+  }
+
   void _resubscribeVpnStatus() {
     // Cancel the old subscription and re-attach so the plugin sends the
     // current real state immediately rather than waiting for the next change.
@@ -99,15 +201,192 @@ class _HomePageState extends State<HomePage>
     _statusSub = _v2ray.onStatusChanged.listen((s) {
       if (!mounted) return;
       final connected = s.state.toUpperCase() == 'CONNECTED';
+      final wasConnected = vpnConnectedNotifier.value;
       vpnConnectedNotifier.value = connected;
       if (connected) {
         _speedCalc.update(totalUploadBytes: s.upload, totalDownloadBytes: s.download);
+        _pushSpark(_downloadHist, _speedCalc.downloadSpeed);
+        _pushSpark(_uploadHist, _speedCalc.uploadSpeed);
+        // Haptic when VPN just connected
+        if (!wasConnected) HapticFeedback.mediumImpact();
+        if (!wasConnected) _finishConnectSpan(const SpanStatus.ok());
       } else {
+        if (wasConnected && !_userInitiatedDisconnect) {
+          // The tunnel dropped without the user tapping disconnect — a
+          // stability signal worth surfacing distinctly from a normal
+          // disconnect (e.g. network loss, server killed the session).
+          appLogger.warning('HomePage', 'unexpected VPN drop (server=${_selectedNode?.name})');
+          unawaited(Sentry.addBreadcrumb(Breadcrumb(
+            message: 'unexpected VPN drop',
+            category: 'vpn.stability',
+            level: SentryLevel.warning,
+            data: {'server': _selectedNode?.name ?? 'unknown'},
+          )));
+        }
+        _userInitiatedDisconnect = false;
         _speedCalc.reset();
+        _downloadHist.clear();
+        _uploadHist.clear();
+        // Haptic when VPN just disconnected
+        if (wasConnected) HapticFeedback.lightImpact();
+      }
+      // Re-tune ping cadence to match the new state (10 s vs 30 s).
+      if (connected != wasConnected) {
+        _restartPingTimer();
+        LaunchActionService.setVpnConnected(connected);
       }
       setState(() => _status = s);
     });
   }
+
+  // ── Referral ──────────────────────────────────────────────────────────────
+  /// Pulls the referral snapshot if we have any auth context (Cabinet JWT
+  /// or telegram id). Idempotent — safe to call on every auth-change tick;
+  /// clears the card on logout.
+  Future<void> _loadReferral() async {
+    final auth = authStateNotifier.value;
+    final hasAuth = (auth.cabinetAccessToken?.isNotEmpty ?? false) ||
+        auth.telegramId != null;
+    if (!hasAuth) {
+      appLogger.info('HomePage', '_loadReferral: skipped (not authed)');
+      if (_referralInfo != null && mounted) {
+        setState(() => _referralInfo = null);
+      }
+      return;
+    }
+    appLogger.info('HomePage',
+        '_loadReferral: fetching (jwt=${auth.cabinetAccessToken != null}, tg=${auth.telegramId != null})');
+    final info = await ReferralService.getInfo();
+    if (!mounted) return;
+    if (info != _referralInfo) setState(() => _referralInfo = info);
+  }
+
+  Future<void> _copyReferralCode() async {
+    final info = _referralInfo;
+    if (info == null) return;
+    await Clipboard.setData(ClipboardData(text: info.referralCode));
+    HapticFeedback.selectionClick();
+    if (!mounted) return;
+    setState(() => _referralCopied = true);
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _referralCopied = false);
+    });
+  }
+
+  Future<void> _shareReferral() async {
+    final info = _referralInfo;
+    if (info == null) return;
+    HapticFeedback.selectionClick();
+    // Branded invite card with QR — falls back to plain text on any failure.
+    try {
+      final png = await renderReferralCardPng(info);
+      if (png != null) {
+        await SharePlus.instance.share(ShareParams(
+          files: [
+            XFile.fromData(png, mimeType: 'image/png', name: 'ulya_invite.png'),
+          ],
+          text: info.shareText,
+        ));
+        return;
+      }
+    } catch (e) {
+      appLogger.error('HomePage', 'referral card render failed: $e');
+    }
+    await SharePlus.instance.share(ShareParams(text: info.shareText));
+  }
+
+  void _openReferralPage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ReferralPage()),
+    ).then((_) {
+      // Refresh in case the user shared/earned something while on the
+      // details page.
+      if (mounted) _loadReferral();
+    });
+  }
+
+  // ── Sparkline helper ──────────────────────────────────────────────────────
+  void _pushSpark(List<double> buf, double v) {
+    buf.add(v < 0 ? 0 : v);
+    while (buf.length > _sparkLen) {
+      buf.removeAt(0);
+    }
+  }
+
+  // ── Ping ───────────────────────────────────────────────────────────────────
+  // Cadence: 10 s while connected (live signal), 30 s otherwise (signal preview
+  // from server selection). The bars are visible whenever a server is picked.
+  /// Burst-then-settle schedule.  The first few seconds after selecting a
+  /// server are when the value matters most (user just changed their mind,
+  /// or just opened the app), so we probe several times in quick succession
+  /// to nail down an accurate reading even if the network was cold.
+  /// After the burst we settle to a long-period heartbeat that just keeps
+  /// the cache fresh.
+  ///
+  /// Schedule:  0s · 3s · 9s · 21s · then every 60s (or 30s while connected).
+  static const List<Duration> _pingBurst = [
+    Duration.zero,
+    Duration(seconds: 3),
+    Duration(seconds: 9),
+    Duration(seconds: 21),
+  ];
+
+  int _pingBurstIdx = 0;
+
+  void _restartPingTimer() {
+    _pingTimer?.cancel();
+    _pingBurstIdx = 0;
+    if (_selectedNode == null) {
+      _pingTimer = null;
+      return;
+    }
+    _runPingBurstStep();
+  }
+
+  void _runPingBurstStep() {
+    if (!mounted || _selectedNode == null) return;
+    _measurePing();
+    _pingBurstIdx++;
+    if (_pingBurstIdx < _pingBurst.length) {
+      // Next burst step uses delta between this step and the next; the burst
+      // table stores absolute offsets, so we need the deltas.
+      final delta = _pingBurst[_pingBurstIdx] - _pingBurst[_pingBurstIdx - 1];
+      _pingTimer = Timer(delta, _runPingBurstStep);
+    } else {
+      // Settled — periodic heartbeat to keep the value fresh.
+      final settled = _isConnected
+          ? const Duration(seconds: 30)
+          : const Duration(seconds: 60);
+      _pingTimer = Timer.periodic(settled, (_) => _measurePing());
+    }
+  }
+
+  Future<void> _measurePing() async {
+    if (_pingInFlight) return;
+    final node = _selectedNode;
+    if (node == null || node.address.trim().isEmpty) return;
+    _pingInFlight = true;
+    // Surface the measuring state to the UI only when we have nothing to show
+    // yet — otherwise the bars would flicker through "measuring" on every
+    // background poll, which is noisy. (markInFlight: false — we track
+    // "measuring" locally via _pingMeasuring instead of the -2 sentinel.)
+    if (_pingMs == null && mounted) {
+      setState(() => _pingMeasuring = true);
+    }
+    await PingState.probeNode(node, markInFlight: false);
+    _pingInFlight = false;
+    if (!mounted) return;
+    setState(() => _pingMeasuring = false);
+  }
+
+  /// Probes an arbitrary [node] from the server-picker sheet. Unlike
+  /// [_measurePing] (which only ever tracks [_selectedNode] on a timer), this
+  /// lets the user compare any server's signal manually, before selecting or
+  /// connecting to it. Routes through the same [PingState.probeNode] that
+  /// ServersPage uses, so the two lists never show a different number for
+  /// the same server just because they measured it independently.
+  Future<void> _probeNodeForPicker(ServerNode node) => PingState.probeNode(node);
 
   @override
   void dispose() {
@@ -116,17 +395,70 @@ class _HomePageState extends State<HomePage>
     authStateNotifier.removeListener(_onAuthChanged);
     meNotifier.removeListener(_onMeChanged);
     globalRefreshNotifier.removeListener(_onGlobalRefresh);
+    PingState.notifier.removeListener(_onPingStateChanged);
+    NetworkMonitor.changeTick.removeListener(_restartPingTimer);
+    LaunchActionService.pending.removeListener(_onLaunchAction);
     _statusSub?.cancel();
+    _pingTimer?.cancel();
+    _finishConnectSpan(const SpanStatus.cancelled());
     super.dispose();
   }
 
   void _onSelectedServerChanged() {
     if (!mounted) return;
     final node = selectedServerNotifier.value;
-    if (node?.uuid != _selectedNode?.uuid) setState(() => _selectedNode = node);
+    if (node?.uuid != _selectedNode?.uuid) {
+      // _pingMs is computed from PingState now — the value for this uuid
+      // (if any) is already visible without a manual sync.
+      setState(() => _selectedNode = node);
+      _restartPingTimer();
+    }
+    // Keep the QS tile's native-side cache pointed at whatever is selected
+    // now, so it can connect directly without opening the app.
+    unawaited(_syncNativeVpnConfig(node));
   }
 
-  void _onAuthChanged() => _loadNodes();
+  Future<void> _syncNativeVpnConfig(ServerNode? node) async {
+    final blockedApps = await _loadBlockedApps();
+    await NativeVpnBridge.syncSelectedNode(node, blockedApps: blockedApps);
+  }
+
+  void _onAuthChanged() {
+    _loadNodes();
+    _loadReferral();
+  }
+
+  // ── Launch actions (QS tile / launcher shortcut) ──────────────────────────
+
+  void _onLaunchAction() {
+    _maybeHandleToggleAction();
+    _maybeHandleConnectSelectedAction();
+  }
+
+  /// Runs the pending "toggle" action once the page is actually able to
+  /// connect: v2ray initialised, nodes loaded, a server selected. Called from
+  /// the pending-action listener and again after _loadNodes resolves, so a
+  /// cold start through the tile connects as soon as data is ready.
+  void _maybeHandleToggleAction() {
+    if (LaunchActionService.pending.value != 'toggle') return;
+    if (!_initialized || _isTransitioning) return;
+    if (_selectedNode == null) return; // retried after _loadNodes
+    LaunchActionService.consume('toggle');
+    appLogger.info('HomePage', 'launch action: toggle connection');
+    _toggleConnection();
+  }
+
+  /// Runs the pending "connect_selected" action — fired by ServersPage when
+  /// the user taps a server in the full list, so tapping a server there
+  /// connects immediately instead of only changing the selection.
+  void _maybeHandleConnectSelectedAction() {
+    if (LaunchActionService.pending.value != 'connect_selected') return;
+    if (!_initialized || _isTransitioning) return;
+    if (selectedServerNotifier.value == null) return; // retried once selection settles
+    LaunchActionService.consume('connect_selected');
+    appLogger.info('HomePage', 'launch action: connect to selected server');
+    _connectToSelectedNode();
+  }
 
   void _onMeChanged() {
     final url = meNotifier.value?.subscription?.subscriptionUrl ?? '';
@@ -159,6 +491,7 @@ class _HomePageState extends State<HomePage>
     _resubscribeVpnStatus();
     if (mounted) setState(() => _initialized = true);
     _loadNodes();
+    _loadReferral();
   }
 
   // ── Data ───────────────────────────────────────────────────────────────────
@@ -172,16 +505,30 @@ class _HomePageState extends State<HomePage>
     // Guard: if already loading, mark as pending so we run once more after.
     if (_isLoadingNodes) { _pendingLoad = true; return; }
     _pendingLoad = false;
-    setState(() => _isLoadingNodes = true);
-    final subUrl = await RemnawaveService.getSubscriptionUrl();
-    final List<ServerNode> nodes;
-    final bool isPublic;
-    if (subUrl.isEmpty) {
-      nodes = await RemnawaveService.fetchPublicServers();
-      isPublic = true;
-    } else {
-      nodes = await RemnawaveService.fetchNodes();
-      isPublic = false;
+    setState(() {
+      _isLoadingNodes = true;
+      _loadError = null;
+    });
+    appLogger.info('HomePage', '_loadNodes: start');
+    List<ServerNode> nodes = const [];
+    bool isPublic = false;
+    String? error;
+    try {
+      final subUrl = await RemnawaveService.getSubscriptionUrl();
+      appLogger.info('HomePage', '_loadNodes: subUrl=${subUrl.isEmpty ? "(empty)" : "set"}');
+      if (subUrl.isEmpty) {
+        nodes = await RemnawaveService.fetchPublicServers();
+        isPublic = true;
+      } else {
+        nodes = await RemnawaveService.fetchNodes();
+        isPublic = false;
+      }
+      appLogger.info('HomePage',
+          '_loadNodes: ok — ${nodes.length} nodes, isPublic=$isPublic, '
+          'subscriptionInfo=${RemnawaveService.lastSubscriptionInfo != null}');
+    } on Exception catch (e, st) {
+      appLogger.error('HomePage', '_loadNodes failed: $e\n$st');
+      error = e.toString();
     }
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
@@ -191,6 +538,8 @@ class _HomePageState extends State<HomePage>
       _isPublicCatalog = isPublic;
       _subscriptionInfo = isPublic ? null : RemnawaveService.lastSubscriptionInfo;
       _isLoadingNodes = false;
+      _loadError = error;
+      _loadAttempted = true;
       if (_selectedNode != null) {
         _selectedNode = nodes.cast<ServerNode?>()
             .firstWhere((n) => n?.uuid == _selectedNode!.uuid, orElse: () => null);
@@ -199,11 +548,28 @@ class _HomePageState extends State<HomePage>
         _selectedNode = nodes.cast<ServerNode?>()
             .firstWhere((n) => n?.uuid == savedUuid, orElse: () => null);
       }
+      // Default selection: auto node first, then any non-disabled node.
+      if (_selectedNode == null && !isPublic) {
+        _selectedNode = nodes.cast<ServerNode?>().firstWhere(
+            (n) => n?.protocol == 'auto' && !(n?.isDisabled ?? true),
+            orElse: () => null);
+        _selectedNode ??= nodes.cast<ServerNode?>().firstWhere(
+            (n) => !(n?.isDisabled ?? true),
+            orElse: () => null);
+      }
       if (_selectedNode != null &&
           selectedServerNotifier.value?.uuid != _selectedNode!.uuid) {
         selectedServerNotifier.value = _selectedNode;
       }
     });
+    // Kick off ping right after we've resolved the default selected node, so
+    // the signal bars are filled in before the user even touches the picker.
+    // Restart unconditionally — if the previous load left a stale timer (e.g.
+    // for a node that no longer exists or had no pingable address), the new
+    // one will measure against the current selection.
+    if (_selectedNode != null) _restartPingTimer();
+    // A shortcut/tile "toggle" may have been waiting for nodes to arrive.
+    _maybeHandleToggleAction();
     // If a load was requested while we were busy, run it now once.
     if (_pendingLoad && mounted) {
       _pendingLoad = false;
@@ -214,15 +580,110 @@ class _HomePageState extends State<HomePage>
   // ── Connection ─────────────────────────────────────────────────────────────
   Future<void> _performLogout() async => AuthService.logout();
 
+  Future<List<String>> _loadBlockedApps() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('settings_blocked_apps');
+    if (raw != null) {
+      try {
+        return List<String>.from((jsonDecode(raw) as List).whereType<String>());
+      } on FormatException catch (e) {
+        appLogger.error(
+          'HomePage',
+          'failed to parse blocked apps JSON format: $e',
+        );
+      } catch (e) {
+        appLogger.error('HomePage', 'blocked apps load error: $e');
+      }
+    }
+    return List<String>.from(RemoteConfigService.blockedAppsDefault);
+  }
+
+  static bool _isBypassDescription(String? description) {
+    final hay = (description ?? '').toLowerCase();
+    return _bypassKeywords.any(hay.contains) ||
+        _bypassKeywordCombos.any((combo) => combo.every(hay.contains));
+  }
+
+  static bool _isBypassNode(ServerNode node) => _isBypassDescription(node.description);
+
+  List<ServerNode> _nonBypassCandidates() => _nodes
+      .where((n) =>
+          n.protocol != 'auto' &&
+          !_isBypassNode(n) &&
+          n.link != null &&
+          !n.isDisabled)
+      .toList();
+
+  /// Protocol-level reachability: spins up a temporary xray instance with the
+  /// node's config and performs an HTTP GET through the proxy.
+  ///
+  /// A bare TCP connect is NOT a valid signal here — DPI on mobile networks
+  /// lets the TCP handshake through and kills the tunnel afterwards, which
+  /// made dead regular servers look "reachable" and wrongly blocked the
+  /// bypass servers.
+  Future<bool> _canReachNodeViaProxy(ServerNode node) async {
+    final rawLink = node.link?.trim();
+    if (rawLink == null || rawLink.isEmpty) return false;
+    try {
+      final config = rawLink.startsWith('{')
+          ? rawLink
+          : FlutterV2ray.parseFromURL(rawLink).getFullConfiguration();
+      final delay = await _v2ray
+          .getServerDelay(config: config)
+          .timeout(const Duration(seconds: 8));
+      return delay > 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Fast estimate used by the server picker so it opens instantly: a
+  /// non-bypass server counts as "probably reachable" when the background
+  /// sweep has a recent successful reading for it. The authoritative
+  /// xray-proxy check runs only on an actual connect attempt.
+  bool _hasLikelyReachableNonBypassServer() =>
+      _nonBypassCandidates().any((n) => (PingState.get(n.uuid) ?? -1) > 0);
+
+  /// Authoritative check: any regular (non-bypass) server actually usable on
+  /// the current network? Probes through a temporary xray core (expensive —
+  /// capped at the 3 most promising candidates, run in parallel).
+  Future<bool> _hasReachableNonBypassServer() async {
+    final candidates = _nonBypassCandidates();
+    if (candidates.isEmpty) return false;
+    // Most promising first: recent successful sweep readings, best ping on top.
+    candidates.sort((a, b) {
+      int rank(ServerNode n) {
+        final p = PingState.get(n.uuid);
+        return (p != null && p > 0) ? p : 1 << 30;
+      }
+      return rank(a).compareTo(rank(b));
+    });
+    final results = await Future.wait(
+      candidates.take(3).map(_canReachNodeViaProxy),
+    );
+    return results.any((ok) => ok);
+  }
+
   Future<void> _toggleConnection() async {
     if (_isTransitioning) return;
+    HapticFeedback.heavyImpact();
     if (_isConnected) {
       appLogger.info('HomePage', 'disconnecting from ${_selectedNode?.name ?? "unknown"}');
+      _userInitiatedDisconnect = true;
       await _v2ray.stopVless();
       return;
     }
     final node = _selectedNode;
     if (node == null) { _snack('Сначала выберите сервер'); return; }
+    await _connectToNode(node);
+  }
+
+  /// Connects to [node] regardless of the current connection state. The
+  /// native side tears down any existing tunnel before establishing the new
+  /// one (see XrayVPNService.handleStartCommand's `cleanup()`), so this is
+  /// also the right entry point for *switching* servers while connected —
+  /// no explicit stop-then-start dance needed on the Dart side.
+  Future<void> _connectToNode(ServerNode node) async {
     if (node.isDisabled || node.link == null) {
       if (authStateNotifier.value.isLoggedIn) {
         appLogger.info('HomePage', 'blocked server tapped — redirecting to premium');
@@ -232,7 +693,31 @@ class _HomePageState extends State<HomePage>
       }
       return;
     }
-    if (!await _v2ray.requestPermission()) { _snack('Нет разрешения VPN'); return; }
+    if (_isBypassNode(node)) {
+      // The xray-proxy probes take a few seconds — show the connecting state
+      // so the button doesn't look dead while we check.
+      setState(() => _isConnecting = true);
+      final blocked = await _hasReachableNonBypassServer();
+      if (mounted) setState(() => _isConnecting = false);
+      if (blocked) {
+        appLogger.info(
+          'HomePage',
+          'bypass connection blocked: reachable non-bypass server detected',
+        );
+        _showUnavailableNotice(
+          title: 'Белый список недоступен',
+          subtitle: 'Обычные серверы работают — выберите один из них',
+        );
+        return;
+      }
+      if (!mounted) return;
+    }
+    _beginConnectSpan('${node.countryCode}/${node.name}');
+    if (!await _v2ray.requestPermission()) {
+      _finishConnectSpan(const SpanStatus.permissionDenied());
+      _snack('Нет разрешения VPN');
+      return;
+    }
     setState(() => _isConnecting = true);
     appLogger.info('HomePage', 'connecting to ${node.name} (${node.countryCode})');
     try {
@@ -248,18 +733,33 @@ class _HomePageState extends State<HomePage>
       appLogger.info('HomePage',
           'connecting: type=${rawLink.startsWith('{') ? 'JSON' : 'URI'} '
           'addr=${node.address}:${node.serverPort}');
+      final blockedApps = await _loadBlockedApps();
 
       await _v2ray.startVless(
         remark: node.name,
         config: vpnConfig,
+        blockedApps: blockedApps,
         notificationDisconnectButtonName: 'Отключить',
       );
     } catch (e) {
       appLogger.error('HomePage', 'connection error: $e');
+      _finishConnectSpan(const SpanStatus.internalError());
       _snack('Ошибка подключения: $e');
     } finally {
       if (mounted) setState(() => _isConnecting = false);
     }
+  }
+
+  /// Connects to whatever node [selectedServerNotifier] currently points at
+  /// — used when the user taps a server in the full ServersPage list, which
+  /// should connect immediately rather than just changing the selection.
+  /// A no-op if we're already connected to that exact node.
+  Future<void> _connectToSelectedNode() async {
+    final node = selectedServerNotifier.value;
+    if (node == null) return;
+    if (_isConnected && _selectedNode?.uuid == node.uuid) return;
+    HapticFeedback.heavyImpact();
+    await _connectToNode(node);
   }
 
   // ── Server picker helpers ──────────────────────────────────────────────────
@@ -286,7 +786,7 @@ class _HomePageState extends State<HomePage>
     return (auto: auto, manual: manual);
   }
 
-  void _showServerPicker() {
+  Future<void> _showServerPicker() async {
     String? selectedCat;
     showModalBottomSheet<void>(
       context: context,
@@ -295,8 +795,16 @@ class _HomePageState extends State<HomePage>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setSheet) {
-        // Detect which manual categories exist (for filter chips)
+      // The sheet re-evaluates availability on every ping-cache update, so
+      // when the user switches Wi-Fi ↔ LTE the "Недоступно" badges clear as
+      // soon as the background sweep re-probes — no manual refresh needed.
+      builder: (ctx) => ValueListenableBuilder<Map<String, int?>>(
+        valueListenable: PingState.notifier,
+        builder: (_, pings, child) => StatefulBuilder(builder: (ctx, setSheet) {
+        // Cheap cache-based estimate — the picker must open without waiting
+        // for xray probe round-trips; the strict check runs on connect tap.
+        final hasReachableNonBypass = _hasLikelyReachableNonBypassServer();
+        // ── Category detection (Обход / Безлимит) ───────────────────────────
         bool hasBypass = false, hasUnlimited = false;
         for (final n in _nodes) {
           final d = (n.description ?? '').toLowerCase();
@@ -316,157 +824,328 @@ class _HomePageState extends State<HomePage>
         } else {
           filteredManual = manual.where((n) {
             final d = (n.description ?? '').toLowerCase();
-            if (selectedCat == 'bypass')   return d.contains('белые');
+            if (selectedCat == 'bypass')    return d.contains('белые');
             if (selectedCat == 'unlimited') return d.contains('безлимит');
             return !d.contains('белые') && !d.contains('безлимит');
           }).toList();
         }
 
         final showAuto = selectedCat == null && auto.isNotEmpty && !_isPublicCatalog;
-        final int autoCount     = showAuto ? auto.length : 0;
-        final int dividerCount  = (showAuto && filteredManual.isNotEmpty) ? 1 : 0;
-        final int total         = autoCount + dividerCount + filteredManual.length;
+        // Group manual nodes by country code, preserving the upstream sort
+        // order (already alphabetical by CC) so the group sections come out
+        // in a stable order.
+        final List<({String cc, List<ServerNode> nodes})> manualGroups = [];
+        for (final n in filteredManual) {
+          final cc = n.countryCode.isEmpty ? '??' : n.countryCode.toUpperCase();
+          final existing = manualGroups.where((g) => g.cc == cc).toList();
+          if (existing.isEmpty) {
+            manualGroups.add((cc: cc, nodes: [n]));
+          } else {
+            existing.first.nodes.add(n);
+          }
+        }
+        final totalNodes = (showAuto ? auto.length : 0) + filteredManual.length;
 
-        // ── Tile builder ──────────────────────────────────────────────────────
+        // ── Card-style server tile ──────────────────────────────────────────
         Widget buildTile(ServerNode node, {required bool isAutoNode}) {
-          final isSel    = _selectedNode?.uuid == node.uuid;
-          final locked   = _isPublicCatalog || node.isDisabled || node.link == null;
-          final nameColor = isSel ? DS.violet : DS.textPrimary;
+          final isSel  = _selectedNode?.uuid == node.uuid;
+          final hardLocked =
+              _isPublicCatalog || node.isDisabled || node.link == null;
+          // Bypass servers are selectable only while regular servers are down.
+          final bypassBlockedNow =
+              !_isPublicCatalog && hasReachableNonBypass && _isBypassNode(node);
+          final locked = hardLocked || bypassBlockedNow;
+          final accent = isAutoNode ? DS.indigoLight : DS.violet;
 
-          return Material(
-            color: isSel
-                ? (isAutoNode
-                    ? DS.indigoLight.withValues(alpha: 0.09)
-                    : DS.violet.withValues(alpha: 0.08))
-                : Colors.transparent,
-            child: InkWell(
-              onTap: () async {
-                if (locked) {
-                  Navigator.pop(ctx);
-                  if (context.mounted) {
-                    authStateNotifier.value.isLoggedIn
-                        ? widget.onGoToPremium?.call()
-                        : await showAuthBottomSheet(context);
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(DS.radiusSm),
+                onTap: () async {
+                  if (hardLocked) {
+                    Navigator.pop(ctx);
+                    if (context.mounted) {
+                      authStateNotifier.value.isLoggedIn
+                          ? widget.onGoToPremium?.call()
+                          : await showAuthBottomSheet(context);
+                    }
+                    return;
                   }
-                  return;
-                }
-                setState(() => _selectedNode = node);
-                selectedServerNotifier.value = node;
-                final p = await SharedPreferences.getInstance();
-                await p.setString('selected_node_uuid', node.uuid);
-                if (ctx.mounted) Navigator.pop(ctx);
-              },
-              splashColor: (isAutoNode ? DS.indigoLight : DS.violet)
-                  .withValues(alpha: 0.08),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
-                child: Row(children: [
-                  // Flag or auto icon
-                  if (isAutoNode || node.countryCode.isEmpty)
-                    Container(
-                      width: 36, height: 28,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF1E1B4B), Color(0xFF1A1760)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                            color: DS.indigoLight.withValues(alpha: 0.40)),
-                      ),
-                      child: const Icon(Icons.bolt_rounded,
-                          size: 18, color: DS.indigoLight),
-                    )
-                  else
-                    CountryFlag.fromCountryCode(
-                      node.countryCode,
-                      theme: ImageTheme(
-                          width: 36, height: 28, shape: RoundedRectangle(8)),
+                  if (bypassBlockedNow) {
+                    _showUnavailableNotice(
+                      title: 'Белый список недоступен',
+                      subtitle: 'Белые списки включаются, только когда обычные серверы не работают',
+                    );
+                    return;
+                  }
+                  HapticFeedback.selectionClick();
+                  setState(() => _selectedNode = node);
+                  selectedServerNotifier.value = node;
+                  final p = await SharedPreferences.getInstance();
+                  await p.setString('selected_node_uuid', node.uuid);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  // Tapping a server here should connect to it immediately,
+                  // same as tapping one in the full ServersPage list — not
+                  // just change the selection and wait for a separate tap on
+                  // the big connect button.
+                  await _connectToSelectedNode();
+                },
+                splashColor: accent.withValues(alpha: 0.10),
+                highlightColor: accent.withValues(alpha: 0.05),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isSel
+                        ? accent.withValues(alpha: 0.10)
+                        : DS.surface2,
+                    borderRadius: BorderRadius.circular(DS.radiusSm),
+                    border: Border.all(
+                      color: isSel
+                          ? accent.withValues(alpha: 0.55)
+                          : DS.border,
+                      width: isSel ? 1.5 : 1.0,
                     ),
-                  const SizedBox(width: 14),
-                  // Name + protocol
-                  Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(node.name,
+                  ),
+                  child: Row(children: [
+                    buildServerIcon(node, width: 36, height: 28, radius: 8),
+                    const SizedBox(width: 14),
+                    Expanded(child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          node.name,
                           style: TextStyle(
                               fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              color: nameColor),
-                          overflow: TextOverflow.ellipsis),
-                      if ((node.protocol ?? '').isNotEmpty)
-                        Text(
-                          isAutoNode ? 'Авто-выбор' : node.protocol!.toUpperCase(),
-                          style: TextStyle(
-                              color: isAutoNode
-                                  ? DS.indigoLight.withValues(alpha: 0.80)
-                                  : DS.textSecondary,
-                              fontSize: 12),
+                              fontSize: 14.5,
+                              color: isSel ? accent : DS.textPrimary),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                    ],
-                  )),
-                  // Trailing
-                  if (isSel)
-                    Icon(Icons.check_circle_rounded,
-                        color: isAutoNode ? DS.indigoLight : DS.violet,
-                        size: 20)
-                  else if (locked)
-                    const Icon(Icons.lock_outline_rounded,
-                        size: 16, color: DS.textMuted),
-                ]),
+                        const SizedBox(height: 2),
+                        Row(children: [
+                          if ((node.protocol ?? '').isNotEmpty)
+                            Text(
+                              isAutoNode
+                                  ? 'Авто-выбор'
+                                  : node.protocol!.toUpperCase(),
+                              style: TextStyle(
+                                  color: isAutoNode
+                                      ? DS.indigoLight.withValues(alpha: 0.8)
+                                      : DS.textMuted,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.4),
+                            ),
+                          if (purposeBadgesForDescription(node.description).isNotEmpty) ...[
+                            const SizedBox(width: 7),
+                            buildPurposeBadges(node.description, size: 12),
+                          ],
+                          if (hardLocked) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: DS.amber.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(PhosphorIconsBold.lock,
+                                      size: 10, color: DS.amber),
+                                  const SizedBox(width: 3),
+                                  const Text('Подписка',
+                                      style: TextStyle(
+                                        color: DS.amber,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      )),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ]),
+                      ],
+                    )),
+                    const SizedBox(width: 8),
+                    // Trailing — selected → check pill (or "Подключено" if a
+                    // live tunnel to this exact node is up); bypass-blocked →
+                    // "Недоступно" badge; locked → lock; else empty.
+                    if (isSel)
+                      ValueListenableBuilder<bool>(
+                        valueListenable: vpnConnectedNotifier,
+                        builder: (_, connected, _) => connected
+                            ? _ConnectedPill(accent: accent)
+                            : Container(
+                                width: 26, height: 26,
+                                decoration: BoxDecoration(
+                                  color: accent,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(PhosphorIconsBold.check,
+                                    color: Colors.white, size: 14),
+                              ),
+                      )
+                    else if (bypassBlockedNow)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: DS.rose.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                              color: DS.rose.withValues(alpha: 0.25)),
+                        ),
+                        child: const Text(
+                          'Недоступно',
+                          style: TextStyle(
+                            color: DS.rose,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      )
+                    else if (locked)
+                      Icon(PhosphorIconsBold.lock,
+                          size: 16, color: DS.textMuted)
+                    else if (isAutoNode)
+                      // No single address to probe — same static indicator
+                      // ServersPage shows for auto-routed hosts.
+                      const AutoQualityBars()
+                    else
+                      // Ping/signal quality, visible without connecting —
+                      // lets the user pick the best server manually, same as
+                      // the full ServersPage list.
+                      QualityBars(
+                        ping: pings[node.uuid],
+                        isAvailable: node.isAvailable,
+                        noLink: node.link == null,
+                        onProbe: () {
+                          if (node.link == null) return;
+                          HapticFeedback.selectionClick();
+                          _probeNodeForPicker(node);
+                        },
+                      ),
+                  ]),
+                ),
               ),
             ),
           );
         }
 
-        // ── Section divider row ───────────────────────────────────────────────
-        Widget buildManualDivider() => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-          child: Row(children: [
-            Expanded(child: Container(height: 1, color: DS.border)),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                'СЕРВЕРЫ',
-                style: TextStyle(
-                  color: DS.textMuted.withValues(alpha: 0.70),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.4,
+        // ── Country group header — for manual node sections ─────────────────
+        Widget groupHeader(String cc, int count) => Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+              child: Row(children: [
+                buildCountryFlagIcon(cc, width: 22, height: 16, radius: 3),
+                const SizedBox(width: 10),
+                Text(
+                  countryNameForCode(cc),
+                  style: const TextStyle(
+                    color: DS.textSecondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6,
+                  ),
                 ),
-              ),
-            ),
-            Expanded(child: Container(height: 1, color: DS.border)),
-          ]),
-        );
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: DS.surface2,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: DS.border),
+                  ),
+                  child: Text('$count',
+                      style: const TextStyle(
+                          color: DS.textMuted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ]),
+            );
+
+        // Auto section header (only when shown)
+        Widget autoHeader() => Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 6),
+              child: Row(children: [
+                Icon(PhosphorIconsFill.lightning,
+                    size: 14, color: DS.indigoLight),
+                const SizedBox(width: 6),
+                const Text('АВТОВЫБОР',
+                    style: TextStyle(
+                      color: DS.indigoLight,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.3,
+                    )),
+              ]),
+            );
+
+        // Build a flat list of section widgets (header + tiles…).
+        final List<Widget> items = [];
+        if (showAuto) {
+          items.add(autoHeader());
+          for (final n in auto) {
+            items.add(buildTile(n, isAutoNode: true));
+          }
+        }
+        for (final g in manualGroups) {
+          items.add(groupHeader(g.cc, g.nodes.length));
+          for (final n in g.nodes) {
+            items.add(buildTile(n, isAutoNode: false));
+          }
+        }
 
         // ─────────────────────────────────────────────────────────────────────
         return DraggableScrollableSheet(
           expand: false,
-          initialChildSize: 0.6,
-          maxChildSize: 0.92,
-          minChildSize: 0.3,
+          initialChildSize: 0.65,
+          maxChildSize: 0.94,
+          minChildSize: 0.4,
           builder: (_, scrollCtrl) => Column(children: [
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Container(
-              width: 40, height: 4,
+              width: 38, height: 4,
               decoration: BoxDecoration(
                   color: DS.border, borderRadius: BorderRadius.circular(2)),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
 
-            // Sheet header
+            // Header: title + count badge + refresh
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(children: [
-                const Expanded(child: Text('Выбрать сервер', style: TextStyle(
-                    color: DS.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700))),
+                const Text('Выбрать сервер',
+                    style: TextStyle(
+                        color: DS.textPrimary,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w700)),
+                const SizedBox(width: 10),
+                if (totalNodes > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: DS.violet.withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text('$totalNodes',
+                        style: const TextStyle(
+                            color: DS.violet,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                const Spacer(),
                 VpnIconBtn(
                   loading: _isLoadingNodes,
-                  icon: Icons.refresh_rounded,
+                  icon: PhosphorIconsBold.arrowsClockwise,
                   onTap: () async {
                     setSheet(() {});
                     await _loadNodes();
@@ -479,23 +1158,23 @@ class _HomePageState extends State<HomePage>
             // Public catalog banner
             if (_isPublicCatalog)
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
                 child: VpnInfoBanner(
                   color: DS.amber,
                   text: 'Публичный каталог. Для подключения нужна подписка.',
                 ),
               ),
 
-            // Category filter chips (manual categories only)
+            // Category filter chips
             if (showCats)
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(children: [
                     for (final e in <(String?, String)>[
                       (null, 'Все'),
-                      if (hasBypass)   ('bypass', 'Обход'),
+                      if (hasBypass)    ('bypass', 'Белые списки'),
                       if (hasUnlimited) ('unlimited', 'Безлимит'),
                       ('other', 'Прочее'),
                     ])
@@ -511,53 +1190,31 @@ class _HomePageState extends State<HomePage>
                 ),
               ),
 
-            const SizedBox(height: 10),
-            Divider(height: 1, color: DS.border),
+            const SizedBox(height: 8),
 
-            // Server list
+            // Server list — sectioned, card-style tiles.
             Expanded(
               child: _nodes.isEmpty
                   ? Center(
                       child: _isLoadingNodes
                           ? const CircularProgressIndicator(color: DS.violet)
                           : const _EmptyNodes())
-                  : total == 0
+                  : items.isEmpty
                       ? const Center(
                           child: Text('Нет серверов в этой категории',
-                              style: TextStyle(color: DS.textSecondary)))
-                      : ListView.separated(
+                              style:
+                                  TextStyle(color: DS.textSecondary)))
+                      : ListView.builder(
                           controller: scrollCtrl,
-                          padding: const EdgeInsets.only(bottom: 16),
-                          itemCount: total,
-                          separatorBuilder: (_, i) {
-                            // No hairline separator adjacent to the section
-                            // divider row — it provides its own spacing.
-                            if (dividerCount > 0 &&
-                                (i == autoCount - 1 || i == autoCount)) {
-                              return const SizedBox.shrink();
-                            }
-                            return Divider(
-                                height: 1,
-                                indent: 16,
-                                endIndent: 16,
-                                color: DS.border);
-                          },
-                          itemBuilder: (_, i) {
-                            if (showAuto && i < autoCount) {
-                              return buildTile(auto[i], isAutoNode: true);
-                            }
-                            if (dividerCount > 0 && i == autoCount) {
-                              return buildManualDivider();
-                            }
-                            final mi = i - autoCount - dividerCount;
-                            return buildTile(filteredManual[mi],
-                                isAutoNode: false);
-                          },
+                          padding: const EdgeInsets.only(top: 4, bottom: 20),
+                          itemCount: items.length,
+                          itemBuilder: (_, i) => items[i],
                         ),
             ),
           ]),
         );
-      }),
+        }),
+      ),
     );
   }
 
@@ -570,12 +1227,69 @@ class _HomePageState extends State<HomePage>
     ));
   }
 
-  String _fmtBytes(int b) {
-    if (b < 0) b = 0;
-    if (b < 1024) return '${b}B';
-    if (b < 1024 * 1024) return '${(b / 1024).toStringAsFixed(1)}KB';
-    if (b < 1024 * 1024 * 1024) return '${(b / (1024 * 1024)).toStringAsFixed(1)}MB';
-    return '${(b / (1024 * 1024 * 1024)).toStringAsFixed(2)}GB';
+  void _showUnavailableNotice({
+    required String title,
+    String? subtitle,
+  }) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: DS.surface2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: DS.rose.withValues(alpha: 0.35)),
+        ),
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        content: Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: DS.rose.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.block_rounded, color: DS.rose, size: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: DS.textPrimary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (subtitle != null && subtitle.isNotEmpty)
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: DS.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _fmtBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} МБ';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} ГБ';
   }
 
   String _fmtDuration(int sec) {
@@ -620,23 +1334,52 @@ class _HomePageState extends State<HomePage>
         color: DS.violet,
         backgroundColor: DS.surface2,
         onRefresh: _refreshAll,
-        child: CustomScrollView(
+        child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
-                  16, MediaQuery.of(context).padding.top + 20, 16, 120),
+                  16, MediaQuery.of(context).padding.top + 12, 16, 120),
               sliver: SliverList(delegate: SliverChildListDelegate([
                 _buildHeader(),
-                const SizedBox(height: 20),
+                const SizedBox(height: 14),
                 _buildConnectionCard(),
                 const SizedBox(height: 12),
-                _buildSpeedCard(),
-                const SizedBox(height: 12),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 380),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: _isConnected
+                      ? Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: _SpeedCardFlyIn(
+                            uploadSpeed: _speedCalc.uploadSpeed,
+                            downloadSpeed: _speedCalc.downloadSpeed,
+                            uploadTotal: _fmtBytes(_status.upload),
+                            downloadTotal: _fmtBytes(_status.download),
+                            uploadHist: List<double>.unmodifiable(_uploadHist),
+                            downloadHist: List<double>.unmodifiable(_downloadHist),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+                if (_referralInfo != null) ...[
+                  _ReferralCard(
+                    info: _referralInfo!,
+                    copied: _referralCopied,
+                    onCopy: _copyReferralCode,
+                    onShare: _shareReferral,
+                    onOpenDetails: _openReferralPage,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _buildSubscriptionCard(),
               ])),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -645,34 +1388,26 @@ class _HomePageState extends State<HomePage>
   // ── Header ─────────────────────────────────────────────────────────────────
   Widget _buildHeader() {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Text('Ulya VPN', style: TextStyle(
-              color: DS.textPrimary, fontSize: 32,
-              fontWeight: FontWeight.w800, letterSpacing: -0.5, height: 1,
-            )),
-            const SizedBox(height: 6),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              child: Text(
-                key: ValueKey(_isConnected),
-                _isConnected ? 'Соединение защищено' : 'Свобода начинается с приватности',
-                style: const TextStyle(color: DS.textSecondary, fontSize: 15),
-              ),
-            ),
-          ]),
+          child: Text('Ulya VPN', style: const TextStyle(
+            color: DS.textPrimary,
+            fontSize: 28,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.5,
+            height: 1,
+          )),
         ),
         VpnIconBtn(
           loading: false,
-          icon: Icons.support_agent_rounded,
+          icon: PhosphorIconsBold.headset,
           onTap: _openSupportPage,
         ),
         const SizedBox(width: 8),
         VpnIconBtn(
           loading: _isLoadingNodes,
-          icon: Icons.refresh_rounded,
+          icon: PhosphorIconsBold.arrowsClockwise,
           onTap: _isLoadingNodes ? null : _refreshAll,
         ),
       ],
@@ -686,242 +1421,330 @@ class _HomePageState extends State<HomePage>
   // ── Connection card ────────────────────────────────────────────────────────
   Widget _buildConnectionCard() {
     final connected = _isConnected;
+    final transitioning = _isTransitioning;
+
+    final String statusSub;
+    if (connected) {
+      statusSub = 'Сессия: ${_fmtDuration(_status.duration)} · IP скрыт';
+    } else if (transitioning) {
+      statusSub = 'Устанавливаем соединение…';
+    } else {
+      statusSub = 'Ваш IP виден сайтам';
+    }
+
+    final borderColor = connected
+        ? DS.emerald.withValues(alpha: 0.38)
+        : transitioning
+            ? DS.amber.withValues(alpha: 0.28)
+            : DS.border;
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 350),
       decoration: BoxDecoration(
         color: DS.surface1,
         borderRadius: BorderRadius.circular(DS.radius),
-        border: Border.all(
-          color: connected ? DS.violet.withValues(alpha: 0.45) : DS.border,
-          width: connected ? 1.5 : 1,
-        ),
+        border: Border.all(color: borderColor, width: connected ? 1.5 : 1.0),
         boxShadow: connected
-            ? [BoxShadow(color: DS.violet.withValues(alpha: 0.18),
-            blurRadius: 36, spreadRadius: -8)]
-            : [BoxShadow(color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 20, offset: const Offset(0, 6))],
+            ? [BoxShadow(
+                color: DS.emerald.withValues(alpha: 0.12),
+                blurRadius: 32, spreadRadius: -4)]
+            : [BoxShadow(
+                color: Colors.black.withValues(alpha: 0.20),
+                blurRadius: 16, offset: const Offset(0, 4))],
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 22, 20, 20),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(DS.radius - 1),
+        child: Stack(children: [
+          // Decorative rising bubbles — only render while connected.
+          if (connected)
+            const Positioned.fill(
+              child: IgnorePointer(child: _RisingBubbles()),
+            ),
+          // Card content
+          Padding(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
         child: Column(children: [
-          // Status text
-          Column(children: [
+          // Статус / время сессии
+          if (connected)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Сессия: ',
+                    style: TextStyle(fontSize: 13, color: DS.textSecondary)),
+                _RollingTimer(
+                  text: _fmtDuration(_status.duration),
+                ),
+                const Text(' · IP скрыт',
+                    style: TextStyle(fontSize: 13, color: DS.textSecondary)),
+              ],
+            )
+          else
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 250),
-              child: Text(key: ValueKey(_statusLabel), _statusLabel,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700,
-                      color: DS.textPrimary, letterSpacing: 0.1)),
+              child: Text(
+                key: ValueKey(statusSub),
+                statusSub,
+                style: const TextStyle(fontSize: 13, color: DS.textSecondary),
+              ),
             ),
-            const SizedBox(height: 5),
-            Text(
-              connected
-                  ? 'Сессия: ${_fmtDuration(_status.duration)}'
-                  : 'Выберите сервер и нажмите подключить',
-              style: const TextStyle(fontSize: 13, color: DS.textSecondary),
-            ),
-          ]),
 
-          const SizedBox(height: 24),
+          const SizedBox(height: 18),
+
+          // Button — no wrapper Stack needed, graph is in the card Stack above
           _ConnectButton(
             isConnected: connected,
-            isLoading: _isTransitioning,
+            isLoading: transitioning,
             onTap: _toggleConnection,
           ),
-          const SizedBox(height: 22),
 
-          // Separator
-          Container(height: 1, decoration: const BoxDecoration(
-              gradient: LinearGradient(colors: [Colors.transparent, DS.border, Colors.transparent]))),
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
 
-          // Server selector
-          GestureDetector(
+          // Gradient separator
+          Container(
+            height: 1,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.transparent, DS.border, Colors.transparent],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Server selector OR "Get subscription"/"Sign in" CTA. When the user
+          // has no active subscription we replace the selector entirely so they
+          // see the blocker immediately rather than discover it on Connect tap.
+          _buildServerSlot(),
+        ]),
+          ),   // Padding
+        ]),    // Stack
+      ),       // ClipRRect
+    );
+  }
+
+  // ── Server selector slot (or no-subscription CTA) ────────────────────────
+  Widget _buildServerSlot() {
+    final authState = authStateNotifier.value;
+    final sub = meNotifier.value?.subscription;
+    final subExpired = sub?.expireDate?.isBefore(DateTime.now()) ?? false;
+
+    // 1. Not logged in → "Sign in" CTA opening the bottom sheet.
+    if (!authState.isLoggedIn) {
+      return _AccentSlotCta(
+        icon: PhosphorIconsDuotone.signIn,
+        title: 'Войдите в аккаунт',
+        subtitle: 'Чтобы подключиться к VPN',
+        color: DS.telegramBlue,
+        onTap: () => showAuthBottomSheet(context),
+      );
+    }
+
+    // 2. Logged in but no plan / public catalog only → "Get subscription".
+    if (_isPublicCatalog) {
+      return _AccentSlotCta(
+        icon: PhosphorIconsDuotone.crown,
+        title: 'Получить подписку',
+        subtitle: 'Откройте доступ ко всем серверам',
+        color: DS.violet,
+        onTap: widget.onGoToPremium ?? () {},
+      );
+    }
+
+    // 3. Plan expired → "Renew".
+    if (subExpired) {
+      return _AccentSlotCta(
+        icon: PhosphorIconsDuotone.arrowsClockwise,
+        title: 'Возобновить подписку',
+        subtitle: 'Срок действия истёк',
+        color: DS.amber,
+        onTap: widget.onGoToPremium ?? () {},
+      );
+    }
+
+    // 4. Normal: regular server picker row.
+    return _buildServerSelectorRow();
+  }
+
+  Widget _buildServerSelectorRow() {
+    return GestureDetector(
             onTap: _showServerPicker,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
               decoration: BoxDecoration(
                 color: DS.surface2,
                 borderRadius: BorderRadius.circular(DS.radiusSm),
                 border: Border.all(color: DS.border),
               ),
               child: Row(children: [
-                if (_selectedNode != null && _selectedNode!.countryCode.isNotEmpty)
-                  CountryFlag.fromCountryCode(
-                    _selectedNode!.countryCode,
-                    theme: const ImageTheme(
-                      width: 36,
-                      height: 28,
-                      shape: RoundedRectangle(8),
-                    ),
-                  )
-                else
-                  Container(
-                    width: 36,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: DS.violet.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.public_rounded,
-                      color: DS.violet,
-                      size: 18,
-                    ),
+                buildServerIcon(_selectedNode),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _selectedNode?.name ?? 'Выберите сервер',
+                        style: TextStyle(
+                          color: _selectedNode != null ? DS.textPrimary : DS.violet,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                      if (_selectedNode != null)
+                        Text(
+                          _selectedNode!.protocol == 'auto'
+                              ? (_selectedNode!.description?.isNotEmpty == true
+                                  ? _selectedNode!.description!
+                                  : 'Авто-выбор сервера')
+                              : ((_selectedNode!.protocol ?? '').isNotEmpty
+                                  ? _selectedNode!.protocol!.toUpperCase()
+                                  : ''),
+                          style: TextStyle(
+                            color: _selectedNode!.protocol == 'auto'
+                                ? DS.indigoLight.withValues(alpha: 0.75)
+                                : DS.textSecondary,
+                            fontSize: 12,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                        ),
+                    ],
                   ),
-
-                const SizedBox(width: 14),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(
-                    _selectedNode?.name ?? 'Выберите сервер',
-                    style: TextStyle(
-                        color: _selectedNode != null ? DS.textPrimary : DS.violet,
-                        fontWeight: FontWeight.w600, fontSize: 15),
+                ),
+                if (_selectedNode != null) ...[
+                  _SignalBars(
+                    pingMs: _pingMs,
+                    measuring: _pingMeasuring,
+                    isAuto: _selectedNode?.protocol == 'auto',
                   ),
-                  if (_selectedNode != null && (_selectedNode!.protocol ?? '').isNotEmpty)
-                    Text(_selectedNode!.protocol!.toUpperCase(),
-                        style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
-                ])),
-                const Icon(Icons.chevron_right_rounded, color: DS.violet, size: 20),
+                  const SizedBox(width: 8),
+                ],
+                const Icon(Icons.chevron_right_rounded, color: DS.textMuted, size: 20),
               ]),
             ),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  // ── Speed card ─────────────────────────────────────────────────────────────
-  Widget _buildSpeedCard() {
-    final upActive   = _speedCalc.uploadSpeed > 1024;
-    final downActive = _speedCalc.downloadSpeed > 1024;
-    // Dim the entire card when disconnected — makes the "live" state pop.
-    return AnimatedOpacity(
-      opacity: _isConnected ? 1.0 : 0.45,
-      duration: const Duration(milliseconds: 350),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-        decoration: BoxDecoration(
-          color: DS.surface1,
-          borderRadius: BorderRadius.circular(DS.radius),
-          border: Border.all(color: DS.border),
-        ),
-        child: Row(children: [
-          Expanded(child: _SpeedTile(
-            icon: Icons.arrow_upward_rounded,
-            label: 'Отдача',
-            speed: _speedCalc.uploadSpeed,
-            total: _fmtBytes(_status.uploadSpeed),
-            color: upActive ? DS.violet : DS.textMuted,
-          )),
-          Container(width: 1, height: 52, decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, DS.border, Colors.transparent]))),
-          Expanded(child: _SpeedTile(
-            icon: Icons.arrow_downward_rounded,
-            label: 'Загрузка',
-            speed: _speedCalc.downloadSpeed,
-            total: _fmtBytes(_status.download),
-            color: downActive ? DS.emerald : DS.textMuted,
-          )),
-        ]),
-      ),
-    );
+          );
   }
 
   // ── Subscription card ──────────────────────────────────────────────────────
   Widget _buildSubscriptionCard() {
-    final info = _subscriptionInfo;
+    final info      = _subscriptionInfo;
     final authState = authStateNotifier.value;
-    final sub = meNotifier.value?.subscription;
+    final sub       = meNotifier.value?.subscription;
+
+    // Whether the card header is navigable to SubscriptionPage
+    final canOpenDetails = authState.isLoggedIn && (info != null || sub != null);
+
+    void openDetails() {
+      if (!canOpenDetails) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SubscriptionPage(onGoToPremium: widget.onGoToPremium),
+        ),
+      );
+    }
 
     return Container(
-      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: DS.surface1,
         borderRadius: BorderRadius.circular(DS.radius),
         border: Border.all(color: DS.border),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header row
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          const Text('ПОДПИСКА', style: TextStyle(
-              color: DS.textMuted, fontSize: 11,
-              fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-          if (sub != null) _SubBadge(sub: sub)
-          else if (info?.expireDate != null) _ExpiryBadge(expireDate: info!.expireDate!),
-        ]),
+        // Header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 0),
+          child: Row(children: [
+            const Text('ПОДПИСКА', style: TextStyle(
+              color: DS.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            )),
+            const Spacer(),
+            if (sub != null) _SubBadge(sub: sub)
+            else if (info?.expireDate != null) _ExpiryBadge(expireDate: info!.expireDate!),
+          ]),
+        ),
 
-        // Auth user strip
-        if (authState.isLoggedIn) ...[
-          const SizedBox(height: 12),
-          _TelegramStrip(
-            name: authState.displayName,
-            onLogout: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Выйти из аккаунта?'),
-                  content: const Text(
-                      'Данные подписки будут удалены с устройства.',
-                      style: TextStyle(color: DS.textSecondary)),
-                  actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx, false),
-                        child: const Text('Отмена')),
-                    TextButton(onPressed: () => Navigator.pop(ctx, true),
-                        child: const Text('Выйти',
-                            style: TextStyle(color: DS.rose))),
-                  ],
-                ),
-              );
-              if (ok == true && mounted) await _performLogout();
-            },
-          ),
-        ],
-
-        const SizedBox(height: 16),
-
-        // Content
-        if (info == null && !_isPublicCatalog) ...[
-          // Traffic info hasn't loaded yet — show cached subscription state
-          // if available so the card is meaningful from the very first frame.
-          if (!authState.isLoggedIn)
-            _LoginPrompt()
-          else if (sub != null &&
-              (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
-            Text(
-              sub.expireDate != null
-                  ? 'Истекла ${_formatExpiry(sub.expireDate!)}'
-                  : 'Доступ приостановлен',
-              style: const TextStyle(
-                  color: DS.textSecondary, fontSize: 13, height: 1.4),
-            ),
-            const SizedBox(height: 14),
-            _RenewButton(onTap: widget.onGoToPremium),
-          ] else if (sub != null) ...[
-            // Active subscription — traffic loading placeholder
-            Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
-              SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: DS.textMuted),
+        // Body
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // User strip
+            if (authState.isLoggedIn) ...[
+              _UserStrip(
+                name: authState.displayName,
+                isEmailAuth: authState.isEmailAuth,
+                onLogout: () async {
+                  final ok = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: const Text('Выйти из аккаунта?'),
+                      content: const Text(
+                          'Данные подписки будут удалены с устройства.',
+                          style: TextStyle(color: DS.textSecondary)),
+                      actions: [
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx, false),
+                            child: const Text('Отмена')),
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx, true),
+                            child: const Text('Выйти',
+                                style: TextStyle(color: DS.rose))),
+                      ],
+                    ),
+                  );
+                  if (ok == true && mounted) await _performLogout();
+                },
               ),
-              SizedBox(width: 8),
-              Text('Загрузка трафика…',
-                  style: TextStyle(color: DS.textSecondary, fontSize: 13)),
-            ]),
-          ] else
-            const Center(
-                child: Text('Загрузка данных…',
-                    style:
-                        TextStyle(color: DS.textSecondary, fontSize: 13))),
-        ] else if (_isPublicCatalog && !authState.isLoggedIn)
-          _LoginPrompt()
-        else if (_isPublicCatalog && authState.isLoggedIn)
-            _NoPlanPrompt(onGoToPremium: widget.onGoToPremium)
-          else if (info != null) ...[
-              // Expired subscription — minimal inline CTA, no extra boxes
+              const SizedBox(height: 14),
+            ],
+
+            // Content
+            if (info == null && !_isPublicCatalog) ...[
+              if (!authState.isLoggedIn)
+                _LoginPrompt()
+              else if (sub != null &&
+                  (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
+                Text(
+                  sub.expireDate != null
+                      ? 'Истекла ${_formatExpiry(sub.expireDate!)}'
+                      : 'Доступ приостановлен',
+                  style: const TextStyle(
+                      color: DS.textSecondary, fontSize: 13, height: 1.4),
+                ),
+                // Renew CTA itself now lives in the connection card slot,
+                // so we only keep the explanation text here.
+              ] else if (sub != null)
+                _loadAttempted && _loadError != null
+                    ? _SubLoadError(error: _loadError!, onRetry: _refreshAll)
+                    : Row(mainAxisAlignment: MainAxisAlignment.center, children: const [
+                        SizedBox(
+                          width: 14, height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: DS.textMuted),
+                        ),
+                        SizedBox(width: 8),
+                        Text('Загрузка трафика…',
+                            style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+                      ])
+              else
+                _loadAttempted
+                    ? _SubLoadError(
+                        error: _loadError ?? 'Данные подписки не получены.',
+                        onRetry: _refreshAll,
+                      )
+                    : const Center(
+                        child: Text('Загрузка данных…',
+                            style: TextStyle(color: DS.textSecondary, fontSize: 13)),
+                      ),
+            ] else if (_isPublicCatalog && !authState.isLoggedIn)
+              _LoginPrompt()
+            else if (_isPublicCatalog && authState.isLoggedIn)
+              _NoPlanPrompt(onGoToPremium: widget.onGoToPremium)
+            else if (info != null) ...[
               if (sub != null &&
                   (sub.expireDate?.isBefore(DateTime.now()) ?? false)) ...[
                 Text(
@@ -931,44 +1754,51 @@ class _HomePageState extends State<HomePage>
                   style: const TextStyle(
                       color: DS.textSecondary, fontSize: 13, height: 1.4),
                 ),
-                const SizedBox(height: 14),
-                _RenewButton(onTap: widget.onGoToPremium),
-
-              // Active subscription — traffic stats
+                // Renew CTA itself now lives in the connection card slot,
+                // so we only keep the explanation text here.
+              ] else if (info.totalBytes <= 0) ...[
+                // Безлимитный трафик — особый вид
+                _UnlimitedTrafficSection(usedLabel: info.formattedUsed),
               ] else ...[
-                Row(crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic, children: [
-                  Text(info.formattedUsed, style: const TextStyle(
-                      color: DS.textPrimary, fontSize: 28,
-                      fontWeight: FontWeight.w800, height: 1)),
-                  const SizedBox(width: 6),
-                  Text('/ ${info.formattedTotal}',
-                      style: const TextStyle(color: DS.textMuted, fontSize: 15)),
-                ]),
+                // Traffic stats
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(info.formattedUsed, style: const TextStyle(
+                        color: DS.textPrimary, fontSize: 28,
+                        fontWeight: FontWeight.w800, height: 1)),
+                    const SizedBox(width: 6),
+                    Text('/ ${info.formattedTotal}',
+                        style: const TextStyle(color: DS.textMuted, fontSize: 15)),
+                  ],
+                ),
                 const SizedBox(height: 12),
 
+                // Progress bar
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: Stack(children: [
-                    Container(height: 8, color: DS.surface3),
+                    Container(height: 6, color: DS.surface3),
                     FractionallySizedBox(
                       widthFactor: info.usedFraction.clamp(0.0, 1.0),
                       child: Container(
-                        height: 8,
+                        height: 6,
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [
                               _progressColor(info.usedFraction),
-                              Color.lerp(_progressColor(info.usedFraction),
-                                  Colors.white, 0.25)!,
+                              Color.lerp(
+                                  _progressColor(info.usedFraction),
+                                  Colors.white, 0.22)!,
                             ],
                             begin: Alignment.centerLeft,
                             end: Alignment.centerRight,
                           ),
                           boxShadow: [BoxShadow(
                               color: _progressColor(info.usedFraction)
-                                  .withValues(alpha: 0.5),
-                              blurRadius: 8)],
+                                  .withValues(alpha: 0.45),
+                              blurRadius: 6)],
                         ),
                       ),
                     ),
@@ -976,11 +1806,9 @@ class _HomePageState extends State<HomePage>
                 ),
                 const SizedBox(height: 10),
 
-                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   Text('Осталось: ${_remaining(info)}',
-                      style: const TextStyle(
-                          color: DS.textSecondary, fontSize: 12)),
+                      style: const TextStyle(color: DS.textSecondary, fontSize: 12)),
                   Text('${(info.usedFraction * 100).toStringAsFixed(1)}%',
                       style: TextStyle(
                           color: _progressColor(info.usedFraction),
@@ -988,386 +1816,72 @@ class _HomePageState extends State<HomePage>
                 ]),
               ],
             ],
+
+            const SizedBox(height: 16),
+          ]),
+        ),
+
+        // ── CTA «Управление подпиской» ───────────────────────────────────────
+        if (canOpenDetails) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: Material(
+              color: DS.surface2,
+              borderRadius: BorderRadius.circular(DS.radiusSm),
+              child: InkWell(
+                onTap: openDetails,
+                borderRadius: BorderRadius.circular(DS.radiusSm),
+                splashColor: DS.violet.withValues(alpha: 0.12),
+                highlightColor: DS.violet.withValues(alpha: 0.06),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(DS.radiusSm),
+                    border: Border.all(
+                        color: DS.violet.withValues(alpha: 0.40), width: 1),
+                  ),
+                  child: Row(children: [
+                    Icon(PhosphorIconsBold.gearSix,
+                        size: 18,
+                        color: Color.lerp(DS.violet, Colors.white, 0.28)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('Управление подпиской',
+                              style: TextStyle(
+                                color:
+                                    Color.lerp(DS.violet, Colors.white, 0.28),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                height: 1.2,
+                              )),
+                          const SizedBox(height: 2),
+                          const Text('Тариф, оплата, продление',
+                              style: TextStyle(
+                                color: DS.textMuted,
+                                fontSize: 11.5,
+                                height: 1.2,
+                              )),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(Icons.chevron_right_rounded,
+                        size: 20,
+                        color: DS.violet.withValues(alpha: 0.70)),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        ] else
+          const SizedBox(height: 2),
       ]),
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Local widgets
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _ConnectButton extends StatelessWidget {
-  final bool isConnected;
-  final bool isLoading;
-  final VoidCallback onTap;
-  const _ConnectButton({required this.isConnected, required this.isLoading, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isConnected ? DS.rose : DS.violet;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 280),
-      width: 220, height: 56,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [color, Color.lerp(color, Colors.black, 0.3)!],
-          begin: Alignment.topLeft, end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(DS.radius),
-        boxShadow: [BoxShadow(
-            color: color.withValues(alpha: 0.35),
-            blurRadius: 20, offset: const Offset(0, 6))],
-      ),
-      child: Material(color: Colors.transparent,
-        child: InkWell(
-          onTap: isLoading ? null : onTap,
-          borderRadius: BorderRadius.circular(DS.radius),
-          child: Center(
-            child: isLoading
-                ? const SizedBox(width: 22, height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
-                : Text(isConnected ? 'Отключить' : 'Подключить',
-                style: const TextStyle(color: Colors.white, fontSize: 16,
-                    fontWeight: FontWeight.w700, letterSpacing: 0.3)),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SpeedTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final double speed;
-  final String total;
-  final Color color;
-  const _SpeedTile({required this.icon, required this.label, required this.speed,
-    required this.total, required this.color});
-
-  String _fmt(double bps) {
-    if (bps < 1024) return '${bps.toStringAsFixed(0)} B/s';
-    if (bps < 1024 * 1024) return '${(bps / 1024).toStringAsFixed(1)} KB/s';
-    return '${(bps / (1024 * 1024)).toStringAsFixed(2)} MB/s';
-  }
-
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Icon(icon, color: color, size: 13),
-      const SizedBox(width: 5),
-      Text(label, style: const TextStyle(color: DS.textSecondary, fontSize: 11)),
-    ]),
-    const SizedBox(height: 6),
-    TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: speed),
-      duration: const Duration(milliseconds: 350),
-      curve: Curves.easeOutCubic,
-      builder: (_, v, _) => Text(_fmt(v), style: TextStyle(
-          color: color, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: 0.2)),
-    ),
-    const SizedBox(height: 3),
-    Text(total, style: const TextStyle(color: DS.textMuted, fontSize: 11)),
-  ]);
-}
-
-class _TelegramStrip extends StatelessWidget {
-  final String name;
-  final VoidCallback onLogout;
-  const _TelegramStrip({required this.name, required this.onLogout});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-    decoration: BoxDecoration(
-      color: DS.telegramBlue.withValues(alpha: 0.08),
-      borderRadius: BorderRadius.circular(DS.radiusXs),
-      border: Border.all(color: DS.telegramBlue.withValues(alpha: 0.2)),
-    ),
-    child: Row(children: [
-      const Icon(Icons.telegram, color: DS.telegramBlue, size: 15),
-      const SizedBox(width: 8),
-      Expanded(child: Text(name, style: const TextStyle(
-          color: DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w500),
-          overflow: TextOverflow.ellipsis)),
-      GestureDetector(
-          onTap: onLogout,
-          child: const Icon(Icons.logout_rounded, size: 16, color: DS.textMuted)),
-    ]),
-  );
-}
-
-class _LoginPrompt extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    const Text('Войдите через Telegram, чтобы активировать подписку.',
-        style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
-    const SizedBox(height: 12),
-    TelegramLoginButton(onTap: () => showAuthBottomSheet(context)),
-  ]);
-}
-
-class _NoPlanPrompt extends StatelessWidget {
-  final VoidCallback? onGoToPremium;
-  const _NoPlanPrompt({this.onGoToPremium});
-
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text('У вас нет активной подписки.',
-          style: TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5)),
-      const SizedBox(height: 12),
-      GestureDetector(
-        onTap: onGoToPremium,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [DS.violet, DS.violetDim],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(DS.radiusSm),
-          ),
-          child: const Text('Получить подписку',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700)),
-        ),
-      ),
-    ],
-  );
-}
-
-class _SubBadge extends StatelessWidget {
-  final MeSubscription sub;
-  const _SubBadge({required this.sub});
-
-  @override
-  Widget build(BuildContext context) {
-    Color color; String label; IconData icon;
-    if (sub.isActive) {
-      if (sub.isTrial) {
-        color = DS.amber; label = 'Пробный'; icon = Icons.hourglass_top_rounded;
-      } else {
-        final diff = sub.expireDate?.difference(DateTime.now());
-        if (diff != null && diff.inDays < 7 && !diff.isNegative) {
-          color = DS.amber; label = '${diff.inDays}д'; icon = Icons.timer_outlined;
-        } else {
-          // Violet = brand colour → reads as "active/ok" in this palette context.
-          // Gold works as accent only against a deep-indigo background (hero card);
-          // on neutral surface1 it looks like a warning — violet is unambiguous here.
-          color = DS.violet; label = 'Активна'; icon = Icons.verified_rounded;
-        }
-      }
-    } else if (sub.isExpired) {
-      color = DS.rose; label = 'Истекла'; icon = Icons.timer_off_rounded;
-    } else {
-      color = DS.textMuted; label = sub.status; icon = Icons.info_outline_rounded;
-    }
-    return _StatusPill(color: color, label: label, icon: icon);
-  }
-}
-
-class _ExpiryBadge extends StatelessWidget {
-  final DateTime expireDate;
-  const _ExpiryBadge({required this.expireDate});
-
-  @override
-  Widget build(BuildContext context) {
-    final diff = expireDate.difference(DateTime.now());
-    final expired = diff.isNegative;
-    final soon = !expired && diff.inDays < 7;
-    final color = expired ? DS.rose : soon ? DS.amber : DS.violet;
-    final label = expired ? 'Истекла' : diff.inDays > 0 ? '${diff.inDays}д' : '< 1д';
-    return _StatusPill(
-        color: color, label: label,
-        icon: expired ? Icons.timer_off_rounded : Icons.timer_outlined);
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  final Color color; final String label; final IconData icon;
-  const _StatusPill({required this.color, required this.label, required this.icon});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.1),
-      borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: color.withValues(alpha: 0.3)),
-    ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, color: color, size: 12),
-      const SizedBox(width: 4),
-      Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
-    ]),
-  );
-}
-
-class _RenewButton extends StatelessWidget {
-  final VoidCallback? onTap;
-  const _RenewButton({this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [DS.violet, DS.violetDim],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(DS.radiusSm),
-            boxShadow: [
-              BoxShadow(
-                color: DS.violet.withValues(alpha: 0.30),
-                blurRadius: 16,
-                offset: const Offset(0, 4),
-              )
-            ],
-          ),
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.bolt_rounded, size: 16, color: Colors.white),
-              SizedBox(width: 7),
-              Text('Возобновить подписку',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700)),
-            ],
-          ),
-        ),
-      );
-}
-
-// ── Shared micro-widgets ──────────────────────────────────────────────────────
-
-class VpnIconBtn extends StatefulWidget {
-  final bool loading;
-  final IconData icon;
-  final VoidCallback? onTap;
-  const VpnIconBtn({super.key, required this.loading, required this.icon, this.onTap});
-
-  @override
-  State<VpnIconBtn> createState() => _VpnIconBtnState();
-}
-
-class _VpnIconBtnState extends State<VpnIconBtn>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _rotCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _rotCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 700),
-    );
-    if (widget.loading) _rotCtrl.repeat();
-  }
-
-  @override
-  void didUpdateWidget(VpnIconBtn old) {
-    super.didUpdateWidget(old);
-    if (widget.loading && !old.loading) {
-      _rotCtrl.repeat();
-    } else if (!widget.loading && old.loading) {
-      final remaining = 1.0 - (_rotCtrl.value % 1.0);
-      if (remaining > 0 && remaining < 1.0) {
-        _rotCtrl.animateTo(
-          _rotCtrl.value + remaining,
-          duration: Duration(milliseconds: (remaining * 700).round().clamp(1, 700)),
-        ).then((_) { if (mounted) _rotCtrl.reset(); });
-      } else {
-        _rotCtrl.reset();
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _rotCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: widget.onTap,
-    child: Container(
-      width: 42, height: 42,
-      decoration: BoxDecoration(
-        color: DS.surface2,
-        borderRadius: BorderRadius.circular(DS.radiusSm),
-        border: Border.all(color: DS.border),
-      ),
-      child: RotationTransition(
-        turns: _rotCtrl,
-        child: Icon(widget.icon, color: DS.textSecondary, size: 20),
-      ),
-    ),
-  );
-}
-
-class _Chip extends StatelessWidget {
-  final String label; final bool selected; final VoidCallback onTap;
-  const _Chip({required this.label, required this.selected, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-      decoration: BoxDecoration(
-        color: selected ? DS.violet.withValues(alpha: 0.15) : DS.surface2,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: selected ? DS.violet : DS.border),
-      ),
-      child: Text(label, style: TextStyle(
-          color: selected ? DS.violet : DS.textSecondary,
-          fontSize: 12, fontWeight: FontWeight.w600)),
-    ),
-  );
-}
-
-class VpnInfoBanner extends StatelessWidget {
-  final Color color; final String text;
-  const VpnInfoBanner({super.key, required this.color, required this.text});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.07),
-      borderRadius: BorderRadius.circular(DS.radiusSm),
-      border: Border.all(color: color.withValues(alpha: 0.25)),
-    ),
-    child: Row(children: [
-      Icon(Icons.info_outline_rounded, size: 15, color: color.withValues(alpha: 0.85)),
-      const SizedBox(width: 10),
-      Expanded(child: Text(text, style: TextStyle(color: color.withValues(alpha: 0.9), fontSize: 12))),
-    ]),
-  );
-}
-
-class _EmptyNodes extends StatelessWidget {
-  const _EmptyNodes();
-
-  @override
-  Widget build(BuildContext context) => Column(mainAxisSize: MainAxisSize.min, children: [
-    const Icon(Icons.cloud_off_rounded, size: 40, color: DS.textMuted),
-    const SizedBox(height: 10),
-    const Text('Серверы не найдены',
-        style: TextStyle(color: DS.textSecondary, fontSize: 14)),
-  ]);
-}

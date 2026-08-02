@@ -1,5 +1,4 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-          package="com.example.dev_vpn"
           xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -11,10 +10,18 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission"/>
+    <!-- Package visibility for the split-tunneling app picker. The launcher
+         intent filter exposes exactly the set we show (apps with a launch
+         icon) without the QUERY_ALL_PACKAGES permission, which Google Play
+         restricts and audits. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN"/>
+            <category android:name="android.intent.category.LAUNCHER"/>
+        </intent>
+    </queries>
 
     <application
-            android:usesCleartextTraffic="true"
             tools:targetApi="35.0.1"
             android:label="Ulya"
             android:name="${applicationName}"
@@ -22,7 +29,7 @@
         <activity
                 android:name=".MainActivity"
                 android:exported="true"
-                android:launchMode="singleTop"
+                android:launchMode="singleTask"
                 android:taskAffinity=""
                 android:theme="@style/LaunchTheme"
                 android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -40,29 +47,52 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Telegram OIDC Native Login App Link. Telegram redirects the
+                 authorization result here (https://app{id}-login.tg.dev/tglogin);
+                 the domain is auto-verified against the SHA-256 registered in
+                 @BotFather, so Android opens the app directly. Caught in Dart
+                 via the app_links package (see TelegramAuthLink). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"
+                      android:host="app982852799-login.tg.dev"
+                      android:pathPrefix="/tglogin"/>
+            </intent-filter>
+            <!-- Static launcher shortcuts: long-press the app icon. -->
+            <meta-data
+                    android:name="android.app.shortcuts"
+                    android:resource="@xml/shortcuts"/>
         </activity>
 
+        <!-- Quick Settings tile — VPN status + one-tap toggle from the shade. -->
         <service
-                android:name="com.example.v2ray_box.bg.VPNService"
-                android:exported="false"
-                android:foregroundServiceType="specialUse"
-                android:permission="android.permission.BIND_VPN_SERVICE">
+                android:name=".VpnTileService"
+                android:exported="true"
+                android:icon="@drawable/ic_vpn_tile"
+                android:label="@string/tile_label"
+                android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
-                <action android:name="android.net.VpnService"/>
+                <action android:name="android.service.quicksettings.action.QS_TILE"/>
             </intent-filter>
-            <property
-                    android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                    android:value="vpn"/>
         </service>
 
-        <service
-                android:name="com.example.v2ray_box.bg.ProxyService"
-                android:exported="false"
-                android:foregroundServiceType="specialUse">
-            <property
-                    android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                    android:value="proxy"/>
-        </service>
+        <!-- flutter_web_auth_2 callback receiver — catches the OAuth redirect
+             back from the browser. Scheme must match AppConfig.oauthScheme. -->
+        <activity
+                android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+                android:exported="true">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="ulyavpn"/>
+            </intent-filter>
+        </activity>
+
+        <!-- The actual VPN service (XrayVPNService) is declared by the
+             flutter_v2ray_plus plugin manifest and merged at build time. -->
 
         <meta-data
                 android:name="flutterEmbedding"

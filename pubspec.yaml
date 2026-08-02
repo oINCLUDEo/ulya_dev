@@ -22,9 +22,15 @@ dependencies:
   flutter_svg: ^2.2.3
   flutter_native_splash: ^2.4.7
   device_info_plus: ^12.3.0
+  package_info_plus: ^8.1.2
+  crypto: ^3.0.3
   url_launcher: ^6.3.2
   country_flags: ^4.1.2
   phosphor_flutter: ^2.1.0
+  flutter_web_auth_2: ^4.1.0
+  flutter_secure_storage: ^9.2.2
+  sentry_flutter: ^9.0.0
+  webview_flutter: ^4.10.0
 
 dev_dependencies:
   flutter_test:
@@ -38,6 +44,8 @@ flutter:
   assets:
     - assets/anim/loading.json
     - assets/icon/logo.svg
+    - assets/image/app_icon.png
+    - assets/geo/coastline.geojson
 
 flutter_native_splash:
   color: "#0F0F1A"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shortcut_connect_short">Подключить</string>
+    <string name="shortcut_connect_long">Подключить / отключить VPN</string>
+    <string name="shortcut_servers_short">Серверы</string>
+    <string name="shortcut_servers_long">Открыть список серверов</string>
+    <string name="tile_label">Ulya VPN</string>
+</resources>
