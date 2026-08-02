@@ -20,6 +20,7 @@ import '../services/auth_service.dart';
 import '../services/auth_state.dart';
 import '../services/launch_action_service.dart';
 import '../services/me_service.dart';
+import '../services/native_vpn_bridge.dart';
 import '../services/network_monitor.dart';
 import '../services/ping_state.dart';
 import '../services/referral_service.dart';
@@ -230,7 +231,10 @@ class _HomePageState extends State<HomePage>
         if (wasConnected) HapticFeedback.lightImpact();
       }
       // Re-tune ping cadence to match the new state (10 s vs 30 s).
-      if (connected != wasConnected) _restartPingTimer();
+      if (connected != wasConnected) {
+        _restartPingTimer();
+        LaunchActionService.setVpnConnected(connected);
+      }
       setState(() => _status = s);
     });
   }
@@ -409,6 +413,14 @@ class _HomePageState extends State<HomePage>
       setState(() => _selectedNode = node);
       _restartPingTimer();
     }
+    // Keep the QS tile's native-side cache pointed at whatever is selected
+    // now, so it can connect directly without opening the app.
+    unawaited(_syncNativeVpnConfig(node));
+  }
+
+  Future<void> _syncNativeVpnConfig(ServerNode? node) async {
+    final blockedApps = await _loadBlockedApps();
+    await NativeVpnBridge.syncSelectedNode(node, blockedApps: blockedApps);
   }
 
   void _onAuthChanged() {
@@ -928,6 +940,10 @@ class _HomePageState extends State<HomePage>
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0.4),
                             ),
+                          if (purposeBadgesForDescription(node.description).isNotEmpty) ...[
+                            const SizedBox(width: 7),
+                            buildPurposeBadges(node.description, size: 12),
+                          ],
                           if (hardLocked) ...[
                             const SizedBox(width: 8),
                             Container(

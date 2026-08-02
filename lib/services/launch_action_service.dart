@@ -38,4 +38,17 @@ class LaunchActionService {
     pending.value = null;
     return true;
   }
+
+  /// Tells the native side (Quick Settings tile) whether *this app's* VPN
+  /// tunnel is connected. The tile used to ask Android "is any VPN active
+  /// system-wide", which also lit up for a completely different VPN app —
+  /// this pushes our own precise state instead.
+  static Future<void> setVpnConnected(bool connected) async {
+    try {
+      await _channel.invokeMethod('setVpnConnected', {'connected': connected});
+    } catch (e) {
+      // iOS / platforms without the channel — no QS tile there anyway.
+      appLogger.info('LaunchAction', 'setVpnConnected unavailable: $e');
+    }
+  }
 }

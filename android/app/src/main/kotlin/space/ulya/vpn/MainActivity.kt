@@ -1,5 +1,6 @@
 package space.ulya.vpn
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -8,10 +9,12 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.service.quicksettings.TileService
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -153,6 +156,53 @@ class MainActivity: FlutterActivity() {
                         launchAction = null // consume-once
                     }
 
+                    // Pushed by Dart every time the actual VPN tunnel state
+                    // flips. VpnTileService reads this flag directly instead
+                    // of asking Android "is any VPN active system-wide" —
+                    // that used to light the tile up for a different app's
+                    // VPN connection too.
+                    "setVpnConnected" -> {
+                        val connected = call.argument<Boolean>("connected") ?: false
+                        getSharedPreferences(VpnTileService.PREFS_NAME, Context.MODE_PRIVATE)
+                            .edit()
+                            .putBoolean(VpnTileService.PREF_CONNECTED, connected)
+                            .apply()
+                        requestTileRefresh()
+                        result.success(null)
+                    }
+
+                    // Pushed by Dart whenever the selected server (or its
+                    // resolved config) changes — lets the tile connect to
+                    // *this exact* server directly, without opening the app.
+                    "setVpnConfig" -> {
+                        val remark = call.argument<String>("remark") ?: ""
+                        val config = call.argument<String>("config")
+                        @Suppress("UNCHECKED_CAST")
+                        val blockedApps = (call.argument<List<String>>("blockedApps") ?: emptyList())
+                            .toSet()
+                        if (config == null) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        getSharedPreferences(VpnTileService.PREFS_NAME, Context.MODE_PRIVATE)
+                            .edit()
+                            .putString(VpnTileService.PREF_REMARK, remark)
+                            .putString(VpnTileService.PREF_CONFIG, config)
+                            .putStringSet(VpnTileService.PREF_BLOCKED_APPS, blockedApps)
+                            .apply()
+                        result.success(null)
+                    }
+
+                    "clearVpnConfig" -> {
+                        getSharedPreferences(VpnTileService.PREFS_NAME, Context.MODE_PRIVATE)
+                            .edit()
+                            .remove(VpnTileService.PREF_REMARK)
+                            .remove(VpnTileService.PREF_CONFIG)
+                            .remove(VpnTileService.PREF_BLOCKED_APPS)
+                            .apply()
+                        result.success(null)
+                    }
+
                     // Stable per-device id (survives app uninstall/reinstall as long
                     // as the signing key and device don't change) — used by
                     // RemnawaveService to derive a HWID that doesn't burn a fresh
@@ -202,6 +252,18 @@ class MainActivity: FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /// Nudges the QS tile to refresh immediately even if the quick-settings
+    /// shade isn't currently pulled down (otherwise it'd only catch up the
+    /// next time the panel is opened).
+    private fun requestTileRefresh() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            TileService.requestListeningState(
+                this,
+                ComponentName(this, VpnTileService::class.java)
+            )
+        }
     }
 
     /// Draws the app icon straight into an ICON_SIZE bitmap (no full-size
