@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models/me_response.dart';
 import '../models/server_node.dart';
@@ -24,6 +23,7 @@ import '../widgets/quality_bars.dart';
 import '../widgets/skeleton.dart';
 import 'auth_bottom_sheet.dart';
 import 'home_page.dart' show VpnIconBtn, VpnInfoBanner;
+import 'support_page.dart';
 import '../main.dart' show DS;
 
 class ServersPage extends StatefulWidget {
@@ -409,14 +409,16 @@ class _ServersPageState extends State<ServersPage>
     // status screen instead.
     final sub = meNotifier.value?.subscription;
     final loggedIn = authStateNotifier.value.isLoggedIn;
-    // Prefer the admin's exact note texts (with placeholders already resolved)
-    // that Remnawave returns for blocked states; fall back to the structured
-    // /me status if notes are unavailable.
+    // Remnawave's admin notes are only ever used to *detect* a condition we
+    // don't have a structured signal for (device limit, empty host list) —
+    // never to source the copy or the call-to-action. Every full-screen block
+    // is drawn from our own design system so it stays native (no external
+    // links) and on-brand regardless of what an admin types into the panel.
     final notes = (!_isPublicCatalog && loggedIn)
         ? RemnawaveService.lastNotes
         : const <String>[];
-    final blocked = (notes.isEmpty && !_isPublicCatalog && sub != null && loggedIn)
-        ? _SubBlock.fromStatus(sub.status)
+    final blocked = (!_isPublicCatalog && loggedIn)
+        ? _SubBlock.resolve(notes: notes, status: sub?.status)
         : null;
     return Scaffold(
       backgroundColor: DS.surface0,
@@ -456,21 +458,15 @@ class _ServersPageState extends State<ServersPage>
                   ),
                 ),
               )
-            // Notes only take over the whole screen when there's nothing else
-            // to show — e.g. during reserve-squad grace the subscription can
+            // A full-screen block only takes over when there's nothing else to
+            // show — e.g. during reserve-squad grace the subscription can
             // carry a "device limit reached" note AND a real, connectable
-            // server at the same time. Hiding the server behind the note
-            // would defeat the entire point of grace access.
-            else if (notes.isNotEmpty && _nodes.isEmpty)
-              SliverFillRemaining(child: _NotesStatusView(
-                notes: notes,
-                onPremium: widget.onGoToPremium,
-                onRefresh: _loadNodes,
-              ))
-            else if (blocked != null)
+            // server at the same time. Hiding the server behind the block
+            // screen would defeat the entire point of grace access.
+            else if (blocked != null && _nodes.isEmpty)
               SliverFillRemaining(child: _SubStatusView(
                 block: blocked,
-                sub: sub!,
+                sub: sub,
                 onPremium: widget.onGoToPremium,
                 onRefresh: _loadNodes,
               ))
@@ -514,7 +510,7 @@ class _ServersPageState extends State<ServersPage>
 
     return Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('Серверы', style: TextStyle(
+        const Text('Сервера', style: TextStyle(
             color: DS.textPrimary, fontSize: 28,
             fontWeight: FontWeight.w700, letterSpacing: -0.5, height: 1)),
         if (subtitle != null) ...[
@@ -880,6 +876,10 @@ class _NodeTileState extends State<_NodeTile>
                 if ((node.protocol ?? '').isNotEmpty)
                   Row(children: [
                     _ProtoBadge(protocol: node.protocol!),
+                    if (purposeBadgesForDescription(node.description).isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      buildPurposeBadges(node.description),
+                    ],
                   ]),
               ])),
               const SizedBox(width: 8),
@@ -1072,9 +1072,11 @@ class _ManualDivider extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 enum _SubBlock {
+  hwidLimit,
   expired,
   limited,
-  disabled;
+  disabled,
+  hostsUnavailable;
 
   static _SubBlock? fromStatus(String s) {
     switch (s.toLowerCase()) {
@@ -1090,14 +1092,37 @@ enum _SubBlock {
         return null;
     }
   }
+
+  /// Resolves which full-screen block (if any) to show.
+  ///
+  /// Admin notes are used only to *detect* conditions with no dedicated
+  /// subscription status (device limit reached, an empty host list) — the
+  /// structured [status] always wins when it maps to a known block, and the
+  /// note text itself never reaches the UI. Copy and the call-to-action are
+  /// entirely ours, so they stay native (no external links) and on-brand no
+  /// matter what an admin types into the Remnawave panel.
+  static _SubBlock? resolve({required List<String> notes, required String? status}) {
+    final hasHwidNote = notes.any((n) {
+      final s = n.toLowerCase();
+      return s.contains('устройств') || s.contains('device') || s.contains('hwid');
+    });
+    if (hasHwidNote) return _SubBlock.hwidLimit;
+    final fromStatus = status != null ? _SubBlock.fromStatus(status) : null;
+    if (fromStatus != null) return fromStatus;
+    if (notes.isNotEmpty) return _SubBlock.hostsUnavailable;
+    return null;
+  }
 }
 
-/// Full-screen status shown on the Servers page when the subscription is not
-/// active — replaces the fake "note" tiles Remnawave returns in these states
-/// with a clear message + the right call to action.
+/// Full-screen status shown on the Servers page when there's nothing
+/// connectable to display — subscription expired/limited/disabled, the
+/// device (HWID) limit was hit, or Remnawave has no hosts to offer right
+/// now. One consistent template (icon, copy, single native CTA) for every
+/// case, so the screen always feels like part of the same product instead
+/// of echoing whatever an admin typed into the panel.
 class _SubStatusView extends StatelessWidget {
   final _SubBlock block;
-  final MeSubscription sub;
+  final MeSubscription? sub;
   final VoidCallback? onPremium;
   final Future<void> Function() onRefresh;
 
@@ -1108,13 +1133,8 @@ class _SubStatusView extends StatelessWidget {
     this.onPremium,
   });
 
-  static const _supportUrl = 'https://t.me/ulya_tech';
-
-  Future<void> _openSupport() async {
-    final uri = Uri.parse(_supportUrl);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
+  void _openSupport(BuildContext context) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const SupportPage()));
   }
 
   @override
@@ -1124,40 +1144,63 @@ class _SubStatusView extends StatelessWidget {
     final String title;
     final List<String> lines;
     final String ctaLabel;
-    final bool ctaIsSupport;
+    final VoidCallback? onCta;
 
     switch (block) {
+      case _SubBlock.hwidLimit:
+        icon = PhosphorIconsFill.devices;
+        color = DS.violet;
+        title = 'Достигнут лимит устройств';
+        lines = const [
+          'На аккаунте уже максимум подключённых устройств.',
+          'Отключите одно из старых — и это сразу освободит место.',
+        ];
+        ctaLabel = 'Управлять устройствами';
+        onCta = () async {
+          await showDeviceManager(context);
+          await onRefresh();
+        };
       case _SubBlock.expired:
         icon = PhosphorIconsFill.hourglassMedium;
         color = DS.amber;
         title = 'Подписка истекла';
         lines = [
-          'Срок действия закончился ${sub.formattedExpiry}.',
+          'Срок действия закончился ${sub?.formattedExpiry ?? ''}.',
           'Продлите подписку, чтобы снова подключаться к серверам.',
         ];
         ctaLabel = 'Продлить подписку';
-        ctaIsSupport = false;
+        onCta = onPremium;
       case _SubBlock.limited:
-        final total = sub.trafficLimitGb > 0 ? '${sub.trafficLimitGb} ГБ' : '∞';
+        final total = (sub?.trafficLimitGb ?? 0) > 0 ? '${sub!.trafficLimitGb} ГБ' : '∞';
         icon = PhosphorIconsFill.gauge;
         color = DS.violet;
         title = 'Лимит трафика исчерпан';
         lines = [
-          'Использовано ${sub.trafficUsedGb.toStringAsFixed(1)} из $total.',
+          'Использовано ${(sub?.trafficUsedGb ?? 0).toStringAsFixed(1)} из $total.',
           'Смените тариф или продлите — и доступ вернётся.',
         ];
         ctaLabel = 'Сменить тариф';
-        ctaIsSupport = false;
+        onCta = onPremium;
       case _SubBlock.disabled:
         icon = PhosphorIconsFill.prohibit;
         color = DS.rose;
         title = 'Подписка приостановлена';
-        lines = [
+        lines = const [
           'Доступ временно ограничен.',
           'Напишите в поддержку — мы поможем разобраться.',
         ];
-        ctaLabel = 'Связаться с поддержкой';
-        ctaIsSupport = true;
+        ctaLabel = 'Написать в поддержку';
+        onCta = () => _openSupport(context);
+      case _SubBlock.hostsUnavailable:
+        icon = PhosphorIconsFill.cloudSlash;
+        color = DS.cyan;
+        title = 'Серверы временно недоступны';
+        lines = const [
+          'Мы уже разбираемся и скоро всё заработает.',
+          'Загляните чуть позже — или напишите нам, если срочно.',
+        ];
+        ctaLabel = 'Написать в поддержку';
+        onCta = () => _openSupport(context);
     }
 
     return Center(
@@ -1208,7 +1251,7 @@ class _SubStatusView extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               child: GestureDetector(
-                onTap: ctaIsSupport ? _openSupport : onPremium,
+                onTap: onCta,
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 15),
                   alignment: Alignment.center,
@@ -1243,172 +1286,6 @@ class _SubStatusView extends StatelessWidget {
   }
 }
 
-/// Status screen built from the admin's exact note texts (Remnawave sentinel
-/// entries). Renders the lines as-is (their emoji read as icons), turns a
-/// note that contains a link into an "open" button.
-class _NotesStatusView extends StatelessWidget {
-  final List<String> notes;
-  final Future<void> Function() onRefresh;
-  final VoidCallback? onPremium;
-
-  const _NotesStatusView({
-    required this.notes,
-    required this.onRefresh,
-    this.onPremium,
-  });
-
-  static final RegExp _urlRe = RegExp(
-    r'((?:https?://)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[^\s]*)?)',
-    caseSensitive: false,
-  );
-
-  Future<void> _open(String raw) async {
-    var u = raw.trim();
-    if (!u.startsWith('http')) u = 'https://$u';
-    final uri = Uri.tryParse(u);
-    if (uri != null && await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    String? link;
-    final textLines = <String>[];
-    for (final n in notes) {
-      final m = _urlRe.firstMatch(n);
-      if (m != null && link == null) {
-        link = m.group(1);
-      } else {
-        textLines.add(n);
-      }
-    }
-    final title = textLines.isNotEmpty ? textLines.first : 'Подписка недоступна';
-    final body = textLines.length > 1 ? textLines.sublist(1) : const <String>[];
-
-    // HWID-limit notes → offer to manage devices in-app instead of just a link.
-    final isHwid = notes.any((n) {
-      final s = n.toLowerCase();
-      return s.contains('устройств') || s.contains('device') || s.contains('hwid');
-    });
-
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(28, 24, 28, 48),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 92,
-              height: 92,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: DS.amber.withValues(alpha: 0.12),
-                border: Border.all(color: DS.amber.withValues(alpha: 0.3), width: 1.5),
-                boxShadow: [BoxShadow(color: DS.amber.withValues(alpha: 0.16), blurRadius: 34)],
-              ),
-              child: const Icon(PhosphorIconsFill.warningCircle, color: DS.amber, size: 42),
-            ),
-            const SizedBox(height: 24),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: DS.textPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                height: 1.25,
-                letterSpacing: -0.2,
-              ),
-            ),
-            for (final l in body) ...[
-              const SizedBox(height: 8),
-              Text(
-                l,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: DS.textSecondary, fontSize: 14, height: 1.45),
-              ),
-            ],
-            const SizedBox(height: 26),
-            if (isHwid)
-              _StatusCta(
-                label: 'Управлять устройствами',
-                color: DS.violet,
-                icon: PhosphorIconsBold.devices,
-                onTap: () async {
-                  await showDeviceManager(context);
-                  await onRefresh();
-                },
-              )
-            else if (link != null)
-              _StatusCta(
-                label: 'Открыть $link',
-                color: DS.violet,
-                onTap: () => _open(link!),
-              )
-            else if (onPremium != null)
-              _StatusCta(
-                label: 'Перейти к подписке',
-                color: DS.violet,
-                onTap: onPremium!,
-              ),
-            const SizedBox(height: 12),
-            TextButton(
-              onPressed: onRefresh,
-              child: const Text('Обновить',
-                  style: TextStyle(color: DS.textMuted, fontSize: 13)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Shared primary CTA button for status screens.
-class _StatusCta extends StatelessWidget {
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-  final IconData? icon;
-  const _StatusCta({required this.label, required this.color, required this.onTap, this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 15),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(DS.radiusSm),
-            boxShadow: [
-              BoxShadow(color: color.withValues(alpha: 0.3), blurRadius: 18, offset: const Offset(0, 6)),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, color: Colors.white, size: 18),
-                const SizedBox(width: 8),
-              ],
-              Flexible(
-                child: Text(label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // In-app device manager (resolve HWID limit without leaving the app)

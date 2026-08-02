@@ -1408,6 +1408,11 @@ class DeviceItem {
   String get clientName {
     final s = (rawName ?? '').toLowerCase();
     if (s.isEmpty) return '';
+    // Our own app's User-Agent is "Happ/<ver>/Ulya/<ver>" — it deliberately
+    // mimics Happ's UA format so Remnawave treats it as a supported client.
+    // Check for our marker first, otherwise every device running this app
+    // would be mislabeled as the third-party "Happ" client.
+    if (s.contains('ulya')) return 'Ulya VPN';
     if (s.contains('sing-box') || s.contains('singbox')) return 'sing-box';
     if (s.contains('happ')) return 'Happ';
     if (s.contains('v2rayng') || s.contains('v2ray-ng')) return 'v2rayNG';

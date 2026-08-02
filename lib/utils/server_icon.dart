@@ -89,6 +89,62 @@ Widget buildCountryFlagIcon(
   );
 }
 
+/// A (icon, color) tag describing what a server is specialised for, guessed
+/// from Remnawave's free-text `description` category label (e.g. "Белые
+/// списки: YouTube, Telegram"). Purely a client-side heuristic — Remnawave
+/// has no structured per-service tagging, so this just keyword-matches the
+/// admin's category text. Returns an empty list for anything unrecognised
+/// (most regular servers have no badges at all, which is fine).
+List<(PhosphorIconData, Color)> purposeBadgesForDescription(String? description) {
+  final d = (description ?? '').toLowerCase();
+  if (d.isEmpty) return const [];
+
+  final badges = <(PhosphorIconData, Color)>[];
+  void add(bool cond, PhosphorIconData icon, Color color) {
+    if (cond) badges.add((icon, color));
+  }
+
+  add(d.contains('youtube'), PhosphorIconsFill.youtubeLogo, const Color(0xFFFF4444));
+  add(d.contains('telegram') || d.contains('телеграм'),
+      PhosphorIconsFill.telegramLogo, const Color(0xFF29A9EB));
+  add(d.contains('instagram') || d.contains('инстаграм'),
+      PhosphorIconsFill.instagramLogo, const Color(0xFFE1306C));
+  add(d.contains('whatsapp') || d.contains('вотсап') || d.contains('ватсап'),
+      PhosphorIconsFill.whatsappLogo, const Color(0xFF25D366));
+  add(d.contains('discord') || d.contains('дискорд'),
+      PhosphorIconsFill.discordLogo, const Color(0xFF5865F2));
+  add(d.contains('tiktok') || d.contains('тикток'),
+      PhosphorIconsFill.tiktokLogo, const Color(0xFFEE1D52));
+  add(d.contains('spotify') || d.contains('спотифай'),
+      PhosphorIconsFill.spotifyLogo, const Color(0xFF1DB954));
+  add(d.contains('steam') || d.contains('стим') && !d.contains('систем'),
+      PhosphorIconsFill.steamLogo, const Color(0xFF66C0F4));
+  add(d.contains('игр') || d.contains('game') || d.contains('гейм'),
+      PhosphorIconsFill.gameController, const Color(0xFFFF6B3D));
+  // Deliberately avoids the bare "ии" substring — it's the genitive/plural
+  // ending of countless unrelated Russian nouns ("версии", "функции", …).
+  add(d.contains('chatgpt') || d.contains('нейросет') ||
+          d.contains('искусственн') || d.contains(' gpt') ||
+          d.contains('openai') || d.contains('claude') || d.contains('gemini'),
+      PhosphorIconsFill.robot, const Color(0xFF9D8FFF));
+
+  return badges;
+}
+
+/// Compact row of small tinted icons for [purposeBadgesForDescription].
+/// Returns a zero-size widget when there's nothing to show, so call sites
+/// can splice it in unconditionally.
+Widget buildPurposeBadges(String? description, {double size = 14, double gap = 5}) {
+  final badges = purposeBadgesForDescription(description);
+  if (badges.isEmpty) return const SizedBox.shrink();
+  return Row(mainAxisSize: MainAxisSize.min, children: [
+    for (int i = 0; i < badges.length; i++) ...[
+      if (i > 0) SizedBox(width: gap),
+      Icon(badges[i].$1, size: size, color: badges[i].$2),
+    ],
+  ]);
+}
+
 /// Localised country name for a known ISO 3166-1 alpha-2 code. Falls back to
 /// the upper-cased code itself for anything we don't recognise — that keeps
 /// the UI from looking broken while still being obviously a placeholder.

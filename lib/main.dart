@@ -550,7 +550,7 @@ class _GlassNavBar extends StatelessWidget {
         label: 'Главная'),
     (icon: PhosphorIconsRegular.globeHemisphereWest,
         activeIcon: PhosphorIconsFill.globeHemisphereWest,
-        label: 'Серверы'),
+        label: 'Сервера'),
     (icon: PhosphorIconsRegular.gearSix,
         activeIcon: PhosphorIconsFill.gearSix,
         label: 'Настройки'),
