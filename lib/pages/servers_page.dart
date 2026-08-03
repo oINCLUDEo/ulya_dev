@@ -229,7 +229,19 @@ class _ServersPageState extends State<ServersPage>
         final bOk = b.isAvailable ? 0 : 1;
         if (aOk != bOk) return aOk.compareTo(bOk);
 
-        // 2) Alphabetical by display name — stable, predictable order.
+        // 2) By country (localised name) — servers carry mixed prefixes in
+        //    their raw display name ("4G · Резерв", "Wi-Fi | 4G", "ОАЭ ·
+        //    Безлимит", …), so sorting on the raw string alone jumbles
+        //    countries together with no visible pattern. This matches the
+        //    country-grouped order the home-screen picker already uses.
+        final aCountry = countryNameForCode(
+            a.countryCode.isEmpty ? '??' : a.countryCode.toUpperCase());
+        final bCountry = countryNameForCode(
+            b.countryCode.isEmpty ? '??' : b.countryCode.toUpperCase());
+        final countryCmp = aCountry.compareTo(bCountry);
+        if (countryCmp != 0) return countryCmp;
+
+        // 3) Alphabetical by display name — stable, predictable tiebreaker.
         return a.name.compareTo(b.name);
       });
     }

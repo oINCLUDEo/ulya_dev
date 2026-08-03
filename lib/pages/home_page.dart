@@ -388,6 +388,28 @@ class _HomePageState extends State<HomePage>
   /// the same server just because they measured it independently.
   Future<void> _probeNodeForPicker(ServerNode node) => PingState.probeNode(node);
 
+  /// Re-entrancy guard for [_sweepPickerPings] — repeatedly opening/closing
+  /// the sheet shouldn't stack up multiple concurrent sweeps.
+  bool _pickerSweepRunning = false;
+
+  /// Background sweep of every node's ping as soon as the picker sheet opens.
+  /// Without this, a user who never visited the full ServersPage (which runs
+  /// its own sweep on load) would see grey/unmeasured bars for most servers
+  /// here, needing to tap each one individually — the sheet otherwise only
+  /// ever measured the single currently-selected node on a timer.
+  Future<void> _sweepPickerPings() async {
+    if (_pickerSweepRunning) return;
+    _pickerSweepRunning = true;
+    final queue = _nodes.where((n) => n.link != null).toList();
+    Future<void> worker() async {
+      while (queue.isNotEmpty) {
+        await PingState.probeNode(queue.removeLast(), markInFlight: false);
+      }
+    }
+    await Future.wait(List.generate(5, (_) => worker()));
+    _pickerSweepRunning = false;
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -788,6 +810,9 @@ class _HomePageState extends State<HomePage>
 
   Future<void> _showServerPicker() async {
     String? selectedCat;
+    // Fire-and-forget: the sheet's ValueListenableBuilder on PingState.notifier
+    // picks up each result as it lands, no need to await before opening.
+    _sweepPickerPings();
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
