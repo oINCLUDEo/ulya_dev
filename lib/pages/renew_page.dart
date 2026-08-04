@@ -13,13 +13,6 @@ import '../services/subscription_api_service.dart';
 import '../widgets/payment_polling_card.dart';
 import 'payment_webview_page.dart';
 
-// ── Дизайн-токены (синхронизированы с premium_page) ─────────────────────────
-const _surf = Color(0xFF111124);   // поверхность карточки
-const _b1   = Color(0xFF1E1E38);   // бордер карточки
-const _t0   = Color(0xFFF0F0FF);   // заголовки
-const _t1   = Color(0xFF8892AA);   // вторичный текст
-const _t2   = Color(0xFF454565);   // приглушённый текст
-
 // ── Тарифные иконки (синхронизированы с premium_page._tariffStyle) ───────────
 (PhosphorIconData, Color) _resolveTariffStyle(String name) {
   final n = name.toLowerCase();
@@ -485,12 +478,12 @@ class _RenewPageState extends State<RenewPage> with WidgetsBindingObserver {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Icon(Icons.error_outline_rounded,
-                  color: _t2, size: 48),
+                  color: DS.textFaint, size: 48),
               const SizedBox(height: 16),
               const Text(
                 'Не удалось загрузить периоды.\nПопробуйте ещё раз.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _t1, fontSize: 15),
+                style: TextStyle(color: DS.textSecondary, fontSize: 15),
               ),
               const SizedBox(height: 20),
               _PrimaryButton(
@@ -573,13 +566,13 @@ class _Header extends StatelessWidget {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: _surf,
+                color: DS.surface1,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _b1),
+                border: Border.all(color: DS.border),
               ),
               child: const Center(
                 child: Icon(Icons.arrow_back_ios_new_rounded,
-                    color: _t1, size: 16),
+                    color: DS.textSecondary, size: 16),
               ),
             ),
           ),
@@ -587,7 +580,7 @@ class _Header extends StatelessWidget {
           const Text(
             'Продлить',
             style: TextStyle(
-                color: _t0,
+                color: DS.textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.w600),
           ),
@@ -639,8 +632,8 @@ class _CurrentTariffCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
-        color: _surf,
-        border: Border.all(color: _b1),
+        color: DS.surface1,
+        border: Border.all(color: DS.border),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -663,7 +656,7 @@ class _CurrentTariffCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        color: _t0,
+                        color: DS.textPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),
@@ -731,11 +724,11 @@ class _RenewInfoChip extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Icon(icon, size: 13, color: _t1),
+      Icon(icon, size: 13, color: DS.textSecondary),
       const SizedBox(width: 4),
       Text(label,
           style: const TextStyle(
-              color: _t1,
+              color: DS.textSecondary,
               fontSize: 11,
               fontWeight: FontWeight.w500)),
     ],
@@ -772,10 +765,10 @@ class _PeriodCard extends StatelessWidget {
         padding: EdgeInsets.symmetric(
             horizontal: 16, vertical: isSelected ? 13.5 : 14),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0x1A7C6BFF) : _surf,
+          color: isSelected ? const Color(0x1A7C6BFF) : DS.surface1,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isSelected ? DS.violet : _b1,
+            color: isSelected ? DS.violet : DS.border,
             width: isSelected ? 1.5 : 1.0,
           ),
         ),
@@ -792,7 +785,7 @@ class _PeriodCard extends StatelessWidget {
                       Text(
                         _monthsLabel(period.months),
                         style: const TextStyle(
-                            color: _t0,
+                            color: DS.textPrimary,
                             fontSize: 15,
                             fontWeight: FontWeight.w600),
                       ),
@@ -805,13 +798,13 @@ class _PeriodCard extends StatelessWidget {
                   if (perMonthRub != null)
                     Text('$perMonthRub ₽/мес',
                         style: const TextStyle(
-                            color: _t1, fontSize: 12)),
+                            color: DS.textSecondary, fontSize: 12)),
                 ],
               ),
             ),
             Text('$totalRub ₽',
                 style: const TextStyle(
-                    color: _t0,
+                    color: DS.textPrimary,
                     fontSize: 17,
                     fontWeight: FontWeight.w600)),
           ],
@@ -849,7 +842,7 @@ class _RadioDot extends StatelessWidget {
         color: selected ? DS.violet : Colors.transparent,
         border: selected
             ? null
-            : Border.all(color: _b1, width: 1.5),
+            : Border.all(color: DS.border, width: 1.5),
       ),
       child: selected
           ? const Icon(Icons.check_rounded, color: Colors.white, size: 13)
@@ -908,9 +901,9 @@ class _BalanceToggle extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: _surf,
+        color: DS.surface1,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _b1),
+        border: Border.all(color: DS.border),
       ),
       child: Row(
         children: [
@@ -920,12 +913,12 @@ class _BalanceToggle extends StatelessWidget {
           Expanded(
             child: RichText(
               text: TextSpan(
-                style: const TextStyle(color: _t0, fontSize: 13),
+                style: const TextStyle(color: DS.textPrimary, fontSize: 13),
                 children: [
                   const TextSpan(text: 'Списать с баланса '),
                   TextSpan(
                       text: '($balanceStr)',
-                      style: const TextStyle(color: _t1)),
+                      style: const TextStyle(color: DS.textSecondary)),
                 ],
               ),
             ),
@@ -1020,10 +1013,10 @@ class _SecureCaption extends StatelessWidget {
     return const Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(Icons.lock_outline_rounded, size: 12, color: _t2),
+        Icon(Icons.lock_outline_rounded, size: 12, color: DS.textFaint),
         SizedBox(width: 4),
         Text('Безопасная оплата · YooKassa',
-            style: TextStyle(color: _t2, fontSize: 11)),
+            style: TextStyle(color: DS.textFaint, fontSize: 11)),
       ],
     );
   }

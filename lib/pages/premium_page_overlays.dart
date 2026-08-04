@@ -269,7 +269,7 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                         Text(
                           widget.isUpgrade ? 'Готово!' : 'Подписка активна',
                           style: const TextStyle(
-                              color: _t0, fontSize: 30,
+                              color: DS.textPrimary, fontSize: 30,
                               fontWeight: FontWeight.w800,
                               letterSpacing: -0.5),
                         ),
@@ -278,7 +278,7 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                           widget.isUpgrade
                               ? 'Изменения применены'
                               : 'Добро пожаловать',
-                          style: const TextStyle(color: _t1, fontSize: 16),
+                          style: const TextStyle(color: DS.textSecondary, fontSize: 16),
                         ),
                         const SizedBox(height: 26),
                         // Invite nudge — this is the highest-attention moment
@@ -304,7 +304,7 @@ class _SuccessOverlayState extends State<_SuccessOverlay>
                                 const Text(
                                   'Пригласить друга — получить бонус',
                                   style: TextStyle(
-                                    color: _t0,
+                                    color: DS.textPrimary,
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
                                   ),
@@ -387,10 +387,10 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
               decoration: BoxDecoration(
                 color: selected
                     ? accent.withValues(alpha: 0.08)
-                    : _premSurface,
+                    : DS.surface1,
                 borderRadius: BorderRadius.circular(DS.radiusSm),
                 border: Border.all(
-                  color: selected ? accent.withValues(alpha: 0.75) : _b1,
+                  color: selected ? accent.withValues(alpha: 0.75) : DS.border,
                   width: 1.5,
                 ),
               ),
@@ -424,7 +424,7 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
                               Text(
                                 _TariffRadioCard._cleanTariffName(t.name),
                                 style: TextStyle(
-                                  color: selected ? _t0 : _t1,
+                                  color: selected ? DS.textPrimary : DS.textSecondary,
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -456,7 +456,7 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
                               Text(
                                 '${cheapest.priceRub.toStringAsFixed(0)} ₽',
                                 style: TextStyle(
-                                  color: selected ? accent : _t0,
+                                  color: selected ? accent : DS.textPrimary,
                                   fontSize: 15,
                                   fontWeight: FontWeight.w600,
                                 ),
@@ -464,7 +464,7 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
                               const Text(
                                 '/мес',
                                 style: TextStyle(
-                                  color: _t1,
+                                  color: DS.textSecondary,
                                   fontSize: 11,
                                   fontWeight: FontWeight.w400,
                                 ),
@@ -490,12 +490,12 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const Text('Устройства',
-                                    style: TextStyle(color: _t1, fontSize: 11)),
+                                    style: TextStyle(color: DS.textSecondary, fontSize: 11)),
                                 const SizedBox(height: 2),
                                 Text(
                                   '${widget.deviceCount} из ${widget.deviceMax}',
                                   style: const TextStyle(
-                                    color: _t0,
+                                    color: DS.textPrimary,
                                     fontSize: 13,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -514,7 +514,7 @@ class _TariffSelectCardState extends State<_TariffSelectCard> {
                                 child: Text(
                                   '${widget.deviceCount}',
                                   style: const TextStyle(
-                                    color: _t0,
+                                    color: DS.textPrimary,
                                     fontSize: 15,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -573,11 +573,11 @@ class _MetaChip extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Icon(icon, size: 13, color: _t1),
+      Icon(icon, size: 13, color: DS.textSecondary),
       const SizedBox(width: 4),
       Text(label,
           style: const TextStyle(
-              color: _t1, fontSize: 11, fontWeight: FontWeight.w500)),
+              color: DS.textSecondary, fontSize: 11, fontWeight: FontWeight.w500)),
     ],
   );
 }
@@ -606,13 +606,13 @@ class _StepperBtn extends StatelessWidget {
       child: Container(
         width: 30, height: 30,
         decoration: BoxDecoration(
-          color: filled && enabled ? accent : _premSurface,
+          color: filled && enabled ? accent : DS.surface1,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: _b1),
+          border: Border.all(color: DS.border),
         ),
         child: Icon(icon,
             size: 16,
-            color: filled && enabled ? Colors.white : _t1),
+            color: filled && enabled ? Colors.white : DS.textSecondary),
       ),
     ),
   );
@@ -656,7 +656,7 @@ class _CurrentTariffMini extends StatelessWidget {
         const Text(
           'У ВАС СЕЙЧАС',
           style: TextStyle(
-            color: _t2, fontSize: 10,
+            color: DS.textFaint, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
@@ -680,10 +680,10 @@ class _CurrentTariffMini extends StatelessWidget {
                   Text(
                     sub.planName ?? 'Текущий тариф',
                     style: const TextStyle(
-                      color: _t0, fontSize: 13, fontWeight: FontWeight.w600),
+                      color: DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
                   ),
                   if (meta.isNotEmpty)
-                    Text(meta, style: const TextStyle(color: _t1, fontSize: 11)),
+                    Text(meta, style: const TextStyle(color: DS.textSecondary, fontSize: 11)),
                 ],
               ),
             ),
@@ -712,24 +712,24 @@ class _BalanceUsageToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     decoration: BoxDecoration(
-      color: _premSurface,
+      color: DS.surface1,
       borderRadius: BorderRadius.circular(DS.radiusSm),
-      border: Border.all(color: _b1),
+      border: Border.all(color: DS.border),
     ),
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     child: Row(children: [
       Icon(Icons.account_balance_wallet_rounded,
-          size: 18, color: enabled ? _teal : _t1),
+          size: 18, color: enabled ? _teal : DS.textSecondary),
       const SizedBox(width: 10),
       Expanded(
         child: Text.rich(
           TextSpan(
             text: 'Списать с баланса ',
-            style: const TextStyle(color: _t0, fontSize: 13),
+            style: const TextStyle(color: DS.textPrimary, fontSize: 13),
             children: [
               TextSpan(
                 text: '(${balanceRub.toStringAsFixed(0)} ₽)',
-                style: const TextStyle(color: _t1),
+                style: const TextStyle(color: DS.textSecondary),
               ),
             ],
           ),
@@ -764,8 +764,8 @@ class _BreakdownRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final labelColor = accent ?? (strikethrough ? _t2 : _t1);
-    final valueColor = accent ?? (strikethrough ? _t2 : _t0);
+    final labelColor = accent ?? (strikethrough ? DS.textFaint : DS.textSecondary);
+    final valueColor = accent ?? (strikethrough ? DS.textFaint : DS.textPrimary);
     final decoration = strikethrough ? TextDecoration.lineThrough : TextDecoration.none;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -773,11 +773,11 @@ class _BreakdownRow extends StatelessWidget {
         Text(label,
             style: TextStyle(
                 color: labelColor, fontSize: 13, decoration: decoration,
-                decorationColor: _t2)),
+                decorationColor: DS.textFaint)),
         Text(value,
             style: TextStyle(
                 color: valueColor, fontSize: 13, decoration: decoration,
-                decorationColor: _t2)),
+                decorationColor: DS.textFaint)),
       ],
     );
   }

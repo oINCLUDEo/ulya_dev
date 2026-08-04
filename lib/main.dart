@@ -49,18 +49,30 @@ class DS {
   static const rose          = Color(0xFFE24B4A);   // danger / error
 
   // ── Surfaces ──────────────────────────────────────────────────────────────
+  // Blue-violet tinted rather than neutral grey: the tint is part of the
+  // brand, and a flat grey card next to a violet accent reads as unfinished.
+  // (These values came from the premium/renew/tariff screens, which had
+  // evolved their own tinted palette; the whole app now shares it.)
   static const surface0 = Color(0xFF0A0A0F);   // bg/base
-  static const surface1 = Color(0xFF16161F);   // bg/surface  (cards)
+  static const surface1 = Color(0xFF111124);   // bg/surface  (cards)
   static const surface2 = Color(0xFF1F1F2C);   // bg/elevated (modals, popups)
   static const surface3 = Color(0xFF2A2A38);   // disabled bg
 
   // ── Text ──────────────────────────────────────────────────────────────────
-  static const textPrimary   = Color(0xFFFFFFFF);   // text/primary
-  static const textSecondary = Color(0xFFA8A8B8);   // text/secondary
-  static const textMuted     = Color(0xFF6B6B7D);   // text/tertiary
+  static const textPrimary   = Color(0xFFF0F0FF);   // text/primary
+  static const textSecondary = Color(0xFF8892AA);   // text/secondary
+  static const textMuted     = Color(0xFF6B6B8A);   // text/tertiary
+
+  /// Decorative micro-labels ONLY — section captions, disclaimers, the kind
+  /// of 10-11px text that frames content rather than carrying it. Sits at
+  /// roughly 2:1 against [surface0], well under the 4.5:1 body-text bar, so
+  /// never use it for anything the user actually has to read. Use
+  /// [textMuted] (~3.9:1) for genuine tertiary content.
+  static const textFaint     = Color(0xFF454565);
 
   // ── Border ────────────────────────────────────────────────────────────────
-  static const border = Color(0xFF2E2E40);
+  static const border    = Color(0xFF1E1E38);   // card border
+  static const borderDim = Color(0xFF16162E);   // deep divider inside cards
 
   // ── Radii ─────────────────────────────────────────────────────────────────
   static const radius   = 20.0;   // lg — buttons, large cards

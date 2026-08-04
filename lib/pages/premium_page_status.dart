@@ -105,7 +105,7 @@ class _ActiveCard extends StatelessWidget {
               child: Text(
                 planName,
                 style: const TextStyle(
-                  color: _t0, fontSize: 14, fontWeight: FontWeight.w600,
+                  color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w600,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -120,7 +120,7 @@ class _ActiveCard extends StatelessWidget {
         ),
 
         // ── Bottom row: expiry + autopay ──────────────────────────────────
-        Container(height: 1, color: _b0),
+        Container(height: 1, color: DS.borderDim),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 9, 16, 11),
           child: Row(children: [
@@ -136,14 +136,14 @@ class _ActiveCard extends StatelessWidget {
             const Spacer(),
             PhosphorIcon(
               PhosphorIconsRegular.arrowsClockwise,
-              color: sub.autopayEnabled ? _teal : _t2,
+              color: sub.autopayEnabled ? _teal : DS.textFaint,
               size: 13,
             ),
             const SizedBox(width: 5),
             Text(
               sub.autopayEnabled ? 'Автопродление' : 'Без автопродления',
               style: TextStyle(
-                color: sub.autopayEnabled ? _teal : _t2, fontSize: 12,
+                color: sub.autopayEnabled ? _teal : DS.textFaint, fontSize: 12,
               ),
             ),
           ]),
@@ -222,7 +222,7 @@ class _ExpiredCard extends StatelessWidget {
                     Text(
                       planName,
                       style: const TextStyle(
-                          color: _t0, fontSize: 15,
+                          color: DS.textPrimary, fontSize: 15,
                           fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(height: 3),
@@ -262,9 +262,9 @@ class _PlanContextStrip extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
-          color: _premSurface,
+          color: DS.surface1,
           borderRadius: BorderRadius.circular(_r16),
-          border: Border.all(color: _b1),
+          border: Border.all(color: DS.border),
         ),
         child: Row(
           children: [
@@ -275,7 +275,7 @@ class _PlanContextStrip extends StatelessWidget {
                   _CtxItem(
                     icon: Icons.devices_rounded,
                     label: '${sub.deviceLimit} ${_devWord(sub.deviceLimit)}',
-                    color: _t1,
+                    color: DS.textSecondary,
                   ),
                   _CtxItem(
                     icon: sub.trafficLimitGb == 0
@@ -284,7 +284,7 @@ class _PlanContextStrip extends StatelessWidget {
                     label: sub.trafficLimitGb == 0
                         ? 'Без лимита'
                         : '${sub.trafficLimitGb} ГБ',
-                    color: _t1,
+                    color: DS.textSecondary,
                   ),
                 ],
               ),
@@ -294,7 +294,7 @@ class _PlanContextStrip extends StatelessWidget {
               Text(
                 cheapestPriceLabel!,
                 style: const TextStyle(
-                  color: _t0, fontSize: 13, fontWeight: FontWeight.w600),
+                  color: DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w600),
               ),
             ],
           ],
@@ -326,7 +326,7 @@ class _PlanContextStrip extends StatelessWidget {
                 ? PhosphorIconsFill.arrowsClockwise
                 : PhosphorIconsRegular.arrowsClockwise,
             label: sub.autopayEnabled ? 'Автопродление' : 'Без автопродления',
-            color: sub.autopayEnabled ? _teal : _t2,
+            color: sub.autopayEnabled ? _teal : DS.textFaint,
           ),
         ],
       ),
@@ -401,7 +401,7 @@ class _TrafficBarState extends State<_TrafficBar>
         borderRadius: BorderRadius.circular(6),
         child: Container(
           height: 7,
-          color: _b1,
+          color: DS.border,
           child: FractionallySizedBox(
             alignment: Alignment.centerLeft,
             widthFactor: v.clamp(0.0, 1.0),
@@ -737,10 +737,10 @@ class _PeriodTile extends StatelessWidget {
         decoration: BoxDecoration(
           color: selected
               ? DS.violet.withValues(alpha: 0.10)
-              : _premSurface,
+              : DS.surface1,
           borderRadius: BorderRadius.circular(DS.radiusSm),
           border: Border.all(
-            color: selected ? DS.violet : _b1,
+            color: selected ? DS.violet : DS.border,
             width: selected ? 1.5 : 1,
           ),
           boxShadow: selected
@@ -758,7 +758,7 @@ class _PeriodTile extends StatelessWidget {
               shape: BoxShape.circle,
               color: selected ? DS.violet : Colors.transparent,
               border: Border.all(
-                color: selected ? DS.violet : _t2,
+                color: selected ? DS.violet : DS.textFaint,
                 width: 2,
               ),
             ),
@@ -777,7 +777,7 @@ class _PeriodTile extends StatelessWidget {
                 Text(
                   period.label,
                   style: TextStyle(
-                    color: selected ? _t0 : _t1,
+                    color: selected ? DS.textPrimary : DS.textSecondary,
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                   ),
@@ -789,7 +789,7 @@ class _PeriodTile extends StatelessWidget {
                     style: TextStyle(
                       color: selected
                           ? DS.violet.withValues(alpha: 0.75)
-                          : _t2,
+                          : DS.textFaint,
                       fontSize: 11,
                     ),
                   ),
@@ -827,7 +827,7 @@ class _PeriodTile extends StatelessWidget {
                 Text(
                   '${priceRub.toStringAsFixed(0)} ₽',
                   style: TextStyle(
-                    color: selected ? DS.violet : _t0,
+                    color: selected ? DS.violet : DS.textPrimary,
                     fontSize: 17,
                     fontWeight: FontWeight.w800,
                     height: 1,
@@ -837,7 +837,7 @@ class _PeriodTile extends StatelessWidget {
                 const SizedBox(
                   width: 14, height: 14,
                   child: CircularProgressIndicator(
-                      strokeWidth: 1.5, color: _t2)),
+                      strokeWidth: 1.5, color: DS.textFaint)),
             ],
           ),
         ]),
@@ -854,13 +854,13 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-    Icon(icon, color: _t2, size: 13),
+    Icon(icon, color: DS.textFaint, size: 13),
     const SizedBox(width: 7),
     Text(label, style: const TextStyle(
-        color: _t2, fontSize: 10,
+        color: DS.textFaint, fontSize: 10,
         fontWeight: FontWeight.w800, letterSpacing: 1.8)),
     const SizedBox(width: 10),
-    Expanded(child: Container(height: 1, color: _b1)),
+    Expanded(child: Container(height: 1, color: DS.border)),
   ]);
 }
 
@@ -934,10 +934,10 @@ class _OptionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: item.selected
             ? item.accentColor.withValues(alpha: 0.12)
-            : _premSurface,
+            : DS.surface1,
         borderRadius: BorderRadius.circular(DS.radiusSm),
         border: Border.all(
-          color: item.selected ? item.accentColor : _b1,
+          color: item.selected ? item.accentColor : DS.border,
           width: item.selected ? 1.5 : 1,
         ),
         boxShadow: item.selected
@@ -955,7 +955,7 @@ class _OptionCard extends StatelessWidget {
           textAlign: TextAlign.center,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: item.selected ? item.accentColor : _t1,
+            color: item.selected ? item.accentColor : DS.textSecondary,
             fontSize: 13, fontWeight: FontWeight.w700,
           ),
         ),
@@ -965,7 +965,7 @@ class _OptionCard extends StatelessWidget {
             item.subLabel!,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: item.selected ? item.accentColor.withValues(alpha: 0.7) : _t2,
+              color: item.selected ? item.accentColor.withValues(alpha: 0.7) : DS.textFaint,
               fontSize: 9,
             ),
           ),
@@ -976,7 +976,7 @@ class _OptionCard extends StatelessWidget {
           textAlign: TextAlign.center,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: item.selected ? item.accentColor : _t0,
+            color: item.selected ? item.accentColor : DS.textPrimary,
             fontSize: 12, fontWeight: FontWeight.w800,
           ),
         ),
@@ -1024,9 +1024,9 @@ class _ActionBtnState extends State<_ActionBtn> {
                 : LinearGradient(
                     colors: [widget.color, Color.lerp(widget.color, Colors.black, 0.28)!],
                     begin: Alignment.topLeft, end: Alignment.bottomRight),
-            color: widget.disabled ? _premSurface : null,
+            color: widget.disabled ? DS.surface1 : null,
             borderRadius: BorderRadius.circular(_r16),
-            border: widget.disabled ? Border.all(color: _b1) : null,
+            border: widget.disabled ? Border.all(color: DS.border) : null,
             boxShadow: widget.disabled ? null : [
               BoxShadow(
                 color: widget.color.withValues(alpha: 0.30),
@@ -1056,7 +1056,7 @@ class _ActionBtnState extends State<_ActionBtn> {
                       widget.label,
                       key: ValueKey(widget.label),
                       style: TextStyle(
-                        color: widget.disabled ? _t2 : Colors.white,
+                        color: widget.disabled ? DS.textFaint : Colors.white,
                         fontSize: 15, fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1109,14 +1109,14 @@ class _LoginCard extends StatelessWidget {
         'Войдите, чтобы\nувидеть тарифы',
         textAlign: TextAlign.center,
         style: TextStyle(
-            color: _t0, fontSize: 22,
+            color: DS.textPrimary, fontSize: 22,
             fontWeight: FontWeight.w800, height: 1.25, letterSpacing: -0.3),
       ),
       const SizedBox(height: 8),
       const Text(
         'Тарифы формируются индивидуально.\nАвторизуйтесь через Telegram.',
         textAlign: TextAlign.center,
-        style: TextStyle(color: _t1, fontSize: 14, height: 1.55),
+        style: TextStyle(color: DS.textSecondary, fontSize: 14, height: 1.55),
       ),
       const SizedBox(height: 28),
       TelegramLoginButton(onTap: onLogin),
@@ -1142,7 +1142,7 @@ class _ErrorCard extends StatelessWidget {
         end: Alignment.bottomRight,
       ),
       borderRadius: BorderRadius.circular(_r22),
-      border: Border.all(color: _b1),
+      border: Border.all(color: DS.border),
     ),
     child: Column(children: [
       Container(
@@ -1154,11 +1154,11 @@ class _ErrorCard extends StatelessWidget {
       const SizedBox(height: 16),
       const Text('Не удалось загрузить тарифы',
           textAlign: TextAlign.center,
-          style: TextStyle(color: _t0, fontSize: 17, fontWeight: FontWeight.w700)),
+          style: TextStyle(color: DS.textPrimary, fontSize: 17, fontWeight: FontWeight.w700)),
       const SizedBox(height: 6),
       const Text('Проверьте подключение к интернету',
           textAlign: TextAlign.center,
-          style: TextStyle(color: _t1, fontSize: 13)),
+          style: TextStyle(color: DS.textSecondary, fontSize: 13)),
       const SizedBox(height: 20),
       GestureDetector(
         onTap: onRetry,
@@ -1251,7 +1251,7 @@ class _GraceCard extends StatelessWidget {
                   const Text(
                     'Мы оставили вам немного доступа',
                     style: TextStyle(
-                      color: _t0, fontSize: 15, fontWeight: FontWeight.w700, height: 1.3,
+                      color: DS.textPrimary, fontSize: 15, fontWeight: FontWeight.w700, height: 1.3,
                     ),
                   ),
                   const SizedBox(height: 5),
@@ -1259,7 +1259,7 @@ class _GraceCard extends StatelessWidget {
                     'Подписка закончилась, но пока вы решаете — '
                     'мы включили небольшой запасной доступ ($timeLeftLabel). '
                     'Продлите, чтобы вернуть полный тариф.',
-                    style: const TextStyle(color: _t1, fontSize: 13, height: 1.5),
+                    style: const TextStyle(color: DS.textSecondary, fontSize: 13, height: 1.5),
                   ),
                 ],
               ),
