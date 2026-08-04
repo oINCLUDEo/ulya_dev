@@ -661,23 +661,16 @@ class _CurrentTariffMini extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: _premSurface,
-            borderRadius: BorderRadius.circular(DS.radiusSm),
-            border: Border.all(color: _b1),
-          ),
+        // Tier 1 — the anchor the whole renew/change decision is made against.
+        AccentCard(
+          accent: DS.violet,
+          radius: DS.radiusSm,
           padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
           child: Row(children: [
-            Container(
-              width: 32, height: 32,
-              decoration: BoxDecoration(
-                color: DS.violet.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: const Center(
-                child: Icon(Icons.shield_rounded, color: DS.violet, size: 18),
-              ),
+            const AccentIconBox(
+              accent: DS.violet,
+              size: 32,
+              icon: Icon(Icons.shield_rounded, color: DS.violet, size: 18),
             ),
             const SizedBox(width: 10),
             Expanded(

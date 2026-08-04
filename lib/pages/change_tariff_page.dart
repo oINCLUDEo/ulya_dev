@@ -10,6 +10,7 @@ import '../models/me_response.dart';
 import '../services/app_logger.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
+import '../widgets/accent_surface.dart';
 import '../widgets/payment_polling_card.dart';
 import 'payment_webview_page.dart';
 
@@ -939,13 +940,13 @@ class _CurrentTariffCard extends StatelessWidget {
       }
     }
 
-    return Container(
+    // Tier 1 — this is the reference point the whole screen's decision hangs
+    // off ("what am I on now?"), keyed to the plan's own health colour.
+    return AccentCard(
+      accent: expiryColor,
+      muted: sub?.expireDate == null,
+      radius: 16,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-      decoration: BoxDecoration(
-        color: _surf,
-        border: Border.all(color: _b1),
-        borderRadius: BorderRadius.circular(16),
-      ),
       child: Row(
         children: [
           _TariffIcon(name: name, size: 44),
