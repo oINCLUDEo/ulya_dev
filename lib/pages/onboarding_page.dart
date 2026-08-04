@@ -154,6 +154,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
   final _nameCtrl = TextEditingController();
   bool _passwordVisible = false;
 
+  // ── Referral code ───────────────────────────────────────────────────────────
+  // Onboarding runs its own auth UI rather than the shared auth sheet, so the
+  // field has to exist here too — and this is the flow that matters most, since
+  // someone arriving with a friend's code is by definition a first-time user.
+  bool _showReferralField = false;
+  final _referralCtrl = TextEditingController();
+  String? get _referralCode {
+    final v = _referralCtrl.text.trim();
+    return v.isEmpty ? null : v;
+  }
+
   // ── Trial state ─────────────────────────────────────────────────────────────
   String? _trialMessage;
   bool _trialClaimed = false;
@@ -165,6 +176,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _nameCtrl.dispose();
+    _referralCtrl.dispose();
     super.dispose();
   }
 
@@ -201,7 +213,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     });
 
     // Primary: full Telegram OAuth via oauth.telegram.org (same as the cabinet).
-    final res = await AuthService.signInWithTelegram();
+    final res = await AuthService.signInWithTelegram(referralCode: _referralCode);
     if (!mounted) return;
     if (res == null) {
       _onAuthSuccess();
@@ -248,7 +260,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       _authError = null;
     });
 
-    final err = await AuthService.signInWithGoogle();
+    final err = await AuthService.signInWithGoogle(referralCode: _referralCode);
     if (!mounted) return;
     if (err != null) {
       setState(() { _authStep = _AuthStep.error; _authError = err; });
@@ -315,6 +327,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         email: email,
         password: password,
         firstName: _nameCtrl.text.trim().isEmpty ? null : _nameCtrl.text.trim(),
+        referralCode: _referralCode,
       );
       if (!mounted) return;
 
@@ -467,6 +480,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 emailCtrl: _emailCtrl,
                 passwordCtrl: _passwordCtrl,
                 nameCtrl: _nameCtrl,
+                referralCtrl: _referralCtrl,
+                showReferralField: _showReferralField,
+                onShowReferralField: () => setState(() => _showReferralField = true),
+                onClearReferralField: () => setState(() {
+                  _referralCtrl.clear();
+                  _showReferralField = false;
+                }),
                 passwordVisible: _passwordVisible,
                 onPasswordToggle: () => setState(() => _passwordVisible = !_passwordVisible),
                 onTelegramTap: _onTelegramTap,
@@ -1314,6 +1334,10 @@ class _AuthSlide extends StatelessWidget {
     required this.emailCtrl,
     required this.passwordCtrl,
     required this.nameCtrl,
+    required this.referralCtrl,
+    required this.showReferralField,
+    required this.onShowReferralField,
+    required this.onClearReferralField,
     required this.passwordVisible,
     required this.onPasswordToggle,
     required this.onTelegramTap,
@@ -1336,6 +1360,10 @@ class _AuthSlide extends StatelessWidget {
   final TextEditingController emailCtrl;
   final TextEditingController passwordCtrl;
   final TextEditingController nameCtrl;
+  final TextEditingController referralCtrl;
+  final bool showReferralField;
+  final VoidCallback onShowReferralField;
+  final VoidCallback onClearReferralField;
   final bool passwordVisible;
   final VoidCallback onPasswordToggle;
   final VoidCallback onTelegramTap;
@@ -1470,6 +1498,8 @@ class _AuthSlide extends StatelessWidget {
             color: DS.violet,
             onTap: onEmailButtonTap,
           ),
+          const SizedBox(height: 4),
+          _buildReferralField(),
         ],
         if (isWaiting) ...[
           const SizedBox(height: 16),
@@ -1479,6 +1509,39 @@ class _AuthSlide extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  // ── Referral code ───────────────────────────────────────────────────────────
+  // Collapsed behind a link: most people arrive without a code, and an empty
+  // field sitting under the login buttons would read as one more thing to fill
+  // in before getting started. Applies to whichever method they then pick.
+  Widget _buildReferralField() {
+    if (!showReferralField) {
+      return TextButton(
+        onPressed: onShowReferralField,
+        child: const Text('Есть код приглашения?',
+            style: TextStyle(color: DS.textMuted, fontSize: 13)),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: TextField(
+        controller: referralCtrl,
+        autocorrect: false,
+        textCapitalization: TextCapitalization.characters,
+        style: const TextStyle(color: DS.textPrimary, fontSize: 15),
+        decoration: InputDecoration(
+          hintText: 'Код приглашения',
+          prefixIcon: const Icon(PhosphorIconsRegular.gift,
+              size: 18, color: DS.textMuted),
+          suffixIcon: IconButton(
+            onPressed: onClearReferralField,
+            icon: const Icon(PhosphorIconsRegular.x,
+                size: 16, color: DS.textMuted),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1547,6 +1610,20 @@ class _AuthSlide extends StatelessWidget {
           visible: passwordVisible,
           onToggle: onPasswordToggle,
         ),
+
+        // Referral code (register only). Someone who tapped straight through to
+        // this form never passed the link on the previous screen, so it has to
+        // be reachable here too — and this is the one flow where a code is
+        // typed rather than carried over.
+        if (isRegister) ...[
+          const SizedBox(height: 12),
+          _Field(
+            controller: referralCtrl,
+            label: 'Код приглашения (необязательно)',
+            icon: Icons.card_giftcard_rounded,
+            keyboardType: TextInputType.text,
+          ),
+        ],
         const SizedBox(height: 8),
 
         // Error
