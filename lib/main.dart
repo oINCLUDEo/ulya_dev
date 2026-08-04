@@ -49,23 +49,58 @@ class DS {
   static const rose          = Color(0xFFE24B4A);   // danger / error
 
   // ── Surfaces ──────────────────────────────────────────────────────────────
+  // Blue-violet tinted rather than neutral grey: the tint is part of the
+  // brand, and a flat grey card next to a violet accent reads as unfinished.
+  // (These values came from the premium/renew/tariff screens, which had
+  // evolved their own tinted palette; the whole app now shares it.)
   static const surface0 = Color(0xFF0A0A0F);   // bg/base
-  static const surface1 = Color(0xFF16161F);   // bg/surface  (cards)
+  static const surface1 = Color(0xFF111124);   // bg/surface  (cards)
   static const surface2 = Color(0xFF1F1F2C);   // bg/elevated (modals, popups)
   static const surface3 = Color(0xFF2A2A38);   // disabled bg
 
   // ── Text ──────────────────────────────────────────────────────────────────
-  static const textPrimary   = Color(0xFFFFFFFF);   // text/primary
-  static const textSecondary = Color(0xFFA8A8B8);   // text/secondary
-  static const textMuted     = Color(0xFF6B6B7D);   // text/tertiary
+  // A four-step contrast scale, measured against surface1 (the card fill,
+  // which is the harder of the two backgrounds): 16.5 → 6.0 → 4.1 → 3.0.
+  // Every step is a clear drop, and no step falls below the 3:1 floor.
+  static const textPrimary   = Color(0xFFF0F0FF);   // text/primary    16.5:1
+  static const textSecondary = Color(0xFF8892AA);   // text/secondary   6.0:1
+  static const textMuted     = Color(0xFF73739B);   // text/tertiary    4.1:1
+
+  /// Quietest step — section captions, disclaimers, the 10-11px text that
+  /// frames content rather than carrying it. At 3.0:1 it clears the floor for
+  /// small/UI text but sits under the 4.5:1 body-text bar, so keep it to
+  /// framing; anything the user has to actually read wants [textMuted].
+  static const textFaint     = Color(0xFF5E5E86);
 
   // ── Border ────────────────────────────────────────────────────────────────
-  static const border = Color(0xFF2E2E40);
+  static const border    = Color(0xFF1E1E38);   // card border
+  static const borderDim = Color(0xFF16162E);   // deep divider inside cards
 
   // ── Radii ─────────────────────────────────────────────────────────────────
   static const radius   = 20.0;   // lg — buttons, large cards
   static const radiusSm = 12.0;   // md — cards
   static const radiusXs = 4.0;    // sm — badges
+
+  // ── Accent surface formula ────────────────────────────────────────────────
+  // The tint recipe behind every "tier 1" surface — see AccentCard in
+  // lib/widgets/accent_surface.dart for the hierarchy rules. Exposed as
+  // helpers (rather than only via the widget) for the cases that need the
+  // decoration alone, e.g. an AnimatedContainer that tweens between states.
+
+  /// Vertical accent wash: strongest at the top, almost gone at the bottom.
+  static LinearGradient accentGradient(Color accent) => LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          accent.withValues(alpha: 0.12),
+          accent.withValues(alpha: 0.04),
+        ],
+      );
+
+  /// Border tint that pairs with [accentGradient] — visible enough to read as
+  /// deliberate, dim enough not to look like a focus ring.
+  static Color accentBorderColor(Color accent) =>
+      accent.withValues(alpha: 0.30);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

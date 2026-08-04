@@ -10,6 +10,7 @@ import '../models/me_response.dart';
 import '../services/app_logger.dart';
 import '../services/me_service.dart';
 import '../services/subscription_api_service.dart';
+import '../widgets/accent_surface.dart';
 import '../widgets/payment_polling_card.dart';
 import 'payment_webview_page.dart';
 
@@ -56,14 +57,6 @@ String _pluralDevicesShort(int n) {
   if (last >= 2 && last <= 4) return 'устройства';
   return 'устройств';
 }
-
-// ── Дизайн-токены (синхронизированы с premium_page) ─────────────────────────
-const _surf = Color(0xFF111124);
-const _b1   = Color(0xFF1E1E38);
-const _b0   = Color(0xFF16162E);
-const _t0   = Color(0xFFF0F0FF);
-const _t1   = Color(0xFF8892AA);
-const _t2   = Color(0xFF454565);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ChangeTariffPage — экран «Сменить тариф»
@@ -568,13 +561,13 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: _surf,
+                color: DS.surface1,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _b1),
+                border: Border.all(color: DS.border),
               ),
               child: const Center(
                 child: Icon(Icons.arrow_back_ios_new_rounded,
-                    color: _t1, size: 16),
+                    color: DS.textSecondary, size: 16),
               ),
             ),
           ),
@@ -585,7 +578,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
               _checkoutMode ? 'Оформление' : 'Сменить тариф',
               key: ValueKey(_checkoutMode),
               style: const TextStyle(
-                  color: _t0,
+                  color: DS.textPrimary,
                   fontSize: 20,
                   fontWeight: FontWeight.w600),
             ),
@@ -685,7 +678,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
                 _hasExistingPlan
                     ? 'Стоимость рассчитывается автоматически'
                     : 'Выбор периода — на следующем шаге',
-                style: const TextStyle(color: _t2, fontSize: 11),
+                style: const TextStyle(color: DS.textFaint, fontSize: 11),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -756,7 +749,7 @@ class _ChangeTariffPageState extends State<ChangeTariffPage>
           Container(
             padding: const EdgeInsets.symmetric(vertical: 24),
             decoration: BoxDecoration(
-              color: _surf,
+              color: DS.surface1,
               borderRadius: BorderRadius.circular(14),
             ),
             child: const Center(
@@ -887,7 +880,7 @@ class _SectionLabel extends StatelessWidget {
       child: Text(
         text.toUpperCase(),
         style: const TextStyle(
-          color: _t2,
+          color: DS.textFaint,
           fontSize: 10,
           fontWeight: FontWeight.w700,
           letterSpacing: 1.5,
@@ -939,13 +932,13 @@ class _CurrentTariffCard extends StatelessWidget {
       }
     }
 
-    return Container(
+    // Tier 1 — this is the reference point the whole screen's decision hangs
+    // off ("what am I on now?"), keyed to the plan's own health colour.
+    return AccentCard(
+      accent: expiryColor,
+      muted: sub?.expireDate == null,
+      radius: 16,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-      decoration: BoxDecoration(
-        color: _surf,
-        border: Border.all(color: _b1),
-        borderRadius: BorderRadius.circular(16),
-      ),
       child: Row(
         children: [
           _TariffIcon(name: name, size: 44),
@@ -958,7 +951,7 @@ class _CurrentTariffCard extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        color: _t0,
+                        color: DS.textPrimary,
                         fontSize: 14,
                         fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),
@@ -1070,10 +1063,10 @@ class _TariffSelectCard extends StatelessWidget {
             // Фиксированный padding обеспечивает одинаковую высоту всех карточек
             padding: EdgeInsets.all(isSelected ? 13.5 : 14),
             decoration: BoxDecoration(
-              color: isSelected ? accent.withValues(alpha: 0.10) : _surf,
+              color: isSelected ? accent.withValues(alpha: 0.10) : DS.surface1,
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: isSelected ? accent : _b1,
+                color: isSelected ? accent : DS.border,
                 width: isSelected ? 1.5 : 1.0,
               ),
             ),
@@ -1096,7 +1089,7 @@ class _TariffSelectCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                color: _t0,
+                                color: DS.textPrimary,
                                 fontSize: 15,
                                 fontWeight: FontWeight.w600),
                           ),
@@ -1128,14 +1121,14 @@ class _TariffSelectCard extends StatelessWidget {
                         Text(
                           '${displayPricePerMonth.round()} ₽',
                           style: const TextStyle(
-                              color: _t0,
+                              color: DS.textPrimary,
                               fontSize: 15,
                               fontWeight: FontWeight.w600),
                         ),
                         const Text(
                           '/мес',
                           style: TextStyle(
-                              color: _t1,
+                              color: DS.textSecondary,
                               fontSize: 11),
                         ),
                       ],
@@ -1240,12 +1233,12 @@ class _InfoChip extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     mainAxisSize: MainAxisSize.min,
     children: [
-      Icon(icon, size: 13, color: _t1),
+      Icon(icon, size: 13, color: DS.textSecondary),
       const SizedBox(width: 4),
       Text(
         label,
         style: const TextStyle(
-            color: _t1,
+            color: DS.textSecondary,
             fontSize: 11,
             fontWeight: FontWeight.w500),
       ),
@@ -1290,7 +1283,7 @@ class _FamilyStepper extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text('Устройства',
-                    style: TextStyle(color: _t1, fontSize: 11)),
+                    style: TextStyle(color: DS.textSecondary, fontSize: 11)),
                 const SizedBox(height: 2),
                 RichText(
                   text: TextSpan(
@@ -1298,14 +1291,14 @@ class _FamilyStepper extends StatelessWidget {
                       TextSpan(
                         text: '$count ',
                         style: const TextStyle(
-                            color: _t0,
+                            color: DS.textPrimary,
                             fontSize: 13,
                             fontWeight: FontWeight.w500),
                       ),
                       TextSpan(
                         text: 'из $max',
                         style: const TextStyle(
-                            color: _t2,
+                            color: DS.textFaint,
                             fontSize: 11,
                             fontWeight: FontWeight.w400),
                       ),
@@ -1327,7 +1320,7 @@ class _FamilyStepper extends StatelessWidget {
                 child: Text(
                   '$count',
                   style: const TextStyle(
-                      color: _t0,
+                      color: DS.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.w600),
                 ),
@@ -1373,16 +1366,16 @@ class _StepperBtn extends StatelessWidget {
           width: 30,
           height: 30,
           decoration: BoxDecoration(
-            color: filled ? DS.violet : _surf,
+            color: filled ? DS.violet : DS.surface1,
             border: filled
                 ? null
-                : Border.all(color: _b1),
+                : Border.all(color: DS.border),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
             icon,
             size: 16,
-            color: filled ? Colors.white : _t1,
+            color: filled ? Colors.white : DS.textSecondary,
           ),
         ),
       ),
@@ -1413,7 +1406,7 @@ class _CheckoutTariffCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: _surf,
+        color: DS.surface1,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -1426,13 +1419,13 @@ class _CheckoutTariffCard extends StatelessWidget {
               children: [
                 Text(tariff.name,
                     style: const TextStyle(
-                        color: _t0,
+                        color: DS.textPrimary,
                         fontSize: 15,
                         fontWeight: FontWeight.w600)),
                 Text(
                   subtitle,
                   style: const TextStyle(
-                      color: _t1, fontSize: 12),
+                      color: DS.textSecondary, fontSize: 12),
                 ),
               ],
             ),
@@ -1473,7 +1466,7 @@ class _PeriodPills extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: _surf,
+        color: DS.surface1,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -1501,7 +1494,7 @@ class _PeriodPills extends StatelessWidget {
                         style: TextStyle(
                           color: isActive
                               ? Colors.white
-                              : _t1,
+                              : DS.textSecondary,
                           fontSize: 11,
                           fontWeight: isActive
                               ? FontWeight.w600
@@ -1575,7 +1568,7 @@ class _BreakdownCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: _surf,
+        color: DS.surface1,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
@@ -1625,13 +1618,13 @@ class _BreakdownCard extends StatelessWidget {
             children: [
               const Text('К оплате',
                   style: TextStyle(
-                      color: _t0,
+                      color: DS.textPrimary,
                       fontSize: 14,
                       fontWeight: FontWeight.w500)),
               Text(
                 '${finalPrice.round()} ₽',
                 style: const TextStyle(
-                    color: _t0,
+                    color: DS.textPrimary,
                     fontSize: 22,
                     fontWeight: FontWeight.w600),
               ),
@@ -1668,7 +1661,7 @@ class _SwitchBreakdownCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
-        color: _surf,
+        color: DS.surface1,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
@@ -1703,11 +1696,11 @@ class _SwitchBreakdownCard extends StatelessWidget {
             children: [
               const Text('К оплате',
                   style: TextStyle(
-                      color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
+                      color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
               Text(
                 '${(p.upgradeCostKopeks / 100).round()} ₽',
                 style: const TextStyle(
-                    color: _t0, fontSize: 22, fontWeight: FontWeight.w600),
+                    color: DS.textPrimary, fontSize: 22, fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -1726,8 +1719,8 @@ class _Row extends StatelessWidget {
   const _Row({
     required this.label,
     required this.value,
-    this.labelColor = _t1,
-    this.valueColor = _t0,
+    this.labelColor = DS.textSecondary,
+    this.valueColor = DS.textPrimary,
   });
 
   @override
@@ -1774,7 +1767,7 @@ class _CTAButton extends StatelessWidget {
         onPressed: loading ? null : onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: DS.violet,
-          disabledBackgroundColor: _b0,
+          disabledBackgroundColor: DS.borderDim,
           foregroundColor: Colors.white,
           disabledForegroundColor: const Color(0xFF6B6B7D),
           shape: RoundedRectangleBorder(
@@ -1808,10 +1801,10 @@ class _SecureCaption extends StatelessWidget {
     return const Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Icon(Icons.lock_outline_rounded, size: 12, color: _t2),
+        Icon(Icons.lock_outline_rounded, size: 12, color: DS.textFaint),
         SizedBox(width: 4),
         Text('Безопасная оплата · YooKassa',
-            style: TextStyle(color: _t2, fontSize: 11)),
+            style: TextStyle(color: DS.textFaint, fontSize: 11)),
       ],
     );
   }
@@ -1834,12 +1827,12 @@ class _ErrorRetry extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.error_outline_rounded,
-                color: _t2, size: 48),
+                color: DS.textFaint, size: 48),
             const SizedBox(height: 16),
             const Text(
               'Не удалось загрузить тарифы.\nПопробуйте ещё раз.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: _t1, fontSize: 15),
+              style: TextStyle(color: DS.textSecondary, fontSize: 15),
             ),
             const SizedBox(height: 20),
             _CTAButton(label: 'Повторить', onPressed: onRetry, loading: false),

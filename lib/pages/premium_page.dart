@@ -15,6 +15,7 @@ import '../services/referral_service.dart';
 import '../services/subscription_api_service.dart';
 import '../utils/referral_card.dart';
 import '../utils/tariff_pricing.dart' as pricing;
+import '../widgets/accent_surface.dart';
 import '../widgets/payment_polling_card.dart';
 import '../widgets/skeleton.dart';
 import '../widgets/telegram_login_button.dart';
@@ -39,10 +40,9 @@ int? _parseMonths(String label) => pricing.parsePeriodMonths(label);
 String _pluralDays(int n) => pricing.pluralDays(n);
 
 // ── Premium-page-specific constants (colours with no DS equivalent) ──────────
-// DS tokens used where possible; these are kept because they define the
-// distinct "Signal Dark" premium aesthetic (bluer/darker than the main palette).
+// The surface/text/border tokens that used to live here are now the app-wide
+// DS palette — this page's tinted aesthetic won and became the default.
 
-const _premSurface = Color(0xFF111124);  // blue-tinted card surface
 const _cg1         = Color(0xFF0D0B26);  // hero card gradient – dark indigo
 const _cg2         = Color(0xFF0A0820);  // hero card gradient – near-black indigo
 const _indigoB     = Color(0xFF9D8FFF);  // lighter violet for highlights
@@ -50,11 +50,6 @@ const _indigoD     = Color(0xFF4338CA);  // darker violet for gradients/shadows
 const _teal        = Color(0xFF2DD4BF);  // teal – active/success badge accent
 const _sky         = Color(0xFF60A5FA);  // sky-blue – traffic feature chip
 const _silver      = Color(0xFF8B96AA);  // cool silver – basic tier icon
-const _t0          = Color(0xFFF0F0FF);  // warm white headings
-const _t1          = Color(0xFF8892AA);  // secondary text (blueish tint)
-const _t2          = Color(0xFF454565);  // muted text (darker than DS.textMuted)
-const _b0          = Color(0xFF16162E);  // deep divider border
-const _b1          = Color(0xFF1E1E38);  // card border
 const _r16         = 16.0;              // medium card radius
 const _r22         = 22.0;              // large card / modal radius
 
@@ -1001,7 +996,7 @@ class _PremiumPageState extends State<PremiumPage>
         padding: const EdgeInsets.symmetric(vertical: 32),
         child: Center(
           child: Text('Другие тарифы не доступны',
-              style: const TextStyle(color: _t2, fontSize: 14)),
+              style: const TextStyle(color: DS.textFaint, fontSize: 14)),
         ),
       );
     }
@@ -1052,7 +1047,7 @@ class _PremiumPageState extends State<PremiumPage>
         const Text(
           'ДРУГИЕ ТАРИФЫ',
           style: TextStyle(
-            color: _t2, fontSize: 10,
+            color: DS.textFaint, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
@@ -1140,7 +1135,7 @@ class _PremiumPageState extends State<PremiumPage>
             _hasActiveTariffSub
                 ? 'Стоимость рассчитывается автоматически'
                 : 'Выбор периода — на следующем шаге',
-            style: const TextStyle(color: _t2, fontSize: 11),
+            style: const TextStyle(color: DS.textFaint, fontSize: 11),
           ),
         ),
         const SizedBox(height: 4),
@@ -1176,16 +1171,16 @@ class _PremiumPageState extends State<PremiumPage>
         const Text(
           'ТАРИФ',
           style: TextStyle(
-            color: _t2, fontSize: 10,
+            color: DS.textFaint, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
-            color: _premSurface,
+            color: DS.surface1,
             borderRadius: BorderRadius.circular(DS.radiusSm),
-            border: Border.all(color: _b1),
+            border: Border.all(color: DS.border),
           ),
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
           child: Row(children: [
@@ -1208,13 +1203,13 @@ class _PremiumPageState extends State<PremiumPage>
                 Text(
                   _TariffRadioCard._cleanTariffName(selTariff.name),
                   style: const TextStyle(
-                    color: _t0, fontSize: 15, fontWeight: FontWeight.w700),
+                    color: DS.textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 Text(
                   isFam
                       ? '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · $_familyDeviceCount устр.'
                       : '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · ${selTariff.deviceLimit} устр.',
-                  style: const TextStyle(color: _t1, fontSize: 12),
+                  style: const TextStyle(color: DS.textSecondary, fontSize: 12),
                 ),
               ]),
             ),
@@ -1231,7 +1226,7 @@ class _PremiumPageState extends State<PremiumPage>
         const Text(
           'РАСЧЁТ',
           style: TextStyle(
-            color: _t2, fontSize: 10,
+            color: DS.textFaint, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
@@ -1239,9 +1234,9 @@ class _PremiumPageState extends State<PremiumPage>
         if (loading || preview == null)
           Container(
             decoration: BoxDecoration(
-              color: _premSurface,
+              color: DS.surface1,
               borderRadius: BorderRadius.circular(DS.radiusSm),
-              border: Border.all(color: _b1),
+              border: Border.all(color: DS.border),
             ),
             padding: const EdgeInsets.symmetric(vertical: 24),
             child: const Center(
@@ -1255,9 +1250,9 @@ class _PremiumPageState extends State<PremiumPage>
         else
           Container(
             decoration: BoxDecoration(
-              color: _premSurface,
+              color: DS.surface1,
               borderRadius: BorderRadius.circular(DS.radiusSm),
-              border: Border.all(color: _b1),
+              border: Border.all(color: DS.border),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Column(children: [
@@ -1280,7 +1275,7 @@ class _PremiumPageState extends State<PremiumPage>
                 ),
               ],
               const SizedBox(height: 10),
-              const Divider(height: 1, color: _b0),
+              const Divider(height: 1, color: DS.borderDim),
               const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1289,11 +1284,11 @@ class _PremiumPageState extends State<PremiumPage>
                 children: [
                   const Text('К оплате',
                       style: TextStyle(
-                          color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
+                          color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
                   Text(
                     '${toPayRub.toStringAsFixed(0)} ₽',
                     style: const TextStyle(
-                      color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
+                      color: DS.textPrimary, fontSize: 22, fontWeight: FontWeight.w700),
                   ),
                 ],
               ),
@@ -1381,16 +1376,16 @@ class _PremiumPageState extends State<PremiumPage>
         const Text(
           'ТАРИФ',
           style: TextStyle(
-            color: _t2, fontSize: 10,
+            color: DS.textFaint, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
-            color: _premSurface,
+            color: DS.surface1,
             borderRadius: BorderRadius.circular(DS.radiusSm),
-            border: Border.all(color: _b1),
+            border: Border.all(color: DS.border),
           ),
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
           child: Row(children: [
@@ -1413,13 +1408,13 @@ class _PremiumPageState extends State<PremiumPage>
                 Text(
                   _TariffRadioCard._cleanTariffName(selTariff.name),
                   style: const TextStyle(
-                    color: _t0, fontSize: 15, fontWeight: FontWeight.w700),
+                    color: DS.textPrimary, fontSize: 15, fontWeight: FontWeight.w700),
                 ),
                 Text(
                   isFam
                       ? '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · $_familyDeviceCount устр.'
                       : '${selTariff.trafficLimitGb == 0 ? 'Без лимита' : '${selTariff.trafficLimitGb} ГБ'} · ${selTariff.deviceLimit} устр.',
-                  style: const TextStyle(color: _t1, fontSize: 12),
+                  style: const TextStyle(color: DS.textSecondary, fontSize: 12),
                 ),
               ]),
             ),
@@ -1437,16 +1432,16 @@ class _PremiumPageState extends State<PremiumPage>
           const Text(
             'ПЕРИОД',
             style: TextStyle(
-              color: _t2, fontSize: 10,
+              color: DS.textFaint, fontSize: 10,
               fontWeight: FontWeight.w700, letterSpacing: 2.2,
             ),
           ),
           const SizedBox(height: 8),
           Container(
             decoration: BoxDecoration(
-              color: _premSurface,
+              color: DS.surface1,
               borderRadius: BorderRadius.circular(DS.radiusSm),
-              border: Border.all(color: _b1),
+              border: Border.all(color: DS.border),
             ),
             padding: const EdgeInsets.all(4),
             child: Row(children: [
@@ -1477,7 +1472,7 @@ class _PremiumPageState extends State<PremiumPage>
                               style: TextStyle(
                                 color: periods[i].id == selPerId
                                     ? Colors.white
-                                    : _t1,
+                                    : DS.textSecondary,
                                 fontSize: 11,
                                 fontWeight: periods[i].id == selPerId
                                     ? FontWeight.w700 : FontWeight.w500,
@@ -1519,7 +1514,7 @@ class _PremiumPageState extends State<PremiumPage>
         const Text(
           'РАСЧЁТ',
           style: TextStyle(
-            color: _t2, fontSize: 10,
+            color: DS.textFaint, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
@@ -1532,9 +1527,9 @@ class _PremiumPageState extends State<PremiumPage>
 
           return Container(
             decoration: BoxDecoration(
-              color: _premSurface,
+              color: DS.surface1,
               borderRadius: BorderRadius.circular(DS.radiusSm),
-              border: Border.all(color: _b1),
+              border: Border.all(color: DS.border),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             child: Column(children: [
@@ -1595,7 +1590,7 @@ class _PremiumPageState extends State<PremiumPage>
               ],
 
               const SizedBox(height: 10),
-              const Divider(height: 1, color: _b0),
+              const Divider(height: 1, color: DS.borderDim),
               const SizedBox(height: 12),
 
               Row(
@@ -1605,11 +1600,11 @@ class _PremiumPageState extends State<PremiumPage>
                 children: [
                   const Text('К оплате',
                       style: TextStyle(
-                          color: _t0, fontSize: 14, fontWeight: FontWeight.w500)),
+                          color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
                   Text(
                     '${toPayRub.toStringAsFixed(0)} ₽',
                     style: const TextStyle(
-                      color: _t0, fontSize: 22, fontWeight: FontWeight.w700),
+                      color: DS.textPrimary, fontSize: 22, fontWeight: FontWeight.w700),
                   ),
                 ],
               ),
@@ -1705,10 +1700,10 @@ class _PremiumPageState extends State<PremiumPage>
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: const [
-              Icon(Icons.lock_rounded, size: 12, color: _t2),
+              Icon(Icons.lock_rounded, size: 12, color: DS.textFaint),
               SizedBox(width: 4),
               Text('Безопасная оплата · YooKassa',
-                  style: TextStyle(color: _t2, fontSize: 11)),
+                  style: TextStyle(color: DS.textFaint, fontSize: 11)),
             ],
           ),
           const SizedBox(height: 4),
@@ -1803,7 +1798,7 @@ class _PremiumPageState extends State<PremiumPage>
 
         RefreshIndicator(
           color: DS.violet,
-          backgroundColor: _premSurface,
+          backgroundColor: DS.surface1,
           onRefresh: _loadOptions,
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),

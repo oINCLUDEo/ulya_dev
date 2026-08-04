@@ -71,12 +71,12 @@ class _Header extends StatelessWidget {
             child: Container(
               width: 36, height: 36,
               decoration: BoxDecoration(
-                color: _premSurface,
+                color: DS.surface1,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _b1),
+                border: Border.all(color: DS.border),
               ),
               child: const Center(
-                child: Icon(Icons.arrow_back_ios_new_rounded, color: _t1, size: 16),
+                child: Icon(Icons.arrow_back_ios_new_rounded, color: DS.textSecondary, size: 16),
               ),
             ),
           ),
@@ -87,7 +87,7 @@ class _Header extends StatelessWidget {
             Text(
               eyebrow,
               style: const TextStyle(
-                color: _t2, fontSize: 10,
+                color: DS.textFaint, fontSize: 10,
                 fontWeight: FontWeight.w700, letterSpacing: 2.5,
               ),
             ),
@@ -95,7 +95,7 @@ class _Header extends StatelessWidget {
             Text(
               title,
               style: TextStyle(
-                color: isExpired ? DS.rose : _t0,
+                color: isExpired ? DS.rose : DS.textPrimary,
                 fontSize: 28,
                 fontWeight: FontWeight.w800,
                 letterSpacing: -0.8,
@@ -118,9 +118,9 @@ class _BalanceChip extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
     decoration: BoxDecoration(
-      color: _premSurface,
+      color: DS.surface1,
       borderRadius: BorderRadius.circular(50),
-      border: Border.all(color: _b1),
+      border: Border.all(color: DS.border),
     ),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Container(
@@ -131,7 +131,7 @@ class _BalanceChip extends StatelessWidget {
       Text(
         '${rub.toStringAsFixed(0)} $currency',
         style: const TextStyle(
-            color: _t0, fontSize: 13, fontWeight: FontWeight.w700),
+            color: DS.textPrimary, fontSize: 13, fontWeight: FontWeight.w700),
       ),
     ]),
   );
@@ -156,9 +156,9 @@ class _ActionToggle extends StatelessWidget {
     height: 48,
     padding: const EdgeInsets.all(4),
     decoration: BoxDecoration(
-      color: _premSurface,
+      color: DS.surface1,
       borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: _b1),
+      border: Border.all(color: DS.border),
     ),
     child: Row(children: [
       for (int i = 0; i < labels.length; i++)
@@ -186,7 +186,7 @@ class _ActionToggle extends StatelessWidget {
                 child: Text(
                   labels[i],
                   style: TextStyle(
-                    color: selected == i ? Colors.white : _t1,
+                    color: selected == i ? Colors.white : DS.textSecondary,
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
@@ -298,7 +298,7 @@ class _FeatureRow extends StatelessWidget {
     const SizedBox(width: 14),
     Expanded(
       child: Text(label, style: const TextStyle(
-          color: _t0, fontSize: 14, fontWeight: FontWeight.w600)),
+          color: DS.textPrimary, fontSize: 14, fontWeight: FontWeight.w600)),
     ),
   ]);
 }
@@ -340,7 +340,7 @@ class _PeriodStrip extends StatelessWidget {
         const Text(
           'ПЕРИОД ПОДПИСКИ',
           style: TextStyle(
-            color: _t2, fontSize: 10,
+            color: DS.textFaint, fontSize: 10,
             fontWeight: FontWeight.w700, letterSpacing: 2.2,
           ),
         ),
@@ -412,10 +412,10 @@ class _PeriodPillState extends State<_PeriodPill> {
                       colors: [DS.violet, _indigoD],
                       begin: Alignment.topLeft, end: Alignment.bottomRight)
                   : null,
-              color: widget.selected ? null : _premSurface,
+              color: widget.selected ? null : DS.surface1,
               borderRadius: BorderRadius.circular(50),
               border: Border.all(
-                color: widget.selected ? DS.violet : _b1,
+                color: widget.selected ? DS.violet : DS.border,
                 width: 1.5,
               ),
               boxShadow: widget.selected
@@ -427,7 +427,7 @@ class _PeriodPillState extends State<_PeriodPill> {
             child: Text(
               widget.label,
               style: TextStyle(
-                color: widget.selected ? Colors.white : _t1,
+                color: widget.selected ? Colors.white : DS.textSecondary,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
@@ -535,10 +535,10 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
           decoration: BoxDecoration(
             color: selected
                 ? accent.withValues(alpha: 0.08)
-                : _premSurface,
+                : DS.surface1,
             borderRadius: BorderRadius.circular(_r16),
             border: Border.all(
-              color: selected ? accent.withValues(alpha: 0.75) : _b1,
+              color: selected ? accent.withValues(alpha: 0.75) : DS.border,
               width: 1.5,           // constant — no layout shift on select
             ),
             boxShadow: selected
@@ -588,7 +588,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                         Text(
                           _TariffRadioCard._cleanTariffName(widget.tariff.name),
                           style: TextStyle(
-                            color: selected ? _t0 : _t1,
+                            color: selected ? DS.textPrimary : DS.textSecondary,
                             fontSize: 16,
                             fontWeight: FontWeight.w800,
                           ),
@@ -629,7 +629,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                           Text(
                             '${price.toStringAsFixed(0)} ₽',
                             style: TextStyle(
-                              color: selected ? accent : _t0,
+                              color: selected ? accent : DS.textPrimary,
                               fontSize: 17,
                               fontWeight: FontWeight.w900,
                             ),
@@ -639,7 +639,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                             monthly != null && widget.period!.days > 31
                                 ? '~${monthly.round()} ₽/мес'
                                 : '/мес',
-                            style: const TextStyle(color: _t2, fontSize: 11),
+                            style: const TextStyle(color: DS.textFaint, fontSize: 11),
                           ),
                         ],
                       ),
@@ -654,7 +654,7 @@ class _TariffRadioCardState extends State<_TariffRadioCard> {
                       shape: BoxShape.circle,
                       color: selected ? accent : Colors.transparent,
                       border: Border.all(
-                        color: selected ? accent : _t2,
+                        color: selected ? accent : DS.textFaint,
                         width: 2,
                       ),
                     ),
@@ -832,10 +832,10 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
           curve: Curves.easeInOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            color: selected ? const Color(0x1A7C6BFF) : _premSurface,
+            color: selected ? const Color(0x1A7C6BFF) : DS.surface1,
             borderRadius: BorderRadius.circular(DS.radiusSm),
             border: Border.all(
-              color: selected ? DS.violet : _b1,
+              color: selected ? DS.violet : DS.border,
               width: selected ? 1.5 : 1.0,
             ),
           ),
@@ -849,7 +849,7 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                 shape: BoxShape.circle,
                 color: selected ? DS.violet : Colors.transparent,
                 border: Border.all(
-                  color: selected ? DS.violet : _t2,
+                  color: selected ? DS.violet : DS.textFaint,
                   width: 2,
                 ),
                 boxShadow: selected
@@ -874,7 +874,7 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                   Text(
                     period.label,
                     style: TextStyle(
-                      color: selected ? _t0 : _t1,
+                      color: selected ? DS.textPrimary : DS.textSecondary,
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                     ),
@@ -886,7 +886,7 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                       style: TextStyle(
                         color: selected
                             ? _indigoB.withValues(alpha: 0.85)
-                            : _t2,
+                            : DS.textFaint,
                         fontSize: 11,
                       ),
                     ),
@@ -925,15 +925,15 @@ class _TariffPeriodTileState extends State<_TariffPeriodTile> {
                   Text(
                     '${origRub.toStringAsFixed(0)} ₽',
                     style: const TextStyle(
-                      color: _t2, fontSize: 11,
+                      color: DS.textFaint, fontSize: 11,
                       decoration: TextDecoration.lineThrough,
-                      decorationColor: _t2,
+                      decorationColor: DS.textFaint,
                     ),
                   ),
                 Text(
                   '${priceRub.toStringAsFixed(0)} ₽',
                   style: TextStyle(
-                    color: selected ? _indigoB : _t0,
+                    color: selected ? _indigoB : DS.textPrimary,
                     fontSize: 18,
                     fontWeight: FontWeight.w900,
                     height: 1.1,
@@ -1085,10 +1085,10 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                               Text(
                                 '${origRub.toStringAsFixed(0)} ₽',
                                 style: const TextStyle(
-                                  color: _t2,
+                                  color: DS.textFaint,
                                   fontSize: 15,
                                   decoration: TextDecoration.lineThrough,
-                                  decorationColor: _t2,
+                                  decorationColor: DS.textFaint,
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -1128,7 +1128,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                               priceRub.toStringAsFixed(0),
                               key: ValueKey(sel.id),
                               style: const TextStyle(
-                                color: _t0, fontSize: 68,
+                                color: DS.textPrimary, fontSize: 68,
                                 fontWeight: FontWeight.w900,
                                 letterSpacing: -3, height: 1,
                               ),
@@ -1137,7 +1137,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                           const Padding(
                             padding: EdgeInsets.only(bottom: 10, left: 4),
                             child: Text('₽', style: TextStyle(
-                                color: _t1,
+                                color: DS.textSecondary,
                                 fontSize: 24,
                                 fontWeight: FontWeight.w700)),
                           ),
@@ -1145,7 +1145,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                         const SizedBox(height: 5),
                         Text(
                           'за период · ${sel.label.toLowerCase()}',
-                          style: const TextStyle(color: _t2, fontSize: 13),
+                          style: const TextStyle(color: DS.textFaint, fontSize: 13),
                         ),
                       ]),
                     ),
@@ -1155,7 +1155,7 @@ class _PlanCardState extends State<_PlanCard> with TickerProviderStateMixin {
                 Container(
                     margin: const EdgeInsets.fromLTRB(22, 20, 22, 0),
                     height: 1,
-                    color: _b1),
+                    color: DS.border),
 
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
@@ -1294,7 +1294,7 @@ class _PeriodChipState extends State<_PeriodChip>
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight)
                 : null,
-            color: widget.selected ? null : _b1,
+            color: widget.selected ? null : DS.border,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
               color: widget.selected
@@ -1330,7 +1330,7 @@ class _PeriodChipState extends State<_PeriodChip>
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight)
                   : null,
-              color: widget.selected ? null : _b1,
+              color: widget.selected ? null : DS.border,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: widget.selected
@@ -1517,7 +1517,7 @@ class _ReferralBanner extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: _premSurface,
+          color: DS.surface1,
           borderRadius: BorderRadius.circular(DS.radiusSm),
           border: Border.all(color: DS.violet.withValues(alpha: 0.30)),
         ),
@@ -1539,13 +1539,13 @@ class _ReferralBanner extends StatelessWidget {
               children: [
                 const Text('Снизьте свою цену',
                     style: TextStyle(
-                        color: _t0, fontSize: 13.5, fontWeight: FontWeight.w700)),
+                        color: DS.textPrimary, fontSize: 13.5, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 2),
                 Text(
                   commission > 0
                       ? 'Приглашайте друзей — получайте $commission% с каждого их платежа'
                       : 'Приглашайте друзей и получайте бонусы',
-                  style: const TextStyle(color: _t1, fontSize: 11.5, height: 1.3),
+                  style: const TextStyle(color: DS.textSecondary, fontSize: 11.5, height: 1.3),
                 ),
               ],
             ),
@@ -1569,10 +1569,10 @@ class _Disclaimer extends StatelessWidget {
       const Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.lock_outline_rounded, size: 11, color: _t2),
+          Icon(Icons.lock_outline_rounded, size: 11, color: DS.textFaint),
           SizedBox(width: 5),
           Text('Безопасная оплата · YooKassa',
-              style: TextStyle(color: _t2, fontSize: 11)),
+              style: TextStyle(color: DS.textFaint, fontSize: 11)),
         ],
       ),
       const SizedBox(height: 5),
@@ -1584,7 +1584,7 @@ class _Disclaimer extends StatelessWidget {
               size: 11, color: DS.gold.withValues(alpha: 0.85)),
           const SizedBox(width: 5),
           const Text('Доступ открывается сразу после оплаты',
-              style: TextStyle(color: _t2, fontSize: 11)),
+              style: TextStyle(color: DS.textFaint, fontSize: 11)),
         ],
       ),
     ],

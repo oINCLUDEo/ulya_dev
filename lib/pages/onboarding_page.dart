@@ -154,6 +154,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
   final _nameCtrl = TextEditingController();
   bool _passwordVisible = false;
 
+  // ── Referral code ───────────────────────────────────────────────────────────
+  // Onboarding runs its own auth UI rather than the shared auth sheet, so the
+  // field has to exist here too — and this is the flow that matters most, since
+  // someone arriving with a friend's code is by definition a first-time user.
+  bool _showReferralField = false;
+  final _referralCtrl = TextEditingController();
+  String? get _referralCode {
+    final v = _referralCtrl.text.trim();
+    return v.isEmpty ? null : v;
+  }
+
   // ── Trial state ─────────────────────────────────────────────────────────────
   String? _trialMessage;
   bool _trialClaimed = false;
@@ -165,6 +176,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _nameCtrl.dispose();
+    _referralCtrl.dispose();
     super.dispose();
   }
 
@@ -201,7 +213,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     });
 
     // Primary: full Telegram OAuth via oauth.telegram.org (same as the cabinet).
-    final res = await AuthService.signInWithTelegram();
+    final res = await AuthService.signInWithTelegram(referralCode: _referralCode);
     if (!mounted) return;
     if (res == null) {
       _onAuthSuccess();
@@ -248,7 +260,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       _authError = null;
     });
 
-    final err = await AuthService.signInWithGoogle();
+    final err = await AuthService.signInWithGoogle(referralCode: _referralCode);
     if (!mounted) return;
     if (err != null) {
       setState(() { _authStep = _AuthStep.error; _authError = err; });
@@ -315,6 +327,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         email: email,
         password: password,
         firstName: _nameCtrl.text.trim().isEmpty ? null : _nameCtrl.text.trim(),
+        referralCode: _referralCode,
       );
       if (!mounted) return;
 
@@ -467,6 +480,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 emailCtrl: _emailCtrl,
                 passwordCtrl: _passwordCtrl,
                 nameCtrl: _nameCtrl,
+                referralCtrl: _referralCtrl,
+                showReferralField: _showReferralField,
+                onShowReferralField: () => setState(() => _showReferralField = true),
+                onClearReferralField: () => setState(() {
+                  _referralCtrl.clear();
+                  _showReferralField = false;
+                }),
                 passwordVisible: _passwordVisible,
                 onPasswordToggle: () => setState(() => _passwordVisible = !_passwordVisible),
                 onTelegramTap: _onTelegramTap,
@@ -654,7 +674,7 @@ class _SlideIllustrationState extends State<_SlideIllustration>
 
 // ── Slide 1: line-art wireframe globe (real coastlines) ─────────────────────
 // Real Natural Earth coastlines projected orthographically and drawn as thin
-// lines in the brand colour, with a graticule and gold server pins — a clean,
+// lines in the brand colour, with a graticule and violet server pins — a clean,
 // stylised globe (not a heavy photo texture).
 
 // Parsed coastline cache: list of polylines, each a list of [lon, lat].
@@ -730,7 +750,12 @@ class _LineGlobePainter extends CustomPainter {
   final Color color;
   final List<List<List<double>>>? coast;
 
-  static const _gold = Color(0xFFD4A84B);
+  /// Route/pin accent. Violet against the slide's cyan globe: both are brand
+  /// colours, and the pairing separates "our network" from "the world" without
+  /// introducing a third hue. (Was gold, which in DS means an active premium
+  /// membership — nothing to do with servers, and it clashed with the cyan.)
+  static const _link = DS.violet;
+
   static const _pins = <List<double>>[
     [55.75, 37.61],   // 0 Москва
     [52.52, 13.40],   // 1 Берлин
@@ -815,53 +840,91 @@ class _LineGlobePainter extends CustomPainter {
       ..strokeWidth = 1.6
       ..color = color.withValues(alpha: 0.55));
 
-    // Routes between servers — great-circle arcs hugging the surface, with a
-    // bright packet travelling along each one.
+    // Routes between servers. Each arc is drawn twice — a wide, very dim pass
+    // for glow and a thin bright one on top — and shaded with a gradient that
+    // fades out at both ends, so links dissolve into the globe instead of
+    // stopping dead at the pins.
     for (var li = 0; li < _links.length; li++) {
       final a = _pins[_links[li][0]];
       final b = _pins[_links[li][1]];
+
+      // Collect the visible run of points so the gradient can span the arc's
+      // real on-screen extent rather than the (possibly hidden) endpoints.
+      final pts = <Offset>[];
       final path = Path();
       var pen = false;
-      for (var s = 0; s <= 24; s++) {
-        final g = _gcInterp(a, b, s / 24);
+      for (var s = 0; s <= 48; s++) {
+        final g = _gcInterp(a, b, s / 48);
         final (sx, sy, front) = proj(g[0], g[1]); // g = [lon, lat]
         if (front) {
+          pts.add(Offset(sx, sy));
           if (!pen) { path.moveTo(sx, sy); pen = true; } else { path.lineTo(sx, sy); }
         } else {
           pen = false;
         }
       }
+      if (pts.length < 2) continue;
+
+      final shader = ui.Gradient.linear(
+        pts.first, pts.last,
+        [
+          _link.withValues(alpha: 0.0),
+          _link.withValues(alpha: 0.95),
+          _link.withValues(alpha: 0.0),
+        ],
+        [0.0, 0.5, 1.0],
+      );
+
       canvas.drawPath(path, Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
+        ..strokeWidth = 5.0
         ..strokeCap = StrokeCap.round
-        ..color = _gold.withValues(alpha: 0.50));
+        ..shader = shader
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4)
+        ..color = _link.withValues(alpha: 0.25));
 
-      // Travelling packet.
+      canvas.drawPath(path, Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1
+        ..strokeCap = StrokeCap.round
+        ..shader = shader);
+
+      // Travelling packet with a short comet trail behind it.
       final f = (t * 5 + li * 0.27) % 1.0;
+      for (var k = 0; k < 6; k++) {
+        final tf = f - k * 0.018;
+        if (tf < 0) continue;
+        final gp = _gcInterp(a, b, tf);
+        final (px, py, pf) = proj(gp[0], gp[1]);
+        if (!pf) continue;
+        final fade = (1 - k / 6) * (1 - k / 6);
+        canvas.drawCircle(Offset(px, py), 2.4 * fade + 0.6,
+            Paint()..color = _link.withValues(alpha: 0.55 * fade));
+      }
       final gp = _gcInterp(a, b, f);
       final (px, py, pf) = proj(gp[0], gp[1]);
       if (pf) {
-        canvas.drawCircle(Offset(px, py), 7, Paint()..color = _gold.withValues(alpha: 0.30));
-        canvas.drawCircle(Offset(px, py), 2.6, Paint()..color = Colors.white);
+        canvas.drawCircle(Offset(px, py), 6, Paint()
+          ..color = _link.withValues(alpha: 0.35)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+        canvas.drawCircle(Offset(px, py), 2.2, Paint()..color = Colors.white);
       }
     }
 
-    // Server pins with a radar pulse (front-facing only).
+    // Server pins — a slow radar ping plus a solid core, in the same accent as
+    // the routes so the network reads as one system.
     for (var pi = 0; pi < _pins.length; pi++) {
       final (sx, sy, front) = proj(_pins[pi][1], _pins[pi][0]); // (lon, lat)
       if (!front) continue;
       final phase = (t * 3 + pi * 0.2) % 1.0;
-      canvas.drawCircle(Offset(sx, sy), 4 + phase * 16, Paint()
+      canvas.drawCircle(Offset(sx, sy), 3.5 + phase * 15, Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
-        ..color = _gold.withValues(alpha: (1 - phase) * 0.5));
-      canvas.drawCircle(Offset(sx, sy), 8, Paint()..color = _gold.withValues(alpha: 0.22));
-      canvas.drawCircle(Offset(sx, sy), 4, Paint()..color = Colors.white);
-      canvas.drawCircle(Offset(sx, sy), 4, Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = _gold);
+        ..strokeWidth = 1.2
+        ..color = _link.withValues(alpha: (1 - phase) * 0.45));
+      canvas.drawCircle(Offset(sx, sy), 7, Paint()
+        ..color = _link.withValues(alpha: 0.28)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+      canvas.drawCircle(Offset(sx, sy), 3.2, Paint()..color = Colors.white);
     }
   }
 
@@ -901,7 +964,8 @@ class _SlidePainter extends CustomPainter {
   final Color color;
   final double t;
 
-  static const _gold = Color(0xFFD4A84B);
+  /// Kept in step with _LineGlobePainter._link — see the note there.
+  static const _link = DS.violet;
 
   void _radialGlow(Canvas canvas, Offset center, double radius, Color c, double alpha) {
     canvas.drawCircle(
@@ -1147,7 +1211,7 @@ class _SlidePainter extends CustomPainter {
     }
     canvas.restore();
 
-    // Connection pins + gold routes between them.
+    // Connection pins + violet routes between them.
     final pins = [
       Offset(cx + gr * 0.55, cy - gr * 0.50),
       Offset(cx - gr * 0.60, cy + gr * 0.20),
@@ -1160,87 +1224,94 @@ class _SlidePainter extends CustomPainter {
         Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.6
-          ..color = _gold.withValues(alpha: 0.55),
+          ..color = _link.withValues(alpha: 0.55),
       );
     }
     route(pins[0], pins[1], 50);
     route(pins[1], pins[2], 46);
     for (final p in pins) {
-      canvas.drawCircle(p, 9, Paint()..color = _gold.withValues(alpha: 0.22));
+      canvas.drawCircle(p, 9, Paint()..color = _link.withValues(alpha: 0.22));
       canvas.drawCircle(p, 5, Paint()..color = Colors.white);
       canvas.drawCircle(p, 5, Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.6
-        ..color = _gold);
+        ..color = _link);
     }
   }
 
   // ── Slide 2: one-tap power button (simplicity) ─────────────────────────────
+  /// Paints an icon-font glyph centred on [center]. Used so the illustration
+  /// shows the *actual* icon the app uses rather than a hand-drawn lookalike.
+  void _paintIcon(Canvas canvas, Offset center, IconData icon, double size,
+      Color color) {
+    final tp = TextPainter(
+      textDirection: TextDirection.ltr,
+      text: TextSpan(
+        text: String.fromCharCode(icon.codePoint),
+        style: TextStyle(
+          fontFamily: icon.fontFamily,
+          package: icon.fontPackage,
+          fontSize: size,
+          color: color,
+        ),
+      ),
+    )..layout();
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  // ── Slide 2: the connect button, in its connected state ───────────────────
+  // Deliberately a faithful replica of the real button on the home screen
+  // (_ConnectButton / _PulseRingsPainter): same radial-gradient recipe, same
+  // ring timing, same glyph. The slide promises "press it and you're
+  // protected", so it shows the protected state — emerald + shield — which is
+  // exactly what the user will see a moment later in the app itself.
   void _paintToggle(Canvas canvas, Size size) {
     final cx = size.width / 2;
     final cy = size.height * 0.50;
     final br = size.width * 0.17;
+    // The real button is 128px across with rings running out to r=104, i.e.
+    // 1.625x the button radius. Everything below is expressed in those terms
+    // so the proportions survive any illustration size.
+    const ringOuter = 104.0 / 64.0;
 
     _radialGlow(canvas, Offset(cx, cy), size.width * 0.52, color, 0.30);
 
-    // Expanding tap ripples.
+    // Pulse rings — three, phase-offset by 1/3, ease-out, exactly as the
+    // home-screen button emits them.
     for (var i = 0; i < 3; i++) {
-      final phase = (t * 0.9 + i * 0.33) % 1.0;
+      final p = (t + i / 3) % 1.0;
+      final ep = 1 - (1 - p) * (1 - p);
       canvas.drawCircle(
-        Offset(cx, cy), br * 1.1 + phase * size.width * 0.26,
+        Offset(cx, cy), br + (br * ringOuter - br) * ep,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.4
-          ..color = color.withValues(alpha: (1 - phase) * 0.45),
+          ..strokeWidth = 1.8
+          ..color = color.withValues(alpha: (1 - p) * 0.55),
       );
     }
 
-    // Outer glow.
-    canvas.drawCircle(Offset(cx, cy), br * 1.2, Paint()
-      ..color = color.withValues(alpha: 0.30)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 26));
+    // Drop glow — the button's boxShadow (colour @ 32%, 28px blur).
+    canvas.drawCircle(Offset(cx, cy), br, Paint()
+      ..color = color.withValues(alpha: 0.32)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, br * 0.44));
 
-    // Button — glossy radial-gradient disc.
+    // Disc — same radial gradient as the widget: highlight up-left, body,
+    // then darkened lower-right. No extra gloss or rim; the real button has
+    // neither, and they were what made this read as a different control.
     canvas.drawCircle(Offset(cx, cy), br, Paint()
       ..shader = ui.Gradient.radial(
-        Offset(cx - br * 0.35, cy - br * 0.42), br * 1.5,
+        Offset(cx - br * 0.35, cy - br * 0.45), br * 1.05,
         [
-          Color.lerp(color, Colors.white, 0.32)!,
+          Color.lerp(color, Colors.white, 0.24)!,
           color,
-          Color.lerp(color, const Color(0xFF0A0A0F), 0.30)!,
+          Color.lerp(color, Colors.black, 0.20)!,
         ],
         [0.0, 0.55, 1.0],
       ));
-    // Top gloss.
-    canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: Offset(cx, cy), radius: br)));
-    canvas.drawCircle(Offset(cx, cy - br * 0.5), br * 0.8, Paint()
-      ..shader = ui.Gradient.radial(
-        Offset(cx, cy - br * 0.55), br * 0.9,
-        [Colors.white.withValues(alpha: 0.40), Colors.white.withValues(alpha: 0.0)],
-      ));
-    canvas.restore();
-    // Rim.
-    canvas.drawCircle(Offset(cx, cy), br, Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..color = Colors.white.withValues(alpha: 0.30));
 
-    // Power glyph (ring with a top gap + vertical bar).
-    final gr2 = br * 0.44;
-    final gp = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = br * 0.12
-      ..strokeCap = StrokeCap.round
-      ..color = Colors.white;
-    const gap = 0.55; // half-gap (radians) at the top
-    canvas.drawArc(
-      Rect.fromCircle(center: Offset(cx, cy), radius: gr2),
-      -math.pi / 2 + gap, math.pi * 2 - gap * 2, false, gp,
-    );
-    canvas.drawLine(
-      Offset(cx, cy - gr2 * 1.25), Offset(cx, cy + gr2 * 0.05), gp,
-    );
+    // Shield glyph at the widget's ratio (44px icon in a 128px button).
+    _paintIcon(canvas, Offset(cx, cy), PhosphorIconsFill.shield,
+        br * (44 / 64), Colors.white);
   }
 
   @override
@@ -1263,6 +1334,10 @@ class _AuthSlide extends StatelessWidget {
     required this.emailCtrl,
     required this.passwordCtrl,
     required this.nameCtrl,
+    required this.referralCtrl,
+    required this.showReferralField,
+    required this.onShowReferralField,
+    required this.onClearReferralField,
     required this.passwordVisible,
     required this.onPasswordToggle,
     required this.onTelegramTap,
@@ -1285,6 +1360,10 @@ class _AuthSlide extends StatelessWidget {
   final TextEditingController emailCtrl;
   final TextEditingController passwordCtrl;
   final TextEditingController nameCtrl;
+  final TextEditingController referralCtrl;
+  final bool showReferralField;
+  final VoidCallback onShowReferralField;
+  final VoidCallback onClearReferralField;
   final bool passwordVisible;
   final VoidCallback onPasswordToggle;
   final VoidCallback onTelegramTap;
@@ -1419,6 +1498,8 @@ class _AuthSlide extends StatelessWidget {
             color: DS.violet,
             onTap: onEmailButtonTap,
           ),
+          const SizedBox(height: 4),
+          _buildReferralField(),
         ],
         if (isWaiting) ...[
           const SizedBox(height: 16),
@@ -1428,6 +1509,39 @@ class _AuthSlide extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+
+  // ── Referral code ───────────────────────────────────────────────────────────
+  // Collapsed behind a link: most people arrive without a code, and an empty
+  // field sitting under the login buttons would read as one more thing to fill
+  // in before getting started. Applies to whichever method they then pick.
+  Widget _buildReferralField() {
+    if (!showReferralField) {
+      return TextButton(
+        onPressed: onShowReferralField,
+        child: const Text('Есть код приглашения?',
+            style: TextStyle(color: DS.textMuted, fontSize: 13)),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: TextField(
+        controller: referralCtrl,
+        autocorrect: false,
+        textCapitalization: TextCapitalization.characters,
+        style: const TextStyle(color: DS.textPrimary, fontSize: 15),
+        decoration: InputDecoration(
+          hintText: 'Код приглашения',
+          prefixIcon: const Icon(PhosphorIconsRegular.gift,
+              size: 18, color: DS.textMuted),
+          suffixIcon: IconButton(
+            onPressed: onClearReferralField,
+            icon: const Icon(PhosphorIconsRegular.x,
+                size: 16, color: DS.textMuted),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1496,6 +1610,20 @@ class _AuthSlide extends StatelessWidget {
           visible: passwordVisible,
           onToggle: onPasswordToggle,
         ),
+
+        // Referral code (register only). Someone who tapped straight through to
+        // this form never passed the link on the previous screen, so it has to
+        // be reachable here too — and this is the one flow where a code is
+        // typed rather than carried over.
+        if (isRegister) ...[
+          const SizedBox(height: 12),
+          _Field(
+            controller: referralCtrl,
+            label: 'Код приглашения (необязательно)',
+            icon: Icons.card_giftcard_rounded,
+            keyboardType: TextInputType.text,
+          ),
+        ],
         const SizedBox(height: 8),
 
         // Error

@@ -12,6 +12,7 @@ import '../services/auth_state.dart';
 import '../services/me_service.dart';
 import '../services/remnawave_service.dart';
 import '../services/subscription_api_service.dart';
+import '../widgets/accent_surface.dart';
 import '../widgets/payment_polling_card.dart';
 import '../widgets/telegram_login_button.dart';
 import 'auth_bottom_sheet.dart';
@@ -488,27 +489,14 @@ class _StatusCard extends StatelessWidget {
 
     // ── No subscription ───────────────────────────────────────────────────────
     if (sub == null) {
-      return _CardShell(
-        accentColor: DS.textMuted,
-        gradientStart: const Color(0x00000000),
-        gradientEnd: const Color(0x00000000),
-        borderColor: DS.border,
+      return AccentCard(
+        accent: DS.textMuted,
+        muted: true,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              Container(
-                  width: 6, height: 6,
-                  decoration: const BoxDecoration(
-                      color: DS.textMuted, shape: BoxShape.circle)),
-              const SizedBox(width: 6),
-              const Text('НЕТ ПОДПИСКИ',
-                  style: TextStyle(
-                      color: DS.textMuted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.8)),
-            ]),
+            const AccentStatusLabel(
+                accent: DS.textMuted, label: 'НЕТ ПОДПИСКИ'),
             const SizedBox(height: 10),
             const Text('Подписка не активна',
                 style: TextStyle(
@@ -537,27 +525,12 @@ class _StatusCard extends StatelessWidget {
       final planTitle =
           sub.planName != null ? 'Тариф «${sub.planName}»' : 'Тариф истёк';
 
-      return _CardShell(
-        accentColor: DS.rose,
-        gradientStart: DS.rose.withValues(alpha: 0.12),
-        gradientEnd: DS.rose.withValues(alpha: 0.04),
-        borderColor: DS.rose.withValues(alpha: 0.30),
+      return AccentCard(
+        accent: DS.rose,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(children: [
-              Container(
-                  width: 6, height: 6,
-                  decoration: const BoxDecoration(
-                      color: DS.rose, shape: BoxShape.circle)),
-              const SizedBox(width: 6),
-              Text(badge,
-                  style: const TextStyle(
-                      color: DS.rose,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.8)),
-            ]),
+            AccentStatusLabel(accent: DS.rose, label: badge),
             const SizedBox(height: 10),
             Text(planTitle,
                 style: const TextStyle(
@@ -590,24 +563,16 @@ class _StatusCard extends StatelessWidget {
     final planTitle =
         sub.planName != null ? 'Тариф «${sub.planName}»' : 'Активный тариф';
 
-    return _CardShell(
-      accentColor: DS.emerald,
-      gradientStart: DS.emerald.withValues(alpha: 0.10),
-      gradientEnd: DS.emerald.withValues(alpha: 0.03),
-      borderColor: DS.emerald.withValues(alpha: 0.30),
+    return AccentCard(
+      accent: DS.emerald,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            _PulsingDot(color: DS.emerald),
-            const SizedBox(width: 6),
-            Text(badge,
-                style: const TextStyle(
-                    color: DS.emerald,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.8)),
-          ]),
+          AccentStatusLabel(
+            accent: DS.emerald,
+            label: badge,
+            dot: _PulsingDot(color: DS.emerald),
+          ),
           const SizedBox(height: 10),
           Text(planTitle,
               style: const TextStyle(
@@ -635,36 +600,9 @@ class _StatusCard extends StatelessWidget {
   }
 }
 
-class _CardShell extends StatelessWidget {
-  final Color accentColor;
-  final Color gradientStart;
-  final Color gradientEnd;
-  final Color borderColor;
-  final Widget child;
-
-  const _CardShell({
-    required this.accentColor,
-    required this.gradientStart,
-    required this.gradientEnd,
-    required this.borderColor,
-    required this.child,
-  });
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [gradientStart, gradientEnd],
-          ),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: borderColor, width: 0.5),
-        ),
-        child: child,
-      );
-}
+// _CardShell used to hand-roll the accent formula here; it now lives in
+// AccentCard (lib/widgets/accent_surface.dart) so every tier-1 surface in the
+// app shares one definition.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Traffic section card

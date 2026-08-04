@@ -472,18 +472,9 @@ class _ReferralCard extends StatelessWidget {
     final code = info.referralCode.isEmpty ? '—' : info.referralCode;
     final commission = info.commissionPercent;
 
-    return Container(
-      decoration: BoxDecoration(
-        // Soft brand gradient — sits between the connection card and the
-        // subscription card without competing with either.
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1E1438), Color(0xFF14101F)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(DS.radius),
-        border: Border.all(color: DS.violet.withValues(alpha: 0.35)),
-      ),
+    return AccentCard(
+      accent: DS.violet,
+      radius: DS.radius,
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -493,14 +484,9 @@ class _ReferralCard extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             onTap: onOpenDetails,
             child: Row(children: [
-              Container(
-                width: 36, height: 36,
-                decoration: BoxDecoration(
-                  color: DS.violet.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: DS.violet.withValues(alpha: 0.4)),
-                ),
-                child: Icon(PhosphorIconsFill.gift,
+              const AccentIconBox(
+                accent: DS.violet,
+                icon: Icon(PhosphorIconsFill.gift,
                     size: 18, color: DS.violet),
               ),
               const SizedBox(width: 10),
