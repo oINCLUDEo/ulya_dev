@@ -66,6 +66,27 @@ class DS {
   static const radius   = 20.0;   // lg — buttons, large cards
   static const radiusSm = 12.0;   // md — cards
   static const radiusXs = 4.0;    // sm — badges
+
+  // ── Accent surface formula ────────────────────────────────────────────────
+  // The tint recipe behind every "tier 1" surface — see AccentCard in
+  // lib/widgets/accent_surface.dart for the hierarchy rules. Exposed as
+  // helpers (rather than only via the widget) for the cases that need the
+  // decoration alone, e.g. an AnimatedContainer that tweens between states.
+
+  /// Vertical accent wash: strongest at the top, almost gone at the bottom.
+  static LinearGradient accentGradient(Color accent) => LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          accent.withValues(alpha: 0.12),
+          accent.withValues(alpha: 0.04),
+        ],
+      );
+
+  /// Border tint that pairs with [accentGradient] — visible enough to read as
+  /// deliberate, dim enough not to look like a focus ring.
+  static Color accentBorderColor(Color accent) =>
+      accent.withValues(alpha: 0.30);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

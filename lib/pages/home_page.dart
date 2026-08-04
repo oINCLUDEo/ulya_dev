@@ -31,6 +31,7 @@ import '../utils/referral_card.dart';
 import '../utils/server_icon.dart';
 import '../utils/signal_quality.dart';
 import '../utils/speed_calculator.dart';
+import '../widgets/accent_surface.dart';
 import '../widgets/quality_bars.dart';
 import 'auth_bottom_sheet.dart';
 import 'referral_page.dart';
