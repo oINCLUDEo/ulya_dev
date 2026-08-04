@@ -59,16 +59,18 @@ class DS {
   static const surface3 = Color(0xFF2A2A38);   // disabled bg
 
   // ── Text ──────────────────────────────────────────────────────────────────
-  static const textPrimary   = Color(0xFFF0F0FF);   // text/primary
-  static const textSecondary = Color(0xFF8892AA);   // text/secondary
-  static const textMuted     = Color(0xFF6B6B8A);   // text/tertiary
+  // A four-step contrast scale, measured against surface1 (the card fill,
+  // which is the harder of the two backgrounds): 16.5 → 6.0 → 4.1 → 3.0.
+  // Every step is a clear drop, and no step falls below the 3:1 floor.
+  static const textPrimary   = Color(0xFFF0F0FF);   // text/primary    16.5:1
+  static const textSecondary = Color(0xFF8892AA);   // text/secondary   6.0:1
+  static const textMuted     = Color(0xFF73739B);   // text/tertiary    4.1:1
 
-  /// Decorative micro-labels ONLY — section captions, disclaimers, the kind
-  /// of 10-11px text that frames content rather than carrying it. Sits at
-  /// roughly 2:1 against [surface0], well under the 4.5:1 body-text bar, so
-  /// never use it for anything the user actually has to read. Use
-  /// [textMuted] (~3.9:1) for genuine tertiary content.
-  static const textFaint     = Color(0xFF454565);
+  /// Quietest step — section captions, disclaimers, the 10-11px text that
+  /// frames content rather than carrying it. At 3.0:1 it clears the floor for
+  /// small/UI text but sits under the 4.5:1 body-text bar, so keep it to
+  /// framing; anything the user has to actually read wants [textMuted].
+  static const textFaint     = Color(0xFF5E5E86);
 
   // ── Border ────────────────────────────────────────────────────────────────
   static const border    = Color(0xFF1E1E38);   // card border
